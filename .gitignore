@@ -1,0 +1,42 @@
+# Local design companion and scratch state
+.superpowers/
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets and local configuration
+.env
+.env.*
+*.key
+*.pem
+secrets/
+
+# Runtime data and generated artifacts
+data/
+tasks/
+logs/
+cache/
+outputs/
+dist/
+build/
+*.db
+*.sqlite
+*.sqlite3
+
+# Real customer inputs must never be committed
+customer_data/
+private_samples/
+*.tmp
+~$*
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
