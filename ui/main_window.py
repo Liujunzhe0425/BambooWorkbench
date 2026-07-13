@@ -42,8 +42,15 @@ class MainWindow(QMainWindow):
         self.workbench_page = WorkbenchPage(context.registry)
         self.history_page = HistoryPage(context.task_repository)
         self.confirmations_page = ConfirmationsPage()
-        self.knowledge_page = KnowledgePage()
-        self.settings_page = SettingsPage(context.settings, context.paths)
+        self.knowledge_page = KnowledgePage(
+            context.knowledge_repository,
+            context.paths.knowledge,
+        )
+        self.settings_page = SettingsPage(
+            context.settings,
+            context.paths,
+            context.credential_store,
+        )
         self.pages: dict[PageId, QWidget] = {
             PageId.WORKBENCH: self.workbench_page,
             PageId.HISTORY: self.history_page,
@@ -84,7 +91,10 @@ class MainWindow(QMainWindow):
             lambda message: self._show_failure("输出文件不可用", message)
         )
         self.settings_page.action_failed.connect(
-            lambda message: self._show_failure("日志目录不可用", message)
+            lambda message: self._show_failure("设置操作失败", message)
+        )
+        self.knowledge_page.action_failed.connect(
+            lambda message: self._show_failure("知识库操作失败", message)
         )
         context.task_service.progress.connect(self._on_progress)
         context.task_service.needs_confirmation.connect(self._on_confirmation)

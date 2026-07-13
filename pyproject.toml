@@ -37,3 +37,8 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*", "core*", "mock_modules*", "ui*"]
+exclude = ["tests*"]

@@ -59,7 +59,10 @@ def test_database_upgrades_v1_and_preserves_settings(
     monkeypatch.setattr(database_module, "MIGRATIONS", all_migrations)
     database.migrate()
 
-    assert database.scalar("SELECT version FROM schema_version") == 2
+    assert (
+        database.scalar("SELECT version FROM schema_version")
+        == database_module.MIGRATIONS[-1].version
+    )
     assert SettingsStore(database).get("output_dir") == "D:/保留/export"
     assert database.scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?",

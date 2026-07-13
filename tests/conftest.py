@@ -12,6 +12,16 @@ from core.storage.repositories.tasks import TaskRepository
 
 
 @pytest.fixture
+def database(tmp_path: Path) -> Iterator[Database]:
+    opened = Database.open(AppPaths.for_root(tmp_path / "database-fixture"))
+    opened.migrate()
+    try:
+        yield opened
+    finally:
+        opened.close()
+
+
+@pytest.fixture
 def app_services(tmp_path: Path) -> Iterator[dict[str, object]]:
     paths = AppPaths.for_root(tmp_path / "app-data")
     database = Database.open(paths)
@@ -27,6 +37,7 @@ def app_services(tmp_path: Path) -> Iterator[dict[str, object]]:
     registry.scan()
     try:
         yield {
+            "database": database,
             "paths": paths,
             "registry": registry,
             "task_repository": task_repository,

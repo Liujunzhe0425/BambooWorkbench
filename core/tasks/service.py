@@ -8,6 +8,7 @@ import tempfile
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from PySide6.QtCore import QObject, Signal
@@ -15,7 +16,8 @@ from PySide6.QtCore import QObject, Signal
 from core.contracts.confirmation import ConfirmationAnswer, ConfirmationBundle
 from core.contracts.enums import JobPhase, ModuleId, RunMode, TaskStatus
 from core.contracts.job import JobRequest
-from core.contracts.result import ConfirmationPrompt, ModuleResult
+from core.contracts.result import ConfirmationPrompt, ModuleResult, SourceRef
+from core.contracts.service_request import ServiceRequest
 from core.modules.process_runner import ModuleProcessRunner
 from core.modules.registry import ModuleRegistry
 from core.platform.path_safety import (
@@ -31,8 +33,12 @@ from core.tasks.job_builder import build_draft_job
 from core.tasks.models import InvalidTaskTransition, TaskLifecycleState, TaskStateMachine
 from core.tasks.snapshots import remove_snapshots, snapshot_inputs
 
+if TYPE_CHECKING:
+    from core.services.orchestrator import ServiceOrchestrator
+
 _JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{6,64}$")
 _TERMINAL_MARKER = ".terminal-pending.json"
+_SERVICE_CONSENT_PREFIX = "service-consent:"
 _LOG = logging.getLogger("bamboo_workbench")
 
 
@@ -75,6 +81,7 @@ class TaskService(QObject):
         confirmation_repository: ConfirmationRepository,
         runner_factory: Callable[[], ModuleProcessRunner] = ModuleProcessRunner,
         job_id_factory: Callable[[], str] = _new_job_id,
+        service_orchestrator: "ServiceOrchestrator | None" = None,
     ) -> None:
         super().__init__()
         self.paths = paths
@@ -83,6 +90,7 @@ class TaskService(QObject):
         self.confirmation_repository = confirmation_repository
         self.runner_factory = runner_factory
         self.job_id_factory = job_id_factory
+        self.service_orchestrator = service_orchestrator
         self.runners: dict[str, ModuleProcessRunner] = {}
         self._states: dict[str, TaskStateMachine] = {}
         self._jobs: dict[str, JobRequest] = {}
@@ -254,6 +262,15 @@ class TaskService(QObject):
         return job_id
 
     def finalize(self, job_id: str, bundle_path: Path) -> None:
+        self._begin_finalize(job_id, bundle_path, validate_answers=True)
+
+    def _begin_finalize(
+        self,
+        job_id: str,
+        bundle_path: Path,
+        *,
+        validate_answers: bool,
+    ) -> None:
         machine = self._states.get(job_id)
         if machine is None or machine.state is not TaskLifecycleState.WAITING_CONFIRMATION:
             current = machine.state.value if machine is not None else "terminal_or_unknown"
@@ -289,7 +306,10 @@ class TaskService(QObject):
         )
         if bundle.job_id != job_id:
             raise ValueError("confirmation bundle job_id does not match task")
-        self._validate_stored_answers(job_id, bundle)
+        if validate_answers:
+            self._validate_stored_answers(job_id, bundle)
+        elif bundle.answers:
+            raise ValueError("automatic service finalization requires an empty bundle")
 
         draft_path = resolve_contained_file(
             task_dir / "job-draft.json",
@@ -323,12 +343,30 @@ class TaskService(QObject):
         )
         if final_output_dir.exists() and not final_output_dir.is_dir():
             raise ValueError("final output must be a directory when it already exists")
+        draft_result = self._load_draft_result(job_id, task_dir, trusted_draft)
+        service_response_file: str | None = None
+        ai_consent: dict[str, bool] = {}
+        if draft_result.service_requests:
+            if self.service_orchestrator is None:
+                raise RuntimeError("module requested shared services but none are configured")
+            ai_consent = self._service_consent_map(bundle, draft_result.service_requests)
+            response_path = self.service_orchestrator.resolve(
+                task_id=job_id,
+                module_id=trusted_draft.module_id.value,
+                allowed_namespaces=set(trusted_draft.allowed_knowledge_scopes),
+                requests=draft_result.service_requests,
+                ai_consent=ai_consent,
+                task_dir=task_dir,
+            )
+            service_response_file = str(response_path)
         final_payload = trusted_draft.model_dump(mode="python")
         final_payload.update(
             phase=JobPhase.FINALIZE,
             parent_job_id=job_id,
             confirmation_file=str(frozen_bundle_path),
             output_dir=str(final_output_dir),
+            service_response_file=service_response_file,
+            ai_enabled=any(ai_consent.values()),
         )
         final_job = JobRequest.model_validate(final_payload)
         final_path = task_dir / "job-finalize.json"
@@ -336,6 +374,7 @@ class TaskService(QObject):
         _atomic_write_text(final_path, final_job.model_dump_json(indent=2))
 
         self._persist_transition(job_id, TaskLifecycleState.RUNNING_FINALIZE)
+        self._pending_confirmation_results.pop(job_id, None)
         self._jobs[job_id] = final_job
         runner: ModuleProcessRunner | None = None
         try:
@@ -471,18 +510,28 @@ class TaskService(QObject):
             return
         if self.runners.get(job_id) is not runner:
             return
+        auto_finalize = False
         try:
             job = self._jobs[job_id]
             result_path = str((Path(job.output_dir) / "result.json").resolve())
-            if result.status is TaskStatus.NEEDS_CONFIRMATION:
-                self.confirmation_repository.save_prompts(job_id, result.confirmations)
+            pending = (
+                self._prepare_pending_result(job_id, job, result)
+                if job.phase is JobPhase.DRAFT
+                else None
+            )
+            if pending is not None:
+                if pending.confirmations:
+                    self.confirmation_repository.save_prompts(job_id, pending.confirmations)
                 self._persist_transition(
                     job_id,
                     TaskLifecycleState.WAITING_CONFIRMATION,
                     result_path=result_path,
                 )
-                self._pending_confirmation_results[job_id] = result
-                self.needs_confirmation.emit(job_id, result)
+                self._pending_confirmation_results[job_id] = pending
+                if pending.confirmations:
+                    self.needs_confirmation.emit(job_id, pending)
+                else:
+                    auto_finalize = True
                 task_terminal = False
             else:
                 target = TaskLifecycleState(result.status.value)
@@ -496,6 +545,11 @@ class TaskService(QObject):
             self._record_failure(job_id, self._error_message(exc), runner)
             return
         self._cleanup_runner(job_id, runner, task_terminal=task_terminal)
+        if auto_finalize:
+            try:
+                self._auto_finalize_services(job_id)
+            except Exception as exc:
+                self._record_failure(job_id, self._error_message(exc))
 
     def _cancelled(self, job_id: str, runner: ModuleProcessRunner) -> None:
         if job_id in self._blocked_callbacks:
@@ -749,12 +803,11 @@ class TaskService(QObject):
         if Path(str(task["result_path"])).resolve() != expected_result:
             raise ValueError("persisted result path does not match draft output")
         result = ModuleResult.model_validate_json(expected_result.read_text(encoding="utf-8"))
-        if (
-            result.job_id != job_id
-            or result.module_id is not draft.module_id
-            or result.status is not TaskStatus.NEEDS_CONFIRMATION
-        ):
+        if result.job_id != job_id or result.module_id is not draft.module_id:
             raise ValueError("persisted draft result identity or status is invalid")
+        pending = self._prepare_pending_result(job_id, draft, result)
+        if pending is None or not pending.confirmations:
+            raise ValueError("persisted waiting task has no recoverable confirmations")
         records = self.confirmation_repository.list_for_job(job_id)
         canonical = {
             item.confirmation_id: item.model_dump(mode="json")
@@ -763,7 +816,7 @@ class TaskService(QObject):
             )
         }
         result_prompts = {
-            item.confirmation_id: item.model_dump(mode="json") for item in result.confirmations
+            item.confirmation_id: item.model_dump(mode="json") for item in pending.confirmations
         }
         if canonical != result_prompts:
             raise ValueError("persisted canonical prompts do not match draft result")
@@ -772,8 +825,137 @@ class TaskService(QObject):
         machine.transition(TaskLifecycleState.WAITING_CONFIRMATION)
         self._states[job_id] = machine
         self._jobs[job_id] = draft
-        self._pending_confirmation_results[job_id] = result
+        self._pending_confirmation_results[job_id] = pending
         _LOG.info("waiting confirmation recovered job=%s", job_id)
+
+    def _prepare_pending_result(
+        self,
+        job_id: str,
+        job: JobRequest,
+        result: ModuleResult,
+    ) -> ModuleResult | None:
+        if result.status in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
+            return None
+        prompts = list(result.confirmations)
+        if result.service_requests:
+            if self.service_orchestrator is None:
+                raise RuntimeError("module requested shared services but none are configured")
+            prompts.extend(self._service_consent_prompts(job_id, job, result.service_requests))
+        if not prompts and not result.service_requests:
+            return None
+        identifiers = [prompt.confirmation_id for prompt in prompts]
+        if len(identifiers) != len(set(identifiers)):
+            raise ValueError("module and service confirmation IDs must be unique")
+        if not prompts:
+            return result
+        payload = result.model_dump(mode="python")
+        payload["status"] = TaskStatus.NEEDS_CONFIRMATION
+        payload["confirmations"] = prompts
+        summary = result.summary.model_dump(mode="python")
+        summary["confirmation_count"] = len(prompts)
+        payload["summary"] = summary
+        return ModuleResult.model_validate(payload)
+
+    def _service_consent_prompts(
+        self,
+        job_id: str,
+        job: JobRequest,
+        requests: list[ServiceRequest],
+    ) -> list[ConfirmationPrompt]:
+        if self.service_orchestrator is None:
+            return []
+        prompts: list[ConfirmationPrompt] = []
+        for request in requests:
+            if request.service != "ai" or not request.requires_user_consent:
+                continue
+            preview = self.service_orchestrator.preview_ai(
+                job_id,
+                job.module_id.value,
+                request,
+            )
+            preview_text = json.dumps(preview.payload, ensure_ascii=False, sort_keys=True)
+            categories = "、".join(preview.categories) or "无敏感类别"
+            prompts.append(
+                ConfirmationPrompt(
+                    confirmation_id=f"{_SERVICE_CONSENT_PREFIX}{request.request_id}",
+                    field=f"AI联网授权：{request.purpose}",
+                    reason=(
+                        f"发送内容已脱敏；识别类别：{categories}；"
+                        f"脱敏预览：{preview_text[:800]}"
+                    ),
+                    suggested_value="拒绝",
+                    options=["允许", "拒绝"],
+                    confidence=1.0,
+                    blocking=True,
+                    batch_applicable=False,
+                    rememberable=False,
+                    source=SourceRef(source_file=job.input_files[0]),
+                )
+            )
+        return prompts
+
+    def _load_draft_result(
+        self,
+        job_id: str,
+        task_dir: Path,
+        draft: JobRequest,
+    ) -> ModuleResult:
+        result_path = resolve_contained_file(
+            Path(draft.output_dir) / "result.json",
+            task_dir,
+            "draft result file",
+            reject_link=True,
+        )
+        result = ModuleResult.model_validate_json(result_path.read_text(encoding="utf-8"))
+        if result.job_id != job_id or result.module_id is not draft.module_id:
+            raise ValueError("draft result identity does not match task")
+        return result
+
+    @staticmethod
+    def _service_consent_map(
+        bundle: ConfirmationBundle,
+        requests: list[ServiceRequest],
+    ) -> dict[str, bool]:
+        supplied = {answer.confirmation_id: answer.value for answer in bundle.answers}
+        decisions: dict[str, bool] = {}
+        for request in requests:
+            if request.service != "ai":
+                continue
+            if not request.requires_user_consent:
+                decisions[request.request_id] = True
+                continue
+            key = f"{_SERVICE_CONSENT_PREFIX}{request.request_id}"
+            value = supplied.get(key)
+            if isinstance(value, bool):
+                decisions[request.request_id] = value
+            else:
+                decisions[request.request_id] = str(value).strip().lower() in {
+                    "1",
+                    "allow",
+                    "allowed",
+                    "true",
+                    "yes",
+                    "允许",
+                    "同意",
+                }
+        return decisions
+
+    def _auto_finalize_services(self, job_id: str) -> None:
+        task_dir = resolve_contained_directory(
+            self.paths.tasks / job_id,
+            self.paths.tasks,
+            "service task directory",
+            reject_link=True,
+        )
+        bundle_path = resolve_contained_target(
+            task_dir / "confirmation.json",
+            task_dir,
+            "automatic confirmation file",
+            reject_link=True,
+        )
+        bundle = ConfirmationBundle(job_id=job_id, answers=[])
+        _atomic_write_text(bundle_path, bundle.model_dump_json(indent=2))
+        self._begin_finalize(job_id, bundle_path, validate_answers=False)
 
     @staticmethod
     def _error_message(error: Exception) -> str:

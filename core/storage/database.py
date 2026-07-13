@@ -79,7 +79,48 @@ MIGRATION_2 = Migration(
     ),
 )
 
-MIGRATIONS: tuple[Migration, ...] = (MIGRATION_1, MIGRATION_2)
+MIGRATION_3 = Migration(
+    version=3,
+    statements=(
+        """
+        CREATE TABLE ai_consent_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            module_id TEXT NOT NULL,
+            provider_id TEXT NOT NULL,
+            allowed INTEGER NOT NULL,
+            data_categories_json TEXT NOT NULL,
+            decided_at TEXT NOT NULL
+        )
+        """,
+        "CREATE INDEX idx_ai_consent_task ON ai_consent_audit(task_id)",
+    ),
+)
+
+MIGRATION_4 = Migration(
+    version=4,
+    statements=(
+        """
+        CREATE TABLE knowledge_records (
+            record_id TEXT PRIMARY KEY,
+            namespace TEXT NOT NULL,
+            title TEXT NOT NULL,
+            content TEXT NOT NULL,
+            source_kind TEXT NOT NULL,
+            enabled INTEGER NOT NULL,
+            source_path TEXT
+        )
+        """,
+        "CREATE INDEX idx_knowledge_namespace ON knowledge_records(namespace, enabled)",
+    ),
+)
+
+MIGRATIONS: tuple[Migration, ...] = (
+    MIGRATION_1,
+    MIGRATION_2,
+    MIGRATION_3,
+    MIGRATION_4,
+)
 
 
 class Database:
@@ -144,6 +185,11 @@ class Database:
     def scalar(self, sql: str, parameters: tuple[Any, ...] = ()) -> Any:
         row = self.connection.execute(sql, parameters).fetchone()
         return None if row is None else row[0]
+
+    def query_all(
+        self, sql: str, parameters: tuple[Any, ...] = ()
+    ) -> list[sqlite3.Row]:
+        return list(self.connection.execute(sql, parameters).fetchall())
 
     def close(self) -> None:
         self.connection.close()

@@ -5,10 +5,18 @@ from pathlib import Path
 
 from PySide6.QtWidgets import QApplication
 
+from core.ai.audit import ConsentAuditRepository
+from core.ai.gateway import AIGateway
+from core.ai.providers import MockProvider
 from core.confirmations.service import ConfirmationService
+from core.knowledge.models import KnowledgeRecord, KnowledgeSourceKind
+from core.knowledge.repository import KnowledgeRepository
 from core.modules.registry import ModuleRegistry, RegisteredModule
 from core.platform.logging import configure_logging
 from core.platform.paths import AppPaths
+from core.security.credentials import CredentialStore, KeyringCredentialStore
+from core.security.redaction import RedactionService
+from core.services.orchestrator import ServiceOrchestrator
 from core.storage.database import Database
 from core.storage.repositories.confirmations import ConfirmationRepository
 from core.storage.repositories.modules import ModuleRepository
@@ -27,6 +35,11 @@ class AppContext:
     module_repository: ModuleRepository
     task_repository: TaskRepository
     confirmation_repository: ConfirmationRepository
+    consent_audit_repository: ConsentAuditRepository
+    knowledge_repository: KnowledgeRepository
+    credential_store: CredentialStore
+    ai_gateway: AIGateway
+    service_orchestrator: ServiceOrchestrator
     registry: ModuleRegistry
     task_service: TaskService
     confirmation_service: ConfirmationService
@@ -65,6 +78,21 @@ def build_context(data_root: Path | None = None, use_mocks: bool = True) -> AppC
         module_repository = ModuleRepository(database)
         task_repository = TaskRepository(database)
         confirmation_repository = ConfirmationRepository(database)
+        consent_audit_repository = ConsentAuditRepository(database)
+        knowledge_repository = KnowledgeRepository(database)
+        _seed_framework_knowledge(knowledge_repository)
+        credential_store = KeyringCredentialStore()
+        ai_gateway = AIGateway(
+            MockProvider(),
+            RedactionService(),
+            consent_audit_repository,
+        )
+        service_orchestrator = ServiceOrchestrator(
+            knowledge_repository,
+            ai_gateway,
+            provider_id="mock",
+            model=settings.get("ai_model", "mock-model") or "mock-model",
+        )
         registry = ModuleRegistry(
             paths.modules,
             resource_root / "mock_modules",
@@ -78,6 +106,7 @@ def build_context(data_root: Path | None = None, use_mocks: bool = True) -> AppC
             registry,
             task_repository,
             confirmation_repository,
+            service_orchestrator=service_orchestrator,
         )
         confirmation_service = ConfirmationService(
             paths,
@@ -92,6 +121,11 @@ def build_context(data_root: Path | None = None, use_mocks: bool = True) -> AppC
             module_repository=module_repository,
             task_repository=task_repository,
             confirmation_repository=confirmation_repository,
+            consent_audit_repository=consent_audit_repository,
+            knowledge_repository=knowledge_repository,
+            credential_store=credential_store,
+            ai_gateway=ai_gateway,
+            service_orchestrator=service_orchestrator,
             registry=registry,
             task_service=task_service,
             confirmation_service=confirmation_service,
@@ -102,6 +136,47 @@ def build_context(data_root: Path | None = None, use_mocks: bool = True) -> AppC
     except Exception:
         database.close()
         raise
+
+
+def _seed_framework_knowledge(repository: KnowledgeRepository) -> None:
+    if repository.list_records():
+        return
+    records = (
+        KnowledgeRecord(
+            "framework-rule-priority",
+            "shared",
+            "品质判断知识优先级",
+            "客户确认的正式规则优先于本次人工确认、历史案例和模型通用知识。",
+            KnowledgeSourceKind.CONFIRMED_RULE,
+            True,
+        ),
+        KnowledgeRecord(
+            "framework-moisture-example",
+            "moisture",
+            "竹丝水分模拟知识",
+            "水分异常阈值必须由模块规则和客户确认标准提供，框架不自行判断。",
+            KnowledgeSourceKind.HISTORICAL_EXAMPLE,
+            True,
+        ),
+        KnowledgeRecord(
+            "framework-boiling-example",
+            "boiling",
+            "水煮实验模拟知识",
+            "水煮实验结论由业务模块生成，边界问题进入人工确认。",
+            KnowledgeSourceKind.HISTORICAL_EXAMPLE,
+            True,
+        ),
+        KnowledgeRecord(
+            "framework-after-sales-example",
+            "after_sales",
+            "售后分析模拟知识",
+            "售后问题分类和建议必须保留来源追溯并允许人工复核。",
+            KnowledgeSourceKind.HISTORICAL_EXAMPLE,
+            True,
+        ),
+    )
+    for record in records:
+        repository.add(record)
 
 
 def create_application(argv: list[str] | None = None) -> QApplication:

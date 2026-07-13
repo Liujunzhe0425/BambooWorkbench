@@ -93,11 +93,11 @@ def test_navigation_refreshes_history(
     assert main_window.stack.currentWidget() is main_window.history_page
 
 
-def test_knowledge_placeholder_boundary_is_exact(main_window) -> None:
+def test_knowledge_service_boundary_is_exact(main_window) -> None:
     page = main_window.knowledge_page
 
     assert page.namespaces == ("shared", "moisture", "boiling", "after_sales")
-    assert page.message == "模拟知识库：真实检索将在公共服务阶段接入"
+    assert page.message == "本地知识元数据与确定性检索已启用；当前版本不包含向量检索"
     assert page.lookup("shared", "竹材") == []
     assert page.lookup("moisture", "含水率") == []
     with pytest.raises(ValueError, match="unknown knowledge namespace"):
