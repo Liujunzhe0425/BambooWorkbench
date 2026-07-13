@@ -3,6 +3,7 @@ import ctypes
 import os
 import subprocess
 import sys
+import threading
 from collections.abc import Callable, Sequence
 from ctypes import wintypes
 from pathlib import Path
@@ -117,18 +118,27 @@ def run_host(
     launcher_arguments: Sequence[str],
     *,
     job_factory: Callable[[], WindowsJob] = create_contained_job,
-    child_runner: Callable[..., subprocess.CompletedProcess[object]] = subprocess.run,
+    child_runner: Callable[..., subprocess.CompletedProcess[object]] | None = None,
     host_exit: Callable[[int], NoReturn] | None = None,
 ) -> int:
     if host_exit is None:
         host_exit = terminate_current_process
+    if child_runner is None:
+        child_runner = _run_streaming_child
     launcher = launcher.resolve()
     validation_error = launcher_validation_error(launcher)
     if validation_error is not None:
         print(f"module host rejected launcher: {validation_error}", file=sys.stderr, flush=True)
         return HOST_CHILD_START_ERROR
-    if list(launcher_arguments) != ["self-check"]:
-        print("module host rejected command: expected self-check", file=sys.stderr, flush=True)
+    arguments = list(launcher_arguments)
+    valid_self_check = arguments == ["self-check"]
+    valid_run = (
+        len(arguments) == 3
+        and arguments[:2] == ["run", "--job"]
+        and Path(arguments[2]).is_absolute()
+    )
+    if not valid_self_check and not valid_run:
+        print("module host rejected command", file=sys.stderr, flush=True)
         return HOST_CHILD_START_ERROR
     if sys.platform != "win32":
         print("module host requires Windows Job Object containment", file=sys.stderr, flush=True)
@@ -142,15 +152,12 @@ def run_host(
 
     system_root = Path(os.environ.get("SYSTEMROOT", r"C:\Windows"))
     command_processor = str(system_root / "System32" / "cmd.exe")
-    command = (
-        f'{subprocess.list2cmdline([command_processor])} /d /s /c '
-        f'""{launcher}" self-check"'
-    )
+    child_command = subprocess.list2cmdline([str(launcher), *arguments])
+    command = f'{subprocess.list2cmdline([command_processor])} /d /s /c "{child_command}"'
     try:
         completed = child_runner(
             command,
             cwd=launcher.parent,
-            capture_output=True,
             check=False,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
@@ -185,6 +192,40 @@ def _forward_child_output(completed: subprocess.CompletedProcess[object]) -> Non
         sys.stderr.buffer.flush()
 
 
+def _run_streaming_child(
+    command: str, *, cwd: Path, check: bool, creationflags: int
+) -> subprocess.CompletedProcess[bytes]:
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        creationflags=creationflags,
+    )
+    assert process.stdout is not None
+    assert process.stderr is not None
+    stdout_thread = threading.Thread(
+        target=_relay_lines, args=(process.stdout, sys.stdout.buffer), daemon=True
+    )
+    stderr_thread = threading.Thread(
+        target=_relay_lines, args=(process.stderr, sys.stderr.buffer), daemon=True
+    )
+    stdout_thread.start()
+    stderr_thread.start()
+    return_code = process.wait()
+    stdout_thread.join()
+    stderr_thread.join()
+    if check and return_code:
+        raise subprocess.CalledProcessError(return_code, command)
+    return subprocess.CompletedProcess(command, return_code)
+
+
+def _relay_lines(source: object, destination: object) -> None:
+    while line := source.readline():
+        destination.write(line)
+        destination.flush()
+
+
 def _windows_error(operation: str) -> str:
     return f"{operation} failed with Windows error {ctypes.get_last_error()}"
 
@@ -192,9 +233,13 @@ def _windows_error(operation: str) -> str:
 def main(arguments: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--launcher", required=True, type=Path)
-    parser.add_argument("command", choices=["self-check"])
+    parser.add_argument("command", choices=["self-check", "run"])
+    parser.add_argument("--job", type=Path)
     parsed = parser.parse_args(arguments)
-    return run_host(parsed.launcher, [parsed.command])
+    launcher_arguments = [parsed.command]
+    if parsed.job is not None:
+        launcher_arguments.extend(["--job", str(parsed.job.resolve())])
+    return run_host(parsed.launcher, launcher_arguments)
 
 
 if __name__ == "__main__":
