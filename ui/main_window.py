@@ -10,11 +10,15 @@ from PySide6.QtWidgets import (
 from core.contracts.enums import TaskStatus
 from core.contracts.progress import ProgressEvent
 from core.contracts.result import ModuleResult
+from core.tasks.models import InvalidTaskTransition, TaskLifecycleState
 from ui.navigation import Navigation
 from ui.page_ids import PageId
 from ui.pages.confirmations_page import ConfirmationsPage
+from ui.pages.history_page import HistoryPage
+from ui.pages.knowledge_page import KnowledgePage
 from ui.pages.module_task_page import ModuleTaskPage
 from ui.pages.result_center_page import ResultCenterPage
+from ui.pages.settings_page import SettingsPage
 from ui.pages.task_progress_page import TaskProgressPage
 from ui.pages.workbench_page import WorkbenchPage
 
@@ -36,13 +40,16 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.stack.setObjectName("pageStack")
         self.workbench_page = WorkbenchPage(context.registry)
+        self.history_page = HistoryPage(context.task_repository)
         self.confirmations_page = ConfirmationsPage()
+        self.knowledge_page = KnowledgePage()
+        self.settings_page = SettingsPage(context.settings, context.paths)
         self.pages: dict[PageId, QWidget] = {
             PageId.WORKBENCH: self.workbench_page,
-            PageId.HISTORY: self._placeholder(PageId.HISTORY),
+            PageId.HISTORY: self.history_page,
             PageId.CONFIRMATIONS: self.confirmations_page,
-            PageId.KNOWLEDGE: self._placeholder(PageId.KNOWLEDGE),
-            PageId.SETTINGS: self._placeholder(PageId.SETTINGS),
+            PageId.KNOWLEDGE: self.knowledge_page,
+            PageId.SETTINGS: self.settings_page,
         }
         for page in self.pages.values():
             self.stack.addWidget(page)
@@ -69,11 +76,16 @@ class MainWindow(QMainWindow):
         self.navigation.page_selected.connect(self.navigate)
         self.workbench_page.module_selected.connect(self._open_module)
         self.module_task_page.task_requested.connect(self._start_task)
+        self.task_progress_page.cancel_requested.connect(self._cancel_task)
         self.confirmations_page.submitted.connect(self._submit_confirmation)
+        self.settings_page.action_failed.connect(
+            lambda message: self._show_failure("日志目录不可用", message)
+        )
         context.task_service.progress.connect(self._on_progress)
         context.task_service.needs_confirmation.connect(self._on_confirmation)
         context.task_service.finished.connect(self._on_finished)
         context.task_service.failed.connect(self._on_failed)
+        context.task_service.status_changed.connect(self._on_status_changed)
         self.navigate(PageId.WORKBENCH)
 
     @staticmethod
@@ -83,8 +95,32 @@ class MainWindow(QMainWindow):
         return page
 
     def navigate(self, page_id: PageId) -> None:
+        if page_id is PageId.HISTORY:
+            self.history_page.refresh()
         self.stack.setCurrentWidget(self.pages[page_id])
         self.navigation.set_current_page(page_id)
+
+    def _cancel_task(self, job_id: str) -> None:
+        self.task_progress_page.cancel_button.setEnabled(False)
+        try:
+            self.context.task_service.cancel(job_id)
+        except (InvalidTaskTransition, RuntimeError) as error:
+            if self.task_progress_page.current_job_id == job_id:
+                self.task_progress_page.cancel_button.setEnabled(True)
+            self._show_failure("无法取消任务", str(error))
+
+    def _on_status_changed(
+        self,
+        job_id: str,
+        status: TaskLifecycleState,
+    ) -> None:
+        if (
+            status is TaskLifecycleState.CANCELLED
+            and self.task_progress_page.current_job_id == job_id
+        ):
+            self.task_progress_page.current_job_id = ""
+            self.task_progress_page.cancel_button.setEnabled(False)
+            self.task_progress_page.message_label.setText("任务已取消")
 
     def _open_module(self, module_id: object) -> None:
         try:
@@ -146,6 +182,9 @@ class MainWindow(QMainWindow):
 
     def _on_finished(self, result: ModuleResult) -> None:
         self._confirmation_job_ids.discard(result.job_id)
+        if self.task_progress_page.current_job_id == result.job_id:
+            self.task_progress_page.current_job_id = ""
+            self.task_progress_page.cancel_button.setEnabled(False)
         self.result_center_page.show_result(result)
         self.stack.setCurrentWidget(self.result_center_page)
         if result.status in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
@@ -163,6 +202,9 @@ class MainWindow(QMainWindow):
                 else self.module_task_page
             )
             self.stack.setCurrentWidget(target)
+            self.task_progress_page.current_job_id = ""
+            self.task_progress_page.cancel_button.setEnabled(False)
+            self.task_progress_page.message_label.setText("任务执行失败")
         self._show_failure("任务未完成", f"任务 {job_id}：{message}")
 
     def _show_failure(self, title: str, message: str) -> None:

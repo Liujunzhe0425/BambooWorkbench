@@ -60,6 +60,7 @@ class TaskService(QObject):
     finished = Signal(object)
     needs_confirmation = Signal(str, object)
     failed = Signal(str, str)
+    status_changed = Signal(str, object)
 
     def __init__(
         self,
@@ -81,6 +82,20 @@ class TaskService(QObject):
         self._states: dict[str, TaskStateMachine] = {}
         self._jobs: dict[str, JobRequest] = {}
         self._failed_signals: set[str] = set()
+        self._cancellation_pending: set[str] = set()
+
+    def cancel(self, job_id: str) -> None:
+        runner = self.runners.get(job_id)
+        if runner is None:
+            raise InvalidTaskTransition(f"job {job_id} has no active runner")
+        if job_id in self._cancellation_pending:
+            raise InvalidTaskTransition(f"job {job_id} cancellation is pending")
+        self._cancellation_pending.add(job_id)
+        try:
+            runner.cancel()
+        except Exception:
+            self._cancellation_pending.discard(job_id)
+            raise
 
     def create_and_start(self, module_id: ModuleId, inputs: list[Path]) -> str:
         timestamp = datetime.now().astimezone()
@@ -155,9 +170,7 @@ class TaskService(QObject):
             raise InvalidTaskTransition(f"job {job_id} already has an active runner")
         task = self.task_repository.get(job_id)
         if task["status"] != TaskLifecycleState.WAITING_CONFIRMATION.value:
-            raise InvalidTaskTransition(
-                "persisted task state is not waiting_confirmation"
-            )
+            raise InvalidTaskTransition("persisted task state is not waiting_confirmation")
 
         tasks_root = resolve_path(self.paths.tasks, "tasks root", strict=True)
         if not tasks_root.is_dir():
@@ -232,9 +245,7 @@ class TaskService(QObject):
         except Exception as exc:
             self._record_failure(job_id, self._error_message(exc), runner)
 
-    def _validate_draft_paths(
-        self, job_id: str, task_dir: Path, draft: JobRequest
-    ) -> None:
+    def _validate_draft_paths(self, job_id: str, task_dir: Path, draft: JobRequest) -> None:
         persisted_files = self.task_repository.list_files(job_id)
         persisted_snapshots = [
             resolve_contained_file(
@@ -245,9 +256,7 @@ class TaskService(QObject):
             )
             for record in persisted_files
         ]
-        for record, snapshot in zip(
-            persisted_files, persisted_snapshots, strict=True
-        ):
+        for record, snapshot in zip(persisted_files, persisted_snapshots, strict=True):
             if self._sha256(snapshot) != str(record["fingerprint"]):
                 raise ValueError("persisted input snapshot fingerprint does not match content")
         draft_inputs = [
@@ -287,17 +296,14 @@ class TaskService(QObject):
                 digest.update(chunk)
         return digest.hexdigest()
 
-    def _validate_stored_answers(
-        self, job_id: str, bundle: ConfirmationBundle
-    ) -> None:
+    def _validate_stored_answers(self, job_id: str, bundle: ConfirmationBundle) -> None:
         records = self.confirmation_repository.list_for_job(job_id)
         if not records:
             raise ValueError("stored answered state has no canonical prompts")
         prompts = {
             prompt.confirmation_id: prompt
             for prompt in (
-                ConfirmationPrompt.model_validate(record["original_prompt"])
-                for record in records
+                ConfirmationPrompt.model_validate(record["original_prompt"]) for record in records
             )
         }
         bundle_ids = [answer.confirmation_id for answer in bundle.answers]
@@ -313,9 +319,7 @@ class TaskService(QObject):
             if record["answer"] is not None
         }
         required = {
-            confirmation_id
-            for confirmation_id, prompt in prompts.items()
-            if prompt.blocking
+            confirmation_id for confirmation_id, prompt in prompts.items() if prompt.blocking
         }
         if required - set(stored_answers):
             raise ValueError("stored answered state is missing blocking confirmations")
@@ -333,21 +337,15 @@ class TaskService(QObject):
             lambda result, active=runner: self._complete(job_id, result, active)
         )
         runner.failed.connect(
-            lambda message, active=runner: self._record_failure(
-                job_id, str(message), active
-            )
+            lambda message, active=runner: self._record_failure(job_id, str(message), active)
         )
         runner.cancelled.connect(lambda active=runner: self._cancelled(job_id, active))
 
-    def _forward_progress(
-        self, job_id: str, event: object, runner: ModuleProcessRunner
-    ) -> None:
+    def _forward_progress(self, job_id: str, event: object, runner: ModuleProcessRunner) -> None:
         if self.runners.get(job_id) is runner:
             self.progress.emit(job_id, event)
 
-    def _complete(
-        self, job_id: str, result: ModuleResult, runner: ModuleProcessRunner
-    ) -> None:
+    def _complete(self, job_id: str, result: ModuleResult, runner: ModuleProcessRunner) -> None:
         if self.runners.get(job_id) is not runner:
             return
         try:
@@ -397,8 +395,9 @@ class TaskService(QObject):
             return
         try:
             self._persist_transition(job_id, TaskLifecycleState.FAILED, error=message)
-        except Exception as exc:
-            message = f"{message}; failure persistence error: {exc}"
+        except Exception:
+            self._cleanup_runner(job_id, runner, task_terminal=True)
+            return
         self._failed_signals.add(job_id)
         self.failed.emit(job_id, message)
         self._cleanup_runner(job_id, runner, task_terminal=True)
@@ -420,6 +419,7 @@ class TaskService(QObject):
             result_path=result_path,
         )
         machine.transition(target)
+        self.status_changed.emit(job_id, target)
 
     def _cleanup_runner(
         self,
@@ -432,6 +432,7 @@ class TaskService(QObject):
         if runner is not None and active is not runner:
             return
         removed = self.runners.pop(job_id, None)
+        self._cancellation_pending.discard(job_id)
         if removed is not None:
             removed.deleteLater()
         if task_terminal:
