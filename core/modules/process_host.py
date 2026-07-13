@@ -152,14 +152,25 @@ def run_host(
 
     system_root = Path(os.environ.get("SYSTEMROOT", r"C:\Windows"))
     command_processor = str(system_root / "System32" / "cmd.exe")
-    child_command = subprocess.list2cmdline([str(launcher), *arguments])
-    command = f'{subprocess.list2cmdline([command_processor])} /d /s /c "{child_command}"'
+    environment = os.environ.copy()
+    environment["BAMBOO_HOST_LAUNCHER"] = str(launcher)
+    references = ['"%BAMBOO_HOST_LAUNCHER%"']
+    for index, argument in enumerate(arguments):
+        name = f"BAMBOO_HOST_ARG_{index}"
+        environment[name] = argument
+        references.append(f'"%{name}%"')
+    fixed_command = f'"{" ".join(references)}"'
+    command = (
+        f'{subprocess.list2cmdline([command_processor])} '
+        f"/d /v:off /s /c {fixed_command}"
+    )
     try:
         completed = child_runner(
             command,
             cwd=launcher.parent,
             check=False,
             creationflags=subprocess.CREATE_NO_WINDOW,
+            env=environment,
         )
     except OSError as exc:
         print(f"module host child start failed: {type(exc).__name__}", file=sys.stderr, flush=True)
@@ -193,7 +204,12 @@ def _forward_child_output(completed: subprocess.CompletedProcess[object]) -> Non
 
 
 def _run_streaming_child(
-    command: str, *, cwd: Path, check: bool, creationflags: int
+    command: str,
+    *,
+    cwd: Path,
+    check: bool,
+    creationflags: int,
+    env: dict[str, str],
 ) -> subprocess.CompletedProcess[bytes]:
     process = subprocess.Popen(
         command,
@@ -201,6 +217,7 @@ def _run_streaming_child(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         creationflags=creationflags,
+        env=env,
     )
     assert process.stdout is not None
     assert process.stderr is not None

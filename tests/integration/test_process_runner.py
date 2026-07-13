@@ -1,4 +1,5 @@
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,7 +11,10 @@ from core.modules.process_runner import ModuleProcessRunner
 from core.modules.registry import ModuleRegistry, RegisteredModule
 
 
-def _write_job(tmp_path: Path, name: str = "normal.xlsx") -> tuple[Path, Path]:
+def _write_job(
+    tmp_path: Path, name: str = "normal.xlsx", job_id: str = "runner-001"
+) -> tuple[Path, Path]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     input_file = tmp_path / name
     input_file.write_bytes(b"mock")
     output_dir = tmp_path / "output"
@@ -19,7 +23,7 @@ def _write_job(tmp_path: Path, name: str = "normal.xlsx") -> tuple[Path, Path]:
         json.dumps(
             {
                 "schema_version": "1.0",
-                "job_id": "runner-001",
+                "job_id": job_id,
                 "module_id": "moisture",
                 "phase": "draft",
                 "run_mode": "single",
@@ -66,6 +70,14 @@ if args.mode == "invalid-progress":
     print("not json", flush=True)
     time.sleep(30)
     raise SystemExit(0)
+if args.mode == "fragmented-progress":
+    import sys
+    sys.stdout.write('{"type":"progress","percent":25,')
+    sys.stdout.flush()
+    time.sleep(0.05)
+    sys.stdout.write('"message":"fragmented"}\\n')
+    sys.stdout.flush()
+    time.sleep(0.2)
 if args.mode == "missing-result":
     raise SystemExit(0)
 artifact = output_dir / "artifact.txt"
@@ -102,6 +114,10 @@ if args.mode == "missing-output":
 if args.mode == "foreign-source":
     result["file_results"][0]["source_file"] = str((output_dir / "foreign.xlsx").resolve())
 (output_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+if args.mode == "unterminated-progress":
+    import sys
+    sys.stdout.write("not-json")
+    sys.stdout.flush()
 """.strip(),
         encoding="utf-8",
     )
@@ -119,7 +135,7 @@ def _terminal_spies(runner: ModuleProcessRunner) -> tuple[QSignalSpy, QSignalSpy
 
 def _wait_terminal(qtbot, spies: tuple[QSignalSpy, ...], timeout: int = 15_000) -> None:
     qtbot.waitUntil(lambda: sum(spy.count() for spy in spies) == 1, timeout=timeout)
-    qtbot.wait(100)
+    qtbot.wait(750)
     assert sum(spy.count() for spy in spies) == 1
 
 
@@ -167,6 +183,7 @@ def test_runner_reports_mock_module_failures_once(
         ("escaped-output", "outside output_dir"),
         ("missing-output", "output artifact is not a file"),
         ("foreign-source", "file result source is not a job input"),
+        ("unterminated-progress", "unterminated progress event"),
     ],
 )
 def test_runner_rejects_invalid_protocol_or_result_once(
@@ -203,7 +220,99 @@ def test_user_cancellation_emits_cancelled_once_and_is_nonblocking(qtbot, tmp_pa
     runner.start(_registered_mock(), job_path)
     qtbot.waitUntil(lambda: runner.is_running, timeout=5_000)
     runner.cancel()
-    assert terminals[2].count() == 1
+    assert terminals[2].count() == 0
     _wait_terminal(qtbot, terminals)
 
     assert terminals[2].count() == 1
+
+
+def test_fragmented_progress_is_buffered_until_newline(qtbot, tmp_path: Path) -> None:
+    job_path, _ = _write_job(tmp_path)
+    runner = ModuleProcessRunner(timeout_ms=10_000)
+    progress = QSignalSpy(runner.progress)
+    terminals = _terminal_spies(runner)
+
+    runner.start(_write_test_module(tmp_path, "fragmented-progress"), job_path)
+    qtbot.waitUntil(lambda: progress.count() == 1, timeout=5_000)
+    assert runner.is_running
+    _wait_terminal(qtbot, terminals)
+
+    assert progress.at(0)[0].message == "fragmented"
+
+
+def test_job_module_mismatch_fails_without_starting_process(qtbot, tmp_path: Path) -> None:
+    job_path, _ = _write_job(tmp_path)
+    payload = json.loads(job_path.read_text(encoding="utf-8"))
+    payload["module_id"] = "boiling"
+    job_path.write_text(json.dumps(payload), encoding="utf-8")
+    runner = ModuleProcessRunner()
+    terminals = _terminal_spies(runner)
+
+    runner.start(_registered_mock(), job_path)
+    _wait_terminal(qtbot, terminals)
+
+    assert terminals[1].count() == 1
+    assert "job module_id does not match" in terminals[1].at(0)[0]
+    assert not runner.is_running
+
+
+def test_overlapping_start_raises_without_consuming_active_terminal(qtbot, tmp_path: Path) -> None:
+    job_path, _ = _write_job(tmp_path, "timeout.xlsx")
+    runner = ModuleProcessRunner(timeout_ms=10_000, cancellation_grace_ms=50)
+    terminals = _terminal_spies(runner)
+    module = _registered_mock()
+
+    runner.start(module, job_path)
+    qtbot.waitUntil(lambda: runner.is_running, timeout=5_000)
+    with pytest.raises(RuntimeError, match="already active"):
+        runner.start(module, job_path)
+    assert sum(spy.count() for spy in terminals) == 0
+    runner.cancel()
+    _wait_terminal(qtbot, terminals)
+
+    assert terminals[2].count() == 1
+
+
+def test_runner_can_be_reused_sequentially(qtbot, tmp_path: Path) -> None:
+    runner = ModuleProcessRunner(timeout_ms=10_000)
+    terminals = _terminal_spies(runner)
+    module = _registered_mock()
+
+    first_job, _ = _write_job(tmp_path / "first", job_id="runner-001")
+    runner.start(module, first_job)
+    qtbot.waitUntil(lambda: terminals[0].count() == 1, timeout=15_000)
+    second_job, _ = _write_job(tmp_path / "second", job_id="runner-002")
+    runner.start(module, second_job)
+    qtbot.waitUntil(lambda: terminals[0].count() == 2, timeout=15_000)
+    qtbot.wait(750)
+
+    assert terminals[0].count() == 2
+    assert terminals[1].count() == terminals[2].count() == 0
+
+
+def test_qprocess_start_error_emits_one_failure(qtbot, tmp_path: Path, monkeypatch) -> None:
+    job_path, _ = _write_job(tmp_path)
+    runner = ModuleProcessRunner(timeout_ms=10_000, cancellation_grace_ms=50)
+    terminals = _terminal_spies(runner)
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "missing-python.exe"))
+
+    runner.start(_registered_mock(), job_path)
+    _wait_terminal(qtbot, terminals)
+
+    assert terminals[1].count() == 1
+    assert "process error" in terminals[1].at(0)[0]
+
+
+def test_special_job_and_launcher_paths_are_not_expanded_or_injected(
+    qtbot, tmp_path: Path
+) -> None:
+    special = tmp_path / "用户 & %PATH% ^ (space) !"
+    special.mkdir()
+    job_path, _ = _write_job(special, job_id="runner-003")
+    runner = ModuleProcessRunner(timeout_ms=10_000)
+    terminals = _terminal_spies(runner)
+
+    runner.start(_write_test_module(special, "normal"), job_path)
+    _wait_terminal(qtbot, terminals)
+
+    assert terminals[0].count() == 1

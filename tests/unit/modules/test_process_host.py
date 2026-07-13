@@ -61,3 +61,39 @@ def test_normal_child_exit_terminates_host_with_child_code(tmp_path: Path) -> No
         )
 
     assert exit_codes == [7]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows Job Object")
+def test_host_keeps_launcher_and_arguments_out_of_cmd_text(tmp_path: Path) -> None:
+    special_dir = tmp_path / "模块 & %PATH% ^ (space) !"
+    special_dir.mkdir()
+    launcher = special_dir / "run_module.cmd"
+    launcher.write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
+    job_path = special_dir / "任务 & %PATH% ^ (job).json"
+    job_path.write_text("{}", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    class HostExited(Exception):
+        pass
+
+    def child_runner(command: str, **kwargs):
+        captured["command"] = command
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(command, 0)
+
+    with pytest.raises(HostExited):
+        run_host(
+            launcher,
+            ["run", "--job", str(job_path)],
+            job_factory=lambda: object(),
+            child_runner=child_runner,
+            host_exit=lambda _code: (_ for _ in ()).throw(HostExited),
+        )
+
+    command = str(captured["command"])
+    environment = captured["env"]
+    assert str(launcher) not in command
+    assert str(job_path) not in command
+    assert "/v:off" in command
+    assert environment["BAMBOO_HOST_LAUNCHER"] == str(launcher.resolve())
+    assert environment["BAMBOO_HOST_ARG_2"] == str(job_path)

@@ -1,4 +1,5 @@
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -11,6 +12,19 @@ from .progress_parser import parse_progress
 from .registry import RegisteredModule
 
 
+def resolve_contained_file(path: Path, root: Path, label: str) -> Path:
+    resolved_root = root.resolve(strict=True)
+    try:
+        resolved_path = path.resolve(strict=True)
+    except FileNotFoundError as exc:
+        raise ValueError(f"{label} is not a file") from exc
+    if not resolved_path.is_relative_to(resolved_root):
+        raise ValueError(f"{label} is outside output_dir")
+    if not resolved_path.is_file():
+        raise ValueError(f"{label} is not a file")
+    return resolved_path
+
+
 class ModuleProcessRunner(QObject):
     progress = Signal(object)
     completed = Signal(object)
@@ -18,47 +32,63 @@ class ModuleProcessRunner(QObject):
     cancelled = Signal()
 
     def __init__(
-        self, timeout_ms: int = 120_000, cancellation_grace_ms: int = 500
+        self,
+        timeout_ms: int = 120_000,
+        cancellation_grace_ms: int = 500,
+        process_factory: Callable[[QObject], QProcess] = QProcess,
     ) -> None:
         super().__init__()
         self.timeout_ms = timeout_ms
         self.cancellation_grace_ms = cancellation_grace_ms
-        self.process = QProcess(self)
-        self.process.readyReadStandardOutput.connect(self._read_stdout)
-        self.process.finished.connect(self._finished)
-        self.process.errorOccurred.connect(self._process_error)
-        self.timer = QTimer(self)
-        self.timer.setSingleShot(True)
-        self.timer.timeout.connect(self._timeout)
-        self._kill_timer = QTimer(self)
-        self._kill_timer.setSingleShot(True)
-        self._kill_timer.timeout.connect(self._force_kill)
+        self._process_factory = process_factory
+        self._process: QProcess | None = None
         self._job: JobRequest | None = None
         self._module: RegisteredModule | None = None
-        self._terminal_emitted = False
+        self._stdout_buffer = bytearray()
+        self._generation = 0
+        self._active_generation: int | None = None
+        self._pending_terminal: tuple[str, object | None] | None = None
 
     @property
     def is_running(self) -> bool:
-        return self.process.state() != QProcess.ProcessState.NotRunning
+        return self._active_generation is not None
 
     def start(self, module: RegisteredModule, job_path: Path) -> None:
         if self.is_running:
-            self._emit_failed("module process is already running")
-            return
-        self._terminal_emitted = False
-        self._job = None
-        self._module = module
+            raise RuntimeError("module process run is already active")
+
         try:
             resolved_job_path = job_path.resolve(strict=True)
-            self._job = JobRequest.model_validate_json(
+            job = JobRequest.model_validate_json(
                 resolved_job_path.read_text(encoding="utf-8")
             )
         except (OSError, UnicodeError, ValidationError) as exc:
-            self._emit_failed(f"invalid job request: {exc}")
+            self.failed.emit(f"invalid job request: {exc}")
             return
-        if self._job.module_id != module.manifest.module_id:
-            self._emit_failed("job module_id does not match registered module")
+        if job.module_id != module.manifest.module_id:
+            self.failed.emit("job module_id does not match registered module")
             return
+
+        self._generation += 1
+        generation = self._generation
+        process = self._process_factory(self)
+        self._process = process
+        self._job = job
+        self._module = module
+        self._stdout_buffer.clear()
+        self._pending_terminal = None
+        self._active_generation = generation
+        process.readyReadStandardOutput.connect(
+            lambda: self._read_stdout(generation, process)
+        )
+        process.finished.connect(
+            lambda exit_code, status: self._finished(
+                generation, process, exit_code, status
+            )
+        )
+        process.errorOccurred.connect(
+            lambda error: self._process_error(generation, process, error)
+        )
 
         entrypoint = (module.path / module.manifest.entrypoint).resolve()
         host = Path(__file__).with_name("process_host.py").resolve()
@@ -67,9 +97,9 @@ class ModuleProcessRunner(QObject):
         environment.insert("PATH", f"{runtime_dir};{environment.value('PATH')}")
         environment.insert("PYTHONPATH", str(Path(__file__).parents[2]))
         environment.insert("PYTHONUTF8", "1")
-        self.process.setProcessEnvironment(environment)
-        self.process.setWorkingDirectory(str(module.path))
-        self.process.start(
+        process.setProcessEnvironment(environment)
+        process.setWorkingDirectory(str(module.path))
+        process.start(
             sys.executable,
             [
                 str(host),
@@ -80,60 +110,93 @@ class ModuleProcessRunner(QObject):
                 str(resolved_job_path),
             ],
         )
-        self.timer.start(self.timeout_ms)
+        QTimer.singleShot(
+            self.timeout_ms,
+            lambda: self._timeout(generation, process),
+        )
 
     def cancel(self) -> None:
-        if self._terminal_emitted or not self.is_running:
+        if not self.is_running or self._pending_terminal is not None:
             return
-        self._terminal_emitted = True
-        self.timer.stop()
-        self.cancelled.emit()
-        self._stop_process()
+        assert self._active_generation is not None
+        assert self._process is not None
+        self._request_stop(
+            self._active_generation,
+            self._process,
+            "cancelled",
+            None,
+        )
 
-    def _read_stdout(self) -> None:
-        if self._terminal_emitted:
-            self.process.readAllStandardOutput()
+    def _read_stdout(self, generation: int, process: QProcess) -> None:
+        data = bytes(process.readAllStandardOutput())
+        if not self._is_current(generation, process):
             return
-        while self.process.canReadLine():
-            line = bytes(self.process.readLine())
+        self._stdout_buffer.extend(data)
+        if self._pending_terminal is not None:
+            return
+        while (newline := self._stdout_buffer.find(b"\n")) >= 0:
+            line = bytes(self._stdout_buffer[: newline + 1])
+            del self._stdout_buffer[: newline + 1]
             try:
                 event = parse_progress(line)
             except (UnicodeError, ValidationError, ValueError) as exc:
-                self._emit_failed(f"invalid progress event: {exc}")
-                self._stop_process()
+                self._request_stop(
+                    generation,
+                    process,
+                    "failed",
+                    f"invalid progress event: {exc}",
+                )
                 return
             self.progress.emit(event)
 
-    def _finished(self, exit_code: int, _status: QProcess.ExitStatus) -> None:
-        self.timer.stop()
-        self._kill_timer.stop()
-        if self._terminal_emitted:
+    def _finished(
+        self,
+        generation: int,
+        process: QProcess,
+        exit_code: int,
+        _status: QProcess.ExitStatus,
+    ) -> None:
+        if not self._is_current(generation, process):
             return
-        self._read_stdout()
-        if self._terminal_emitted:
+        self._read_stdout(generation, process)
+        if self._pending_terminal is not None:
+            self._emit_pending_terminal(generation, process)
+            return
+        if self._stdout_buffer:
+            self._finalize(
+                generation,
+                process,
+                "failed",
+                "unterminated progress event at end of stdout",
+            )
             return
         if exit_code != 0:
-            error_text = bytes(self.process.readAllStandardError()).decode(
+            error_text = bytes(process.readAllStandardError()).decode(
                 "utf-8", errors="replace"
             ).strip()
             detail = f"module exited with code {exit_code}"
-            self._emit_failed(f"{detail}: {error_text}" if error_text else detail)
+            self._finalize(
+                generation,
+                process,
+                "failed",
+                f"{detail}: {error_text}" if error_text else detail,
+            )
             return
         try:
             result = self._load_and_validate_result()
         except (OSError, UnicodeError, ValidationError, ValueError) as exc:
-            self._emit_failed(str(exc))
+            self._finalize(generation, process, "failed", str(exc))
             return
-        self._terminal_emitted = True
-        self.completed.emit(result)
+        self._finalize(generation, process, "completed", result)
 
     def _load_and_validate_result(self) -> ModuleResult:
         if self._job is None or self._module is None:
             raise ValueError("runner lost job or module identity")
-        output_dir = Path(self._job.output_dir).resolve()
-        result_path = output_dir / "result.json"
-        if not result_path.is_file():
+        output_dir = Path(self._job.output_dir).resolve(strict=True)
+        candidate = output_dir / "result.json"
+        if not candidate.is_file():
             raise ValueError("result.json is missing")
+        result_path = resolve_contained_file(candidate, output_dir, "result.json")
         try:
             result = ModuleResult.model_validate_json(result_path.read_text(encoding="utf-8"))
         except (UnicodeError, ValidationError) as exc:
@@ -144,11 +207,7 @@ class ModuleProcessRunner(QObject):
             raise ValueError("result module_id does not match registered module")
 
         for output in result.outputs:
-            artifact = Path(output.path).resolve()
-            if not artifact.is_relative_to(output_dir):
-                raise ValueError("output artifact is outside output_dir")
-            if not artifact.is_file():
-                raise ValueError("output artifact is not a file")
+            resolve_contained_file(Path(output.path), output_dir, "output artifact")
 
         input_files = {Path(path).resolve() for path in self._job.input_files}
         for file_result in result.file_results:
@@ -156,31 +215,89 @@ class ModuleProcessRunner(QObject):
                 raise ValueError("file result source is not a job input")
         return result
 
-    def _timeout(self) -> None:
-        if self._terminal_emitted:
+    def _timeout(self, generation: int, process: QProcess) -> None:
+        if not self._is_current(generation, process) or self._pending_terminal is not None:
             return
-        self._emit_failed("module timed out")
-        self._stop_process()
+        self._request_stop(generation, process, "failed", "module timed out")
 
-    def _process_error(self, error: QProcess.ProcessError) -> None:
-        if self._terminal_emitted:
+    def _process_error(
+        self, generation: int, process: QProcess, error: QProcess.ProcessError
+    ) -> None:
+        if not self._is_current(generation, process):
             return
-        self._emit_failed(f"module process error: {error.name}")
-        self._stop_process()
+        if self._pending_terminal is None:
+            self._pending_terminal = (
+                "failed",
+                f"module process error: {error.name}",
+            )
+        if process.state() == QProcess.ProcessState.NotRunning:
+            QTimer.singleShot(
+                0,
+                lambda: self._emit_pending_if_stopped(generation, process),
+            )
+        else:
+            self._stop_process(generation, process)
 
-    def _emit_failed(self, message: str) -> None:
-        if self._terminal_emitted:
+    def _request_stop(
+        self,
+        generation: int,
+        process: QProcess,
+        kind: str,
+        payload: object | None,
+    ) -> None:
+        if not self._is_current(generation, process) or self._pending_terminal is not None:
             return
-        self._terminal_emitted = True
-        self.timer.stop()
-        self.failed.emit(message)
-
-    def _stop_process(self) -> None:
-        if not self.is_running:
+        self._pending_terminal = (kind, payload)
+        if process.state() == QProcess.ProcessState.NotRunning:
+            QTimer.singleShot(
+                0,
+                lambda: self._emit_pending_if_stopped(generation, process),
+            )
             return
-        self.process.terminate()
-        self._kill_timer.start(self.cancellation_grace_ms)
+        self._stop_process(generation, process)
 
-    def _force_kill(self) -> None:
-        if self.is_running:
-            self.process.kill()
+    def _stop_process(self, generation: int, process: QProcess) -> None:
+        process.terminate()
+        QTimer.singleShot(
+            self.cancellation_grace_ms,
+            lambda: self._force_kill(generation, process),
+        )
+
+    def _force_kill(self, generation: int, process: QProcess) -> None:
+        if self._is_current(generation, process) and (
+            process.state() != QProcess.ProcessState.NotRunning
+        ):
+            process.kill()
+
+    def _emit_pending_if_stopped(self, generation: int, process: QProcess) -> None:
+        if self._is_current(generation, process) and (
+            process.state() == QProcess.ProcessState.NotRunning
+        ):
+            self._emit_pending_terminal(generation, process)
+
+    def _emit_pending_terminal(self, generation: int, process: QProcess) -> None:
+        if self._pending_terminal is None:
+            return
+        kind, payload = self._pending_terminal
+        self._finalize(generation, process, kind, payload)
+
+    def _finalize(
+        self,
+        generation: int,
+        process: QProcess,
+        kind: str,
+        payload: object | None,
+    ) -> None:
+        if not self._is_current(generation, process):
+            return
+        self._active_generation = None
+        self._pending_terminal = None
+        if kind == "completed":
+            self.completed.emit(payload)
+        elif kind == "failed":
+            self.failed.emit(str(payload))
+        else:
+            self.cancelled.emit()
+
+    def _is_current(self, generation: int, process: QProcess) -> bool:
+        return self._active_generation == generation and self._process is process

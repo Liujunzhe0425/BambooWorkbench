@@ -189,20 +189,20 @@ def test_healthcheck_accepts_spaces_and_unicode_in_launcher_path(tmp_path: Path)
 
 
 @pytest.mark.parametrize("metacharacter", ["&", "%", "^", "(", ")", "!"])
-def test_healthcheck_rejects_unsafe_cmd_path_metacharacters(
+def test_healthcheck_accepts_cmd_path_metacharacters_without_expansion(
     tmp_path: Path, metacharacter: str
 ) -> None:
     module_dir = _write_module(
         tmp_path / f"unsafe{metacharacter}path",
         ModuleId.BOILING,
-        launcher="@echo off\r\necho launched>unexpected-marker\r\n",
+        launcher="@echo off\r\necho safe>expected-marker\r\necho safe\r\n",
     )
 
     healthy, detail = run_healthcheck(_registered(module_dir))
 
-    assert healthy is False
-    assert detail == f"unsafe launcher path for cmd.exe: contains {metacharacter!r}"
-    assert not (module_dir / "unexpected-marker").exists()
+    assert healthy is True
+    assert detail == "safe"
+    assert (module_dir / "expected-marker").read_text().strip() == "safe"
 
 
 def test_healthcheck_reports_timeout_without_crashing(tmp_path: Path) -> None:
