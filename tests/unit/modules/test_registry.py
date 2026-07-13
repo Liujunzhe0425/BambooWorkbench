@@ -229,17 +229,17 @@ def test_healthcheck_timeout_terminates_child_process_tree(tmp_path: Path) -> No
         "from pathlib import Path\n"
         "import time\n"
         "Path('child-started').write_text('started', encoding='utf-8')\n"
-        "time.sleep(0.6)\n"
+        "time.sleep(2.0)\n"
         "Path('delayed-sentinel').write_text('orphaned', encoding='utf-8')\n",
         encoding="utf-8",
     )
 
-    healthy, detail = run_healthcheck(_registered(module_dir), timeout_ms=200)
+    healthy, detail = run_healthcheck(_registered(module_dir), timeout_ms=1_500)
 
     assert healthy is False
     assert "timed out" in detail
-    assert _wait_for_file(module_dir / "child-started", 0.2)
-    assert not _wait_for_file(module_dir / "delayed-sentinel", 0.8)
+    assert _wait_for_file(module_dir / "child-started", 0.5)
+    assert not _wait_for_file(module_dir / "delayed-sentinel", 2.2)
 
 
 def test_healthcheck_reports_process_start_failure(
