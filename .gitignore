@@ -20,7 +20,7 @@ secrets/
 
 # Runtime data and generated artifacts
 data/
-tasks/
+/tasks/
 logs/
 cache/
 outputs/
