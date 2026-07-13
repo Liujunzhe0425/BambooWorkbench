@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict
 
 
@@ -13,6 +15,6 @@ class ConfirmationAnswer(BaseModel):
 class ConfirmationBundle(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: str = "1.0"
+    schema_version: Literal["1.0"] = "1.0"
     job_id: str
     answers: list[ConfirmationAnswer]

@@ -102,7 +102,7 @@ def test_confirmation_finalizes_after_answer(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "invalid_confirmation",
-    ["missing", "malformed", "wrong-parent", "unrelated-answer"],
+    ["missing", "malformed", "unsupported-version", "wrong-parent", "unrelated-answer"],
 )
 def test_confirmation_finalize_rejects_invalid_bundle_as_invalid_task(
     tmp_path: Path, invalid_confirmation: str
@@ -116,7 +116,9 @@ def test_confirmation_finalize_rejects_invalid_bundle_as_invalid_task(
         confirmation_path.write_text("{invalid", encoding="utf-8")
     else:
         confirmation = json.loads(confirmation_path.read_text(encoding="utf-8"))
-        if invalid_confirmation == "wrong-parent":
+        if invalid_confirmation == "unsupported-version":
+            confirmation["schema_version"] = "2.0"
+        elif invalid_confirmation == "wrong-parent":
             confirmation["job_id"] = "different-parent"
         else:
             confirmation["answers"][0]["confirmation_id"] = "unrelated-confirmation"
