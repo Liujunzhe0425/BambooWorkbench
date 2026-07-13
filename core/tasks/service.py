@@ -1,5 +1,7 @@
+import os
 import re
 import shutil
+import tempfile
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -7,16 +9,17 @@ from uuid import uuid4
 
 from PySide6.QtCore import QObject, Signal
 
-from core.contracts.enums import ModuleId, TaskStatus
+from core.contracts.confirmation import ConfirmationAnswer, ConfirmationBundle
+from core.contracts.enums import JobPhase, ModuleId, TaskStatus
 from core.contracts.job import JobRequest
-from core.contracts.result import ModuleResult
+from core.contracts.result import ConfirmationPrompt, ModuleResult
 from core.modules.process_runner import ModuleProcessRunner
 from core.modules.registry import ModuleRegistry
 from core.platform.paths import AppPaths
 from core.storage.repositories.confirmations import ConfirmationRepository
 from core.storage.repositories.tasks import TaskRepository
 from core.tasks.job_builder import build_draft_job
-from core.tasks.models import TaskLifecycleState, TaskStateMachine
+from core.tasks.models import InvalidTaskTransition, TaskLifecycleState, TaskStateMachine
 from core.tasks.snapshots import remove_snapshots, snapshot_inputs
 
 _JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{6,64}$")
@@ -24,6 +27,25 @@ _JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{6,64}$")
 
 def _new_job_id() -> str:
     return uuid4().hex
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 class TaskService(QObject):
@@ -114,6 +136,97 @@ class TaskService(QObject):
         except Exception as exc:
             self._record_failure(job_id, self._error_message(exc), runner)
         return job_id
+
+    def finalize(self, job_id: str, bundle_path: Path) -> None:
+        machine = self._states.get(job_id)
+        if machine is None or machine.state is not TaskLifecycleState.WAITING_CONFIRMATION:
+            current = machine.state.value if machine is not None else "terminal_or_unknown"
+            raise InvalidTaskTransition(
+                f"finalize requires waiting_confirmation, current state is {current}"
+            )
+        if job_id in self.runners:
+            raise InvalidTaskTransition(f"job {job_id} already has an active runner")
+        task = self.task_repository.get(job_id)
+        if task["status"] != TaskLifecycleState.WAITING_CONFIRMATION.value:
+            raise InvalidTaskTransition(
+                "persisted task state is not waiting_confirmation"
+            )
+
+        task_dir = (self.paths.tasks / job_id).resolve(strict=True)
+        expected_bundle_path = task_dir / "confirmation.json"
+        resolved_bundle_path = bundle_path.resolve(strict=True)
+        if resolved_bundle_path != expected_bundle_path or not resolved_bundle_path.is_file():
+            raise ValueError("confirmation bundle is not the task-local confirmation.json")
+        bundle = ConfirmationBundle.model_validate_json(
+            resolved_bundle_path.read_text(encoding="utf-8")
+        )
+        if bundle.job_id != job_id:
+            raise ValueError("confirmation bundle job_id does not match task")
+        self._validate_stored_answers(job_id, bundle)
+
+        draft_path = task_dir / "job-draft.json"
+        draft = JobRequest.model_validate_json(draft_path.read_text(encoding="utf-8"))
+        if draft.job_id != job_id or draft.phase is not JobPhase.DRAFT:
+            raise ValueError("job-draft identity or phase does not match task")
+        final_payload = draft.model_dump(mode="python")
+        final_payload.update(
+            phase=JobPhase.FINALIZE,
+            parent_job_id=job_id,
+            confirmation_file=str(resolved_bundle_path),
+            output_dir=str((task_dir / "output-final").resolve()),
+        )
+        final_job = JobRequest.model_validate(final_payload)
+        final_path = task_dir / "job-finalize.json"
+        _atomic_write_text(final_path, final_job.model_dump_json(indent=2))
+
+        self._persist_transition(job_id, TaskLifecycleState.RUNNING_FINALIZE)
+        self._jobs[job_id] = final_job
+        runner: ModuleProcessRunner | None = None
+        try:
+            runner = self.runner_factory()
+            self.runners[job_id] = runner
+            self._connect_runner(job_id, runner)
+            runner.start(self.registry.get(draft.module_id), final_path)
+        except Exception as exc:
+            self._record_failure(job_id, self._error_message(exc), runner)
+
+    def _validate_stored_answers(
+        self, job_id: str, bundle: ConfirmationBundle
+    ) -> None:
+        records = self.confirmation_repository.list_for_job(job_id)
+        if not records:
+            raise ValueError("stored answered state has no canonical prompts")
+        prompts = {
+            prompt.confirmation_id: prompt
+            for prompt in (
+                ConfirmationPrompt.model_validate(record["original_prompt"])
+                for record in records
+            )
+        }
+        bundle_ids = [answer.confirmation_id for answer in bundle.answers]
+        if len(bundle_ids) != len(set(bundle_ids)):
+            raise ValueError("confirmation bundle has duplicate answer IDs")
+        unknown = set(bundle_ids) - set(prompts)
+        if unknown:
+            raise ValueError(f"confirmation bundle has unknown answer IDs: {sorted(unknown)}")
+
+        stored_answers = {
+            str(record["confirmation_id"]): ConfirmationAnswer.model_validate(record["answer"])
+            for record in records
+            if record["answer"] is not None
+        }
+        required = {
+            confirmation_id
+            for confirmation_id, prompt in prompts.items()
+            if prompt.blocking
+        }
+        if required - set(stored_answers):
+            raise ValueError("stored answered state is missing blocking confirmations")
+        supplied = {answer.confirmation_id: answer for answer in bundle.answers}
+        if required - set(supplied):
+            raise ValueError("confirmation bundle is missing blocking confirmations")
+        if any(stored_answers.get(answer_id) != answer for answer_id, answer in supplied.items()):
+            raise ValueError("confirmation bundle does not match stored answered state")
 
     def _connect_runner(self, job_id: str, runner: ModuleProcessRunner) -> None:
         runner.progress.connect(
