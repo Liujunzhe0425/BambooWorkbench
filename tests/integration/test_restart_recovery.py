@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -369,3 +370,84 @@ def test_terminal_marker_never_reads_or_deletes_through_real_task_link(
 
     assert task_repository.get(job_id)["status"] == "running_draft"
     assert external_marker.is_file()
+
+
+def test_terminal_marker_rejects_simulated_linked_tasks_root_for_read_and_write(
+    app_services: dict[str, object], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task_repository = app_services["task_repository"]
+    confirmation_repository = app_services["confirmation_repository"]
+    assert isinstance(task_repository, TaskRepository)
+    assert isinstance(confirmation_repository, ConfirmationRepository)
+    service = TaskService(
+        app_services["paths"],
+        app_services["registry"],
+        task_repository,
+        confirmation_repository,
+    )
+    job_id = "linked-tasks-root-001"
+    external_tasks = tmp_path / "external-tasks"
+    task_dir = external_tasks / job_id
+    task_dir.mkdir(parents=True)
+    marker = task_dir / ".terminal-pending.json"
+    marker.write_text(
+        json.dumps({"job_id": job_id, "status": "failed", "error": "outside"}),
+        encoding="utf-8",
+    )
+    task_repository.create(
+        job_id, ModuleId.MOISTURE.value, "running_draft", "2026-07-13T10:00:00+08:00"
+    )
+    service.paths = replace(app_services["paths"], tasks=external_tasks)
+    original_is_symlink = Path.is_symlink
+
+    def simulated_tasks_root_link(path: Path) -> bool:
+        if path == external_tasks:
+            return True
+        return original_is_symlink(path)
+
+    monkeypatch.setattr(Path, "is_symlink", simulated_tasks_root_link)
+
+    service._apply_terminal_markers()
+    with pytest.raises(ValueError, match="tasks root.*link"):
+        service._write_terminal_marker(job_id, TaskLifecycleState.FAILED, "write")
+
+    assert task_repository.get(job_id)["status"] == "running_draft"
+    assert json.loads(marker.read_text(encoding="utf-8"))["error"] == "outside"
+
+
+def test_terminal_marker_never_reads_or_deletes_through_real_tasks_root_link(
+    app_services: dict[str, object], tmp_path: Path
+) -> None:
+    task_repository = app_services["task_repository"]
+    confirmation_repository = app_services["confirmation_repository"]
+    assert isinstance(task_repository, TaskRepository)
+    assert isinstance(confirmation_repository, ConfirmationRepository)
+    service = TaskService(
+        app_services["paths"],
+        app_services["registry"],
+        task_repository,
+        confirmation_repository,
+    )
+    job_id = "real-linked-tasks-root-001"
+    external_tasks = tmp_path / "external-tasks-root"
+    task_dir = external_tasks / job_id
+    task_dir.mkdir(parents=True)
+    marker = task_dir / ".terminal-pending.json"
+    marker.write_text(
+        json.dumps({"job_id": job_id, "status": "failed", "error": "outside"}),
+        encoding="utf-8",
+    )
+    task_repository.create(
+        job_id, ModuleId.MOISTURE.value, "running_draft", "2026-07-13T10:00:00+08:00"
+    )
+    tasks_link = app_services["paths"].root / "tasks-root-link"
+    try:
+        tasks_link.symlink_to(external_tasks, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"Windows symlink privilege unavailable: {exc}")
+    service.paths = replace(app_services["paths"], tasks=tasks_link)
+
+    service._apply_terminal_markers()
+
+    assert task_repository.get(job_id)["status"] == "running_draft"
+    assert marker.is_file()

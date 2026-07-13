@@ -597,9 +597,12 @@ class TaskService(QObject):
     ) -> None:
         if not _JOB_ID_PATTERN.fullmatch(job_id):
             raise ValueError("invalid job ID for terminal marker")
-        tasks_root = resolve_path(self.paths.tasks, "tasks root", strict=True)
-        if not tasks_root.is_dir():
-            raise ValueError("tasks root is not a directory")
+        tasks_root = resolve_contained_directory(
+            self.paths.tasks,
+            self.paths.root,
+            "tasks root",
+            reject_link=True,
+        )
         task_dir = resolve_contained_directory(
             self.paths.tasks / job_id,
             tasks_root,
@@ -647,9 +650,12 @@ class TaskService(QObject):
 
     def _apply_terminal_markers(self) -> None:
         try:
-            tasks_root = resolve_path(self.paths.tasks, "tasks root", strict=True)
-            if not tasks_root.is_dir():
-                raise ValueError("tasks root is not a directory")
+            tasks_root = resolve_contained_directory(
+                self.paths.tasks,
+                self.paths.root,
+                "tasks root",
+                reject_link=True,
+            )
             candidates = tuple(tasks_root.iterdir())
         except Exception as exc:
             _LOG.error("terminal marker tasks-root fault error=%s", exc)
