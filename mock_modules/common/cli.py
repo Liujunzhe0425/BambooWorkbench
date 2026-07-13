@@ -42,24 +42,13 @@ def _run_validated_job(module_id: str, job: JobRequest) -> int:
     output_dir = Path(job.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     scenario = scenario_for(job.input_files)
-    if scenario == "crash":
-        print("simulated module crash", file=sys.stderr)
-        return 3
-    if scenario == "timeout":
-        time.sleep(120)
 
-    started = now()
-    print(
-        json.dumps(
-            {"type": "progress", "percent": 25, "message": "读取模拟输入"},
-            ensure_ascii=False,
-        ),
-        flush=True,
-    )
-    artifacts = create_artifacts(output_dir, module_id)
-
-    confirmations: list[dict[str, object]] = []
     status = "success"
+    confirmations: list[dict[str, object]] = []
+    failed_count = 0
+    errors: list[str] = []
+    service_requests: list[dict[str, object]] = []
+    include_outputs = True
     if scenario == "confirm" and job.phase.value == "draft":
         status = "needs_confirmation"
         confirmations = [
@@ -80,6 +69,71 @@ def _run_validated_job(module_id: str, job: JobRequest) -> int:
                 },
             }
         ]
+    elif scenario == "partial":
+        status = "partial_success"
+        failed_count = 1
+        errors = ["模拟单文件失败"]
+    elif scenario == "fail":
+        status = "failed"
+        failed_count = len(job.input_files)
+        errors = ["模拟任务失败"]
+        include_outputs = False
+    elif scenario == "invalid":
+        (output_dir / "result.json").write_text("{invalid", encoding="utf-8")
+        return 0
+    elif scenario == "ai":
+        service_requests = [
+            {
+                "request_id": "ai-1",
+                "service": "ai",
+                "scope": None,
+                "purpose": "生成模拟分析",
+                "payload": {"metrics": [1, 2, 3]},
+                "requires_user_consent": True,
+            }
+        ]
+    elif scenario == "knowledge":
+        service_requests = [
+            {
+                "request_id": "kb-1",
+                "service": "knowledge",
+                "scope": module_id,
+                "purpose": "检索模拟规则",
+                "payload": {"query": "异常处理"},
+                "requires_user_consent": False,
+            }
+        ]
+
+    if scenario == "crash":
+        print("simulated module crash", file=sys.stderr)
+        return 3
+    if scenario == "timeout":
+        time.sleep(120)
+
+    started = now()
+    print(
+        json.dumps(
+            {"type": "progress", "percent": 25, "message": "读取模拟输入"},
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
+    artifacts = create_artifacts(output_dir, module_id) if include_outputs else []
+
+    file_results = []
+    for index, path in enumerate(job.input_files):
+        file_failed = scenario == "fail" or (scenario == "partial" and index == 0)
+        file_results.append(
+            {
+                "source_file": path,
+                "fingerprint": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
+                "status": "failed" if file_failed else "success",
+                "extracted_records": 0 if file_failed else 1,
+                "missing_fields": [],
+                "anomaly_count": 0,
+                "error": errors[0] if file_failed else None,
+            }
+        )
 
     result = {
         "schema_version": "1.0",
@@ -90,30 +144,19 @@ def _run_validated_job(module_id: str, job: JobRequest) -> int:
         "rule_version": "mock-1.0",
         "summary": {
             "input_count": len(job.input_files),
-            "processed_count": len(job.input_files),
+            "processed_count": len(job.input_files) - failed_count,
             "skipped_count": 0,
-            "failed_count": 0,
+            "failed_count": failed_count,
             "anomaly_count": 0,
             "confirmation_count": len(confirmations),
         },
         "anomalies": [],
         "confirmations": confirmations,
         "outputs": artifacts,
-        "file_results": [
-            {
-                "source_file": path,
-                "fingerprint": hashlib.sha256(Path(path).read_bytes()).hexdigest(),
-                "status": "success",
-                "extracted_records": 1,
-                "missing_fields": [],
-                "anomaly_count": 0,
-                "error": None,
-            }
-            for path in job.input_files
-        ],
-        "service_requests": [],
+        "file_results": file_results,
+        "service_requests": service_requests,
         "analysis_summary": "模拟模块运行成功",
-        "errors": [],
+        "errors": errors,
         "started_at": started,
         "finished_at": now(),
     }
