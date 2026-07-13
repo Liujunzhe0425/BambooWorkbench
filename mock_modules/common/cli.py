@@ -8,6 +8,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
+from core.contracts.confirmation import ConfirmationBundle
 from core.contracts.job import JobRequest
 from core.contracts.result import ModuleResult
 
@@ -31,17 +32,37 @@ def run(module_id: str, job_path: Path) -> int:
             file=sys.stderr,
         )
         return 2
+    scenario = scenario_for(job.input_files)
     try:
-        return _run_validated_job(module_id, job)
+        _validate_finalize_confirmation(job, scenario)
+    except (OSError, UnicodeError, ValidationError, ValueError) as error:
+        print(f"invalid confirmation bundle: {type(error).__name__}", file=sys.stderr)
+        return 2
+    try:
+        return _run_validated_job(module_id, job, scenario)
     except Exception:
         print("mock runtime failed", file=sys.stderr)
         return 3
 
 
-def _run_validated_job(module_id: str, job: JobRequest) -> int:
+def _validate_finalize_confirmation(job: JobRequest, scenario: str) -> None:
+    if job.phase.value != "finalize":
+        return
+    confirmation_path = Path(job.confirmation_file or "")
+    bundle = ConfirmationBundle.model_validate_json(
+        confirmation_path.read_text(encoding="utf-8")
+    )
+    if bundle.job_id != job.parent_job_id:
+        raise ValueError("confirmation parent does not match finalize parent")
+    if scenario == "confirm" and not any(
+        answer.confirmation_id == "mock-confirm-1" for answer in bundle.answers
+    ):
+        raise ValueError("required mock confirmation answer is missing")
+
+
+def _run_validated_job(module_id: str, job: JobRequest, scenario: str) -> int:
     output_dir = Path(job.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    scenario = scenario_for(job.input_files)
 
     status = "success"
     confirmations: list[dict[str, object]] = []
