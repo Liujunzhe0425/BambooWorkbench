@@ -24,7 +24,62 @@ MIGRATION_1 = Migration(
     ),
 )
 
-MIGRATIONS: tuple[Migration, ...] = (MIGRATION_1,)
+MIGRATION_2 = Migration(
+    version=2,
+    statements=(
+        """
+        CREATE TABLE tasks (
+            job_id TEXT PRIMARY KEY,
+            module_id TEXT NOT NULL,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            parent_job_id TEXT REFERENCES tasks(job_id) ON DELETE SET NULL,
+            result_path TEXT,
+            error TEXT
+        )
+        """,
+        """
+        CREATE TABLE task_files (
+            job_id TEXT NOT NULL REFERENCES tasks(job_id) ON DELETE CASCADE,
+            source_path TEXT NOT NULL,
+            snapshot_path TEXT NOT NULL,
+            fingerprint TEXT NOT NULL,
+            status TEXT NOT NULL,
+            PRIMARY KEY(job_id, source_path)
+        )
+        """,
+        """
+        CREATE TABLE modules (
+            module_id TEXT PRIMARY KEY,
+            version TEXT NOT NULL,
+            path TEXT NOT NULL,
+            is_mock INTEGER NOT NULL,
+            health TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE confirmations (
+            job_id TEXT NOT NULL REFERENCES tasks(job_id) ON DELETE CASCADE,
+            confirmation_id TEXT NOT NULL,
+            original_prompt TEXT NOT NULL,
+            answer TEXT,
+            answered_at TEXT,
+            PRIMARY KEY(job_id, confirmation_id)
+        )
+        """,
+        """
+        CREATE TABLE outputs (
+            job_id TEXT NOT NULL REFERENCES tasks(job_id) ON DELETE CASCADE,
+            artifact_type TEXT NOT NULL,
+            path TEXT NOT NULL,
+            label TEXT NOT NULL
+        )
+        """,
+    ),
+)
+
+MIGRATIONS: tuple[Migration, ...] = (MIGRATION_1, MIGRATION_2)
 
 
 class Database:
@@ -32,6 +87,7 @@ class Database:
         self.path = path
         self.connection = sqlite3.connect(path)
         self.connection.row_factory = sqlite3.Row
+        self.connection.execute("PRAGMA foreign_keys = ON")
 
     @classmethod
     def open(cls, paths: AppPaths) -> "Database":
