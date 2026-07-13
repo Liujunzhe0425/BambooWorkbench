@@ -3,6 +3,8 @@ import sys
 from pathlib import Path
 
 import pytest
+import shiboken6
+from PySide6.QtCore import QObject, QProcess
 from PySide6.QtTest import QSignalSpy
 
 from core.contracts.enums import ModuleId
@@ -118,6 +120,8 @@ if args.mode == "unterminated-progress":
     import sys
     sys.stdout.write("not-json")
     sys.stdout.flush()
+if args.mode == "delayed-result":
+    time.sleep(0.5)
 """.strip(),
         encoding="utf-8",
     )
@@ -316,3 +320,72 @@ def test_special_job_and_launcher_paths_are_not_expanded_or_injected(
     _wait_terminal(qtbot, terminals)
 
     assert terminals[0].count() == 1
+
+
+@pytest.mark.parametrize("loop_name", ["job.json", "run_module.bat"])
+def test_start_normalizes_path_resolution_loops_to_one_failure(
+    qtbot, tmp_path: Path, monkeypatch, loop_name: str
+) -> None:
+    job_path, _ = _write_job(tmp_path)
+    module = _write_test_module(tmp_path, "normal")
+    runner = ModuleProcessRunner()
+    terminals = _terminal_spies(runner)
+    original_resolve = Path.resolve
+
+    def simulated_loop(path: Path, *args, **kwargs):
+        if path.name == loop_name:
+            raise RuntimeError("Symlink loop from simulated test")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", simulated_loop)
+
+    runner.start(module, job_path)
+    _wait_terminal(qtbot, terminals)
+
+    assert terminals[1].count() == 1
+    assert "path resolution failed" in terminals[1].at(0)[0]
+    assert not runner.is_running
+
+
+@pytest.mark.parametrize(
+    "loop_name", ["output", "result.json", "artifact.txt", "normal.xlsx"]
+)
+def test_result_boundary_resolution_loops_fail_once_without_callback_exception(
+    qtbot, tmp_path: Path, monkeypatch, loop_name: str
+) -> None:
+    job_path, _ = _write_job(tmp_path)
+    runner = ModuleProcessRunner(timeout_ms=10_000)
+    terminals = _terminal_spies(runner)
+    runner.start(_write_test_module(tmp_path, "delayed-result"), job_path)
+    qtbot.waitUntil(lambda: runner.is_running, timeout=5_000)
+    original_resolve = Path.resolve
+
+    def simulated_loop(path: Path, *args, **kwargs):
+        if path.name == loop_name:
+            raise RuntimeError("Symlink loop from simulated test")
+        return original_resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", simulated_loop)
+    _wait_terminal(qtbot, terminals)
+
+    assert terminals[1].count() == 1
+    assert "path resolution failed" in terminals[1].at(0)[0]
+
+
+def test_completed_process_is_scheduled_for_qobject_deletion(qtbot, tmp_path: Path) -> None:
+    processes: list[QProcess] = []
+
+    def process_factory(parent: QObject) -> QProcess:
+        process = QProcess(parent)
+        processes.append(process)
+        return process
+
+    job_path, _ = _write_job(tmp_path)
+    runner = ModuleProcessRunner(timeout_ms=10_000, process_factory=process_factory)
+    terminals = _terminal_spies(runner)
+
+    runner.start(_write_test_module(tmp_path, "normal"), job_path)
+    _wait_terminal(qtbot, terminals)
+    qtbot.waitUntil(lambda: not shiboken6.isValid(processes[0]), timeout=5_000)
+
+    assert not any(isinstance(child, QProcess) for child in runner.children())

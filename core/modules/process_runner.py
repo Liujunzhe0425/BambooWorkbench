@@ -12,10 +12,17 @@ from .progress_parser import parse_progress
 from .registry import RegisteredModule
 
 
-def resolve_contained_file(path: Path, root: Path, label: str) -> Path:
-    resolved_root = root.resolve(strict=True)
+def _resolve_path(path: Path, *, strict: bool = False) -> Path:
     try:
-        resolved_path = path.resolve(strict=True)
+        return path.resolve(strict=strict)
+    except RuntimeError as exc:
+        raise ValueError(f"path resolution failed: {exc}") from exc
+
+
+def resolve_contained_file(path: Path, root: Path, label: str) -> Path:
+    resolved_root = _resolve_path(root, strict=True)
+    try:
+        resolved_path = _resolve_path(path, strict=True)
     except FileNotFoundError as exc:
         raise ValueError(f"{label} is not a file") from exc
     if not resolved_path.is_relative_to(resolved_root):
@@ -58,15 +65,22 @@ class ModuleProcessRunner(QObject):
             raise RuntimeError("module process run is already active")
 
         try:
-            resolved_job_path = job_path.resolve(strict=True)
+            resolved_job_path = _resolve_path(job_path, strict=True)
             job = JobRequest.model_validate_json(
                 resolved_job_path.read_text(encoding="utf-8")
             )
-        except (OSError, UnicodeError, ValidationError) as exc:
+        except (OSError, UnicodeError, ValidationError, ValueError) as exc:
             self.failed.emit(f"invalid job request: {exc}")
             return
         if job.module_id != module.manifest.module_id:
             self.failed.emit("job module_id does not match registered module")
+            return
+
+        try:
+            entrypoint = _resolve_path(module.path / module.manifest.entrypoint)
+            host = _resolve_path(Path(__file__).with_name("process_host.py"))
+        except (OSError, ValueError) as exc:
+            self.failed.emit(str(exc))
             return
 
         self._generation += 1
@@ -90,8 +104,6 @@ class ModuleProcessRunner(QObject):
             lambda error: self._process_error(generation, process, error)
         )
 
-        entrypoint = (module.path / module.manifest.entrypoint).resolve()
-        host = Path(__file__).with_name("process_host.py").resolve()
         environment = QProcessEnvironment.systemEnvironment()
         runtime_dir = str(Path(sys.executable).parent)
         environment.insert("PATH", f"{runtime_dir};{environment.value('PATH')}")
@@ -184,7 +196,7 @@ class ModuleProcessRunner(QObject):
             return
         try:
             result = self._load_and_validate_result()
-        except (OSError, UnicodeError, ValidationError, ValueError) as exc:
+        except Exception as exc:
             self._finalize(generation, process, "failed", str(exc))
             return
         self._finalize(generation, process, "completed", result)
@@ -192,7 +204,7 @@ class ModuleProcessRunner(QObject):
     def _load_and_validate_result(self) -> ModuleResult:
         if self._job is None or self._module is None:
             raise ValueError("runner lost job or module identity")
-        output_dir = Path(self._job.output_dir).resolve(strict=True)
+        output_dir = _resolve_path(Path(self._job.output_dir), strict=True)
         candidate = output_dir / "result.json"
         if not candidate.is_file():
             raise ValueError("result.json is missing")
@@ -209,9 +221,9 @@ class ModuleProcessRunner(QObject):
         for output in result.outputs:
             resolve_contained_file(Path(output.path), output_dir, "output artifact")
 
-        input_files = {Path(path).resolve() for path in self._job.input_files}
+        input_files = {_resolve_path(Path(path)) for path in self._job.input_files}
         for file_result in result.file_results:
-            if Path(file_result.source_file).resolve() not in input_files:
+            if _resolve_path(Path(file_result.source_file)) not in input_files:
                 raise ValueError("file result source is not a job input")
         return result
 
@@ -292,6 +304,10 @@ class ModuleProcessRunner(QObject):
             return
         self._active_generation = None
         self._pending_terminal = None
+        self._process = None
+        self._job = None
+        self._module = None
+        process.deleteLater()
         if kind == "completed":
             self.completed.emit(payload)
         elif kind == "failed":
