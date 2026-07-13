@@ -82,6 +82,20 @@ def test_task_repository_records_files_and_replaces_outputs(database: Database) 
     ]
 
 
+def test_task_repository_add_files_rolls_back_the_whole_batch(database: Database) -> None:
+    repository = TaskRepository(database)
+    repository.create("job-001", "moisture", "created", "2026-07-13T10:00:00+08:00")
+    duplicate_source_rows = [
+        ("source.xlsx", "snapshot-1.xlsx", "fingerprint-1", "snapshotted"),
+        ("source.xlsx", "snapshot-2.xlsx", "fingerprint-2", "snapshotted"),
+    ]
+
+    with pytest.raises(sqlite3.IntegrityError):
+        repository.add_files("job-001", duplicate_source_rows)
+
+    assert repository.list_files("job-001") == []
+
+
 def test_task_owned_rows_enforce_foreign_keys_and_cascade(database: Database) -> None:
     repository = TaskRepository(database)
 

@@ -67,6 +67,16 @@ class TaskRepository:
             (job_id, source_path, snapshot_path, fingerprint, status),
         )
 
+    def add_files(self, job_id: str, files: list[tuple[str, str, str, str]]) -> None:
+        values = [(job_id, *file_record) for file_record in files]
+        with self.database.connection:
+            self.database.connection.executemany(
+                "INSERT INTO task_files("
+                "job_id, source_path, snapshot_path, fingerprint, status"
+                ") VALUES (?, ?, ?, ?, ?)",
+                values,
+            )
+
     def list_files(self, job_id: str) -> list[dict[str, object]]:
         rows = self.database.connection.execute(
             "SELECT * FROM task_files WHERE job_id = ? ORDER BY source_path", (job_id,)

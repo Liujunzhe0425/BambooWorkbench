@@ -1,5 +1,6 @@
 import hashlib
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -39,6 +40,34 @@ def test_snapshot_inputs_copies_through_task_local_temp_then_atomically_renames(
     assert snapshots[0].fingerprint == hashlib.sha256(original).hexdigest()
     assert source.read_bytes() == original
     assert list((task_dir / "inputs").glob(".*.tmp")) == []
+
+
+def test_snapshot_inputs_rolls_back_earlier_files_when_later_copy_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    first = tmp_path / "first.xlsx"
+    second = tmp_path / "second.xlsx"
+    first.write_bytes(b"first-source")
+    second.write_bytes(b"second-source")
+    task_dir = tmp_path / "task"
+    copy_count = 0
+    real_copy = shutil.copyfileobj
+
+    def fail_second_copy(source, target, length: int = 0) -> None:
+        nonlocal copy_count
+        copy_count += 1
+        if copy_count == 2:
+            raise OSError("simulated second copy failure")
+        real_copy(source, target, length)
+
+    monkeypatch.setattr(shutil, "copyfileobj", fail_second_copy)
+
+    with pytest.raises(OSError, match="simulated second copy failure"):
+        snapshot_inputs([first, second], task_dir, supported_extensions=[".xlsx"])
+
+    assert first.read_bytes() == b"first-source"
+    assert second.read_bytes() == b"second-source"
+    assert not (task_dir / "inputs").exists()
 
 
 @pytest.mark.parametrize(

@@ -1,7 +1,9 @@
-import itertools
+import re
+import shutil
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from PySide6.QtCore import QObject, Signal
 
@@ -15,7 +17,13 @@ from core.storage.repositories.confirmations import ConfirmationRepository
 from core.storage.repositories.tasks import TaskRepository
 from core.tasks.job_builder import build_draft_job
 from core.tasks.models import TaskLifecycleState, TaskStateMachine
-from core.tasks.snapshots import snapshot_inputs
+from core.tasks.snapshots import remove_snapshots, snapshot_inputs
+
+_JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{6,64}$")
+
+
+def _new_job_id() -> str:
+    return uuid4().hex
 
 
 class TaskService(QObject):
@@ -24,8 +32,6 @@ class TaskService(QObject):
     needs_confirmation = Signal(str, object)
     failed = Signal(str, str)
 
-    _counter = itertools.count(1)
-
     def __init__(
         self,
         paths: AppPaths,
@@ -33,6 +39,7 @@ class TaskService(QObject):
         task_repository: TaskRepository,
         confirmation_repository: ConfirmationRepository,
         runner_factory: Callable[[], ModuleProcessRunner] = ModuleProcessRunner,
+        job_id_factory: Callable[[], str] = _new_job_id,
     ) -> None:
         super().__init__()
         self.paths = paths
@@ -40,6 +47,7 @@ class TaskService(QObject):
         self.task_repository = task_repository
         self.confirmation_repository = confirmation_repository
         self.runner_factory = runner_factory
+        self.job_id_factory = job_id_factory
         self.runners: dict[str, ModuleProcessRunner] = {}
         self._states: dict[str, TaskStateMachine] = {}
         self._jobs: dict[str, JobRequest] = {}
@@ -47,7 +55,12 @@ class TaskService(QObject):
 
     def create_and_start(self, module_id: ModuleId, inputs: list[Path]) -> str:
         timestamp = datetime.now().astimezone()
-        job_id = f"{timestamp:%Y%m%d-%H%M%S}-{next(self._counter):03d}"
+        job_id = self.job_id_factory()
+        if not _JOB_ID_PATTERN.fullmatch(job_id):
+            raise ValueError("job_id_factory returned an invalid job ID")
+        self.paths.ensure()
+        task_dir = self.paths.tasks / job_id
+        task_dir.mkdir()
         try:
             self.task_repository.create(
                 job_id,
@@ -56,27 +69,34 @@ class TaskService(QObject):
                 timestamp.isoformat(),
             )
         except Exception:
-            return job_id
+            shutil.rmtree(task_dir)
+            raise
 
         self._states[job_id] = TaskStateMachine()
         runner: ModuleProcessRunner | None = None
         try:
-            self.paths.ensure()
             module = self.registry.get(module_id)
-            task_dir = self.paths.tasks / job_id
             snapshots = snapshot_inputs(
                 inputs,
                 task_dir,
                 supported_extensions=module.manifest.supported_extensions,
             )
-            for snapshot in snapshots:
-                self.task_repository.add_file(
+            try:
+                self.task_repository.add_files(
                     job_id,
-                    str(snapshot.source),
-                    str(snapshot.copy),
-                    snapshot.fingerprint,
-                    "snapshotted",
+                    [
+                        (
+                            str(snapshot.source),
+                            str(snapshot.copy),
+                            snapshot.fingerprint,
+                            "snapshotted",
+                        )
+                        for snapshot in snapshots
+                    ],
                 )
+            except Exception:
+                remove_snapshots(snapshots)
+                raise
             job = build_draft_job(
                 job_id,
                 module_id,
@@ -88,8 +108,8 @@ class TaskService(QObject):
             self._jobs[job_id] = job
             self._persist_transition(job_id, TaskLifecycleState.RUNNING_DRAFT)
             runner = self.runner_factory()
-            self._connect_runner(job_id, runner)
             self.runners[job_id] = runner
+            self._connect_runner(job_id, runner)
             runner.start(module, job_path)
         except Exception as exc:
             self._record_failure(job_id, self._error_message(exc), runner)
@@ -131,16 +151,18 @@ class TaskService(QObject):
                     result_path=result_path,
                 )
                 self.needs_confirmation.emit(job_id, result)
+                task_terminal = False
             else:
                 target = TaskLifecycleState(result.status.value)
                 if result.status in {TaskStatus.SUCCESS, TaskStatus.PARTIAL_SUCCESS}:
                     self.task_repository.replace_outputs(job_id, result.outputs)
                 self._persist_transition(job_id, target, result_path=result_path)
                 self.finished.emit(result)
+                task_terminal = True
         except Exception as exc:
             self._record_failure(job_id, self._error_message(exc), runner)
             return
-        self._cleanup_runner(job_id, runner)
+        self._cleanup_runner(job_id, runner, task_terminal=task_terminal)
 
     def _cancelled(self, job_id: str, runner: ModuleProcessRunner) -> None:
         if self.runners.get(job_id) is not runner:
@@ -150,7 +172,7 @@ class TaskService(QObject):
         except Exception as exc:
             self._record_failure(job_id, self._error_message(exc), runner)
             return
-        self._cleanup_runner(job_id, runner)
+        self._cleanup_runner(job_id, runner, task_terminal=True)
 
     def _record_failure(
         self,
@@ -161,7 +183,7 @@ class TaskService(QObject):
         if runner is not None and self.runners.get(job_id) is not runner:
             return
         if job_id in self._failed_signals:
-            self._cleanup_runner(job_id, runner)
+            self._cleanup_runner(job_id, runner, task_terminal=True)
             return
         try:
             self._persist_transition(job_id, TaskLifecycleState.FAILED, error=message)
@@ -169,7 +191,7 @@ class TaskService(QObject):
             message = f"{message}; failure persistence error: {exc}"
         self._failed_signals.add(job_id)
         self.failed.emit(job_id, message)
-        self._cleanup_runner(job_id, runner)
+        self._cleanup_runner(job_id, runner, task_terminal=True)
 
     def _persist_transition(
         self,
@@ -190,7 +212,11 @@ class TaskService(QObject):
         machine.transition(target)
 
     def _cleanup_runner(
-        self, job_id: str, runner: ModuleProcessRunner | None = None
+        self,
+        job_id: str,
+        runner: ModuleProcessRunner | None = None,
+        *,
+        task_terminal: bool = False,
     ) -> None:
         active = self.runners.get(job_id)
         if runner is not None and active is not runner:
@@ -198,6 +224,10 @@ class TaskService(QObject):
         removed = self.runners.pop(job_id, None)
         if removed is not None:
             removed.deleteLater()
+        if task_terminal:
+            self._states.pop(job_id, None)
+            self._jobs.pop(job_id, None)
+            self._failed_signals.discard(job_id)
 
     @staticmethod
     def _error_message(error: Exception) -> str:
