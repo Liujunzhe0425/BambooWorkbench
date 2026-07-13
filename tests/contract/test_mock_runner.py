@@ -112,7 +112,9 @@ def test_mock_runner_does_not_report_completion_when_result_write_fails(tmp_path
 
     completed = run_mock(job_path)
 
-    assert completed.returncode != 0
+    assert completed.returncode == 3
+    assert completed.stderr == "mock runtime failed\n"
+    assert "traceback" not in completed.stderr.lower()
     progress = [json.loads(line) for line in completed.stdout.splitlines()]
     assert progress == [
         {"type": "progress", "percent": 25, "message": "读取模拟输入"},

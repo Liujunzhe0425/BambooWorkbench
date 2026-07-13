@@ -31,6 +31,14 @@ def run(module_id: str, job_path: Path) -> int:
             file=sys.stderr,
         )
         return 2
+    try:
+        return _run_validated_job(module_id, job)
+    except Exception:
+        print("mock runtime failed", file=sys.stderr)
+        return 3
+
+
+def _run_validated_job(module_id: str, job: JobRequest) -> int:
     output_dir = Path(job.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     scenario = scenario_for(job.input_files)
