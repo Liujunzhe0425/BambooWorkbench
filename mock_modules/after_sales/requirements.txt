@@ -1,0 +1,1 @@
+# Uses the parent BambooWorkbench runtime; this mock module has no local dependencies.
