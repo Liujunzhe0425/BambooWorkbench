@@ -1,7 +1,22 @@
-from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QStackedWidget, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QMainWindow,
+    QMessageBox,
+    QStackedWidget,
+    QWidget,
+)
 
+from core.contracts.enums import TaskStatus
+from core.contracts.progress import ProgressEvent
+from core.contracts.result import ModuleResult
 from ui.navigation import Navigation
 from ui.page_ids import PageId
+from ui.pages.confirmations_page import ConfirmationsPage
+from ui.pages.module_task_page import ModuleTaskPage
+from ui.pages.result_center_page import ResultCenterPage
+from ui.pages.task_progress_page import TaskProgressPage
+from ui.pages.workbench_page import WorkbenchPage
 
 
 class MainWindow(QMainWindow):
@@ -20,16 +35,45 @@ class MainWindow(QMainWindow):
         self.navigation = Navigation(resource_root / "assets" / "brand" / "team-logo.svg")
         self.stack = QStackedWidget()
         self.stack.setObjectName("pageStack")
+        self.workbench_page = WorkbenchPage(context.registry)
+        self.confirmations_page = ConfirmationsPage()
         self.pages: dict[PageId, QWidget] = {
-            page_id: self._placeholder(page_id) for page_id in PageId
+            PageId.WORKBENCH: self.workbench_page,
+            PageId.HISTORY: self._placeholder(PageId.HISTORY),
+            PageId.CONFIRMATIONS: self.confirmations_page,
+            PageId.KNOWLEDGE: self._placeholder(PageId.KNOWLEDGE),
+            PageId.SETTINGS: self._placeholder(PageId.SETTINGS),
         }
         for page in self.pages.values():
             self.stack.addWidget(page)
+        self.module_task_page = ModuleTaskPage()
+        self.task_progress_page = TaskProgressPage()
+        self.result_center_page = ResultCenterPage()
+        for page in (
+            self.module_task_page,
+            self.task_progress_page,
+            self.result_center_page,
+        ):
+            self.stack.addWidget(page)
+
+        self.failure_messages: list[QMessageBox] = []
+        self._starting_task = False
+        self._start_failure_job_id: str | None = None
+        self._finalizing_job_id: str | None = None
+        self._finalize_failed = False
+        self._confirmation_job_ids: set[str] = set()
 
         layout.addWidget(self.navigation)
         layout.addWidget(self.stack, 1)
         self.setCentralWidget(root)
         self.navigation.page_selected.connect(self.navigate)
+        self.workbench_page.module_selected.connect(self._open_module)
+        self.module_task_page.task_requested.connect(self._start_task)
+        self.confirmations_page.submitted.connect(self._submit_confirmation)
+        context.task_service.progress.connect(self._on_progress)
+        context.task_service.needs_confirmation.connect(self._on_confirmation)
+        context.task_service.finished.connect(self._on_finished)
+        context.task_service.failed.connect(self._on_failed)
         self.navigate(PageId.WORKBENCH)
 
     @staticmethod
@@ -41,3 +85,93 @@ class MainWindow(QMainWindow):
     def navigate(self, page_id: PageId) -> None:
         self.stack.setCurrentWidget(self.pages[page_id])
         self.navigation.set_current_page(page_id)
+
+    def _open_module(self, module_id: object) -> None:
+        try:
+            module = self.context.registry.get(module_id)
+        except KeyError as error:
+            self._show_failure("模块不可用", str(error))
+            return
+        self.module_task_page.set_module(
+            module_id,
+            module.manifest.module_name,
+            module.manifest.supported_extensions,
+        )
+        self.stack.setCurrentWidget(self.module_task_page)
+        self.navigation.set_current_page(PageId.WORKBENCH)
+
+    def _start_task(self, module_id: object, files: list) -> None:
+        self._starting_task = True
+        self._start_failure_job_id = None
+        try:
+            job_id = self.context.task_service.create_and_start(module_id, files)
+        except Exception as error:
+            self._show_failure("任务创建失败", str(error))
+            return
+        finally:
+            self._starting_task = False
+        if self._start_failure_job_id == job_id:
+            return
+        self.task_progress_page.bind(job_id)
+        self.stack.setCurrentWidget(self.task_progress_page)
+
+    def _on_progress(self, job_id: str, event: object) -> None:
+        if not isinstance(event, ProgressEvent):
+            return
+        if self.task_progress_page.current_job_id != job_id:
+            self.task_progress_page.bind(job_id)
+        self.task_progress_page.update_progress(event)
+
+    def _on_confirmation(self, job_id: str, result: ModuleResult) -> None:
+        self._confirmation_job_ids.add(job_id)
+        self.confirmations_page.load(job_id, result.confirmations)
+        self.stack.setCurrentWidget(self.confirmations_page)
+        self.navigation.set_current_page(PageId.CONFIRMATIONS)
+
+    def _submit_confirmation(self, job_id: str, answers: list) -> None:
+        self._finalizing_job_id = job_id
+        self._finalize_failed = False
+        try:
+            bundle_path = self.context.confirmation_service.submit(job_id, answers)
+            self.context.task_service.finalize(job_id, bundle_path)
+        except Exception as error:
+            self._show_failure("确认提交失败", str(error))
+            return
+        finally:
+            self._finalizing_job_id = None
+        if self._finalize_failed:
+            return
+        self.task_progress_page.bind(job_id)
+        self.stack.setCurrentWidget(self.task_progress_page)
+
+    def _on_finished(self, result: ModuleResult) -> None:
+        self._confirmation_job_ids.discard(result.job_id)
+        self.result_center_page.show_result(result)
+        self.stack.setCurrentWidget(self.result_center_page)
+        if result.status in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
+            self._show_failure("任务未完成", "；".join(result.errors) or result.status.value)
+
+    def _on_failed(self, job_id: str, message: str) -> None:
+        if self._starting_task:
+            self._start_failure_job_id = job_id
+        if self._finalizing_job_id == job_id:
+            self._finalize_failed = True
+        if self.task_progress_page.current_job_id == job_id:
+            target = (
+                self.confirmations_page
+                if job_id in self._confirmation_job_ids
+                else self.module_task_page
+            )
+            self.stack.setCurrentWidget(target)
+        self._show_failure("任务未完成", f"任务 {job_id}：{message}")
+
+    def _show_failure(self, title: str, message: str) -> None:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle(title)
+        dialog.setText(message)
+        dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
+        dialog.setModal(False)
+        self.failure_messages.append(dialog)
+        dialog.show()
