@@ -3,12 +3,15 @@ import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
+from unittest.mock import Mock
 
 import pytest
+from PySide6.QtCore import QProcess
 
 from core.contracts.enums import ModuleId
 from core.contracts.manifest import ModuleManifest
 from core.modules.healthcheck import run_healthcheck
+from core.modules.process_control import ProcessCleanupResult
 from core.modules.registry import ModuleRegistry, RegisteredModule
 from core.platform.paths import AppPaths
 from core.storage.database import Database
@@ -171,6 +174,36 @@ def test_healthcheck_prepends_running_python_to_path(tmp_path: Path) -> None:
     assert Path(detail).resolve() == Path(sys.executable).resolve()
 
 
+def test_healthcheck_accepts_spaces_and_unicode_in_launcher_path(tmp_path: Path) -> None:
+    module_dir = _write_module(
+        tmp_path / "安全 模块",
+        ModuleId.BOILING,
+        launcher="@echo off\r\necho safe\r\n",
+    )
+
+    healthy, detail = run_healthcheck(_registered(module_dir))
+
+    assert healthy is True
+    assert detail == "safe"
+
+
+@pytest.mark.parametrize("metacharacter", ["&", "%", "^", "(", ")", "!"])
+def test_healthcheck_rejects_unsafe_cmd_path_metacharacters(
+    tmp_path: Path, metacharacter: str
+) -> None:
+    module_dir = _write_module(
+        tmp_path / f"unsafe{metacharacter}path",
+        ModuleId.BOILING,
+        launcher="@echo off\r\necho launched>unexpected-marker\r\n",
+    )
+
+    healthy, detail = run_healthcheck(_registered(module_dir))
+
+    assert healthy is False
+    assert detail == f"unsafe launcher path for cmd.exe: contains {metacharacter!r}"
+    assert not (module_dir / "unexpected-marker").exists()
+
+
 def test_healthcheck_reports_timeout_without_crashing(tmp_path: Path) -> None:
     module_dir = _write_module(
         tmp_path,
@@ -218,3 +251,58 @@ def test_healthcheck_reports_process_start_failure(
 
     assert healthy is False
     assert "failed to start" in detail
+
+
+def test_healthcheck_cleans_up_process_that_times_out_while_starting(tmp_path: Path) -> None:
+    module_dir = _write_module(tmp_path, ModuleId.BOILING)
+    process = Mock()
+    process.waitForStarted.return_value = False
+    process.state.side_effect = [
+        QProcess.ProcessState.Starting,
+        QProcess.ProcessState.NotRunning,
+    ]
+    cleanup = Mock(
+        return_value=ProcessCleanupResult(
+            process_stopped=True,
+            tree_terminated=True,
+            detail="process tree terminated",
+        )
+    )
+
+    healthy, detail = run_healthcheck(
+        _registered(module_dir),
+        process_factory=lambda: process,
+        process_terminator=cleanup,
+    )
+
+    assert healthy is False
+    assert "failed to start" in detail
+    cleanup.assert_called_once_with(process)
+    assert process.state.call_count == 2
+
+
+def test_healthcheck_reports_unconfirmed_timeout_cleanup(tmp_path: Path) -> None:
+    module_dir = _write_module(tmp_path, ModuleId.BOILING)
+    process = Mock()
+    process.waitForStarted.return_value = True
+    process.waitForFinished.return_value = False
+    cleanup = Mock(
+        return_value=ProcessCleanupResult(
+            process_stopped=True,
+            tree_terminated=False,
+            detail="forced taskkill timed out; direct process stopped",
+        )
+    )
+
+    healthy, detail = run_healthcheck(
+        _registered(module_dir),
+        timeout_ms=1,
+        process_factory=lambda: process,
+        process_terminator=cleanup,
+    )
+
+    assert healthy is False
+    assert detail == (
+        "health check timed out after 1 ms; cleanup failed: "
+        "forced taskkill timed out; direct process stopped"
+    )

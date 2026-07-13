@@ -38,6 +38,7 @@ class ModuleRegistry:
         self._modules: dict[ModuleId, RegisteredModule] = {}
 
     def scan(self) -> dict[ModuleId, RegisteredModule]:
+        """Synchronously scan and health-check modules for bootstrap/background use only."""
         self._modules.clear()
         root = self.mock_root if self.use_mocks else self.real_root
         is_mock = self.use_mocks
