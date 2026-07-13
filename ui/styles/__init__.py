@@ -1,0 +1,1 @@
+"""Application visual theme helpers."""

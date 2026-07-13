@@ -1,0 +1,52 @@
+QMainWindow {
+    background: #FBFAF4;
+    color: #294D3C;
+}
+
+#navigation {
+    background: #294D3C;
+    min-width: 190px;
+    max-width: 190px;
+}
+
+#navigation QPushButton {
+    color: #BED3C7;
+    background: transparent;
+    border: 0;
+    padding: 13px;
+    text-align: left;
+    border-radius: 10px;
+}
+
+#navigation QPushButton:hover {
+    background: #3A6651;
+    color: white;
+}
+
+#navigation QPushButton:checked {
+    background: #2FA47D;
+    color: white;
+}
+
+QPushButton[primary="true"] {
+    background: #2FA47D;
+    color: white;
+    padding: 10px 16px;
+    border-radius: 10px;
+}
+
+QFrame[card="true"] {
+    background: #FFFDF8;
+    border: 1px solid #DEDCCF;
+    border-radius: 16px;
+}
+
+QLabel[heading="true"] {
+    color: #24386F;
+    font-size: 22px;
+    font-weight: 700;
+}
+
+QLabel[accent="true"] {
+    color: #F1B232;
+}

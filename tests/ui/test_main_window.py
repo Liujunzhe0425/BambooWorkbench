@@ -1,0 +1,39 @@
+from pathlib import Path
+
+from PySide6.QtCore import Qt
+
+from ui.main_window import MainWindow
+from ui.page_ids import PageId
+
+
+def test_main_window_has_canonical_navigation(qtbot, app_context) -> None:
+    window = MainWindow(app_context)
+    qtbot.addWidget(window)
+
+    assert window.windowTitle() == "竹简工作台"
+    assert window.navigation.logo.objectName() == "teamLogo"
+    assert window.navigation.logo.pixmap().isNull() is False
+    assert list(window.pages) == [
+        PageId.WORKBENCH,
+        PageId.HISTORY,
+        PageId.CONFIRMATIONS,
+        PageId.KNOWLEDGE,
+        PageId.SETTINGS,
+    ]
+    assert window.stack.currentWidget() is window.pages[PageId.WORKBENCH]
+
+
+def test_navigation_buttons_select_their_canonical_pages(qtbot, app_context) -> None:
+    window = MainWindow(app_context)
+    qtbot.addWidget(window)
+
+    for page_id, button in window.navigation.buttons.items():
+        qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
+        assert button.objectName() == f"navigation-{page_id.value}"
+        assert window.stack.currentWidget() is window.pages[page_id]
+
+
+def test_main_window_uses_the_packaged_logo(app_context) -> None:
+    logo_path = app_context.resource_root / "assets" / "brand" / "team-logo.svg"
+
+    assert logo_path == Path(__file__).parents[2] / "assets" / "brand" / "team-logo.svg"

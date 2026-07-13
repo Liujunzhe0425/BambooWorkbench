@@ -34,3 +34,14 @@ def app_services(tmp_path: Path) -> Iterator[dict[str, object]]:
         }
     finally:
         database.close()
+
+
+@pytest.fixture
+def app_context(tmp_path: Path) -> Iterator[object]:
+    from app.bootstrap import build_context
+
+    context = build_context(tmp_path / "desktop-data", use_mocks=True)
+    try:
+        yield context
+    finally:
+        context.close()
