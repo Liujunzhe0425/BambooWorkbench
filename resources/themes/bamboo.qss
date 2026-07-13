@@ -20,19 +20,31 @@ QMainWindow {
 
 #navigation QPushButton:hover {
     background: #3A6651;
-    color: white;
+    color: #FFFDF8;
+}
+
+#navigation QPushButton:focus {
+    border: 2px solid #F1B232;
+    padding: 11px;
 }
 
 #navigation QPushButton:checked {
-    background: #2FA47D;
-    color: white;
+    background: #FBFAF4;
+    color: #294D3C;
+    border-left: 4px solid #2FA47D;
+    padding-left: 9px;
 }
 
 QPushButton[primary="true"] {
-    background: #2FA47D;
-    color: white;
+    background: #294D3C;
+    color: #FFFDF8;
     padding: 10px 16px;
     border-radius: 10px;
+}
+
+QPushButton[primary="true"]:focus {
+    border: 2px solid #F1B232;
+    padding: 8px 14px;
 }
 
 QFrame[card="true"] {

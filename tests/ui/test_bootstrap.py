@@ -3,7 +3,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 from app.bootstrap import build_context, create_application, resolve_resource_root
 from core.contracts.enums import ModuleId
@@ -86,15 +86,176 @@ def test_theme_applies_approved_visual_identity(qapp, app_context) -> None:
     for color in ("#FBFAF4", "#294D3C", "#2FA47D", "#24386F", "#F1B232"):
         assert color in stylesheet
     assert "#navigation" in stylesheet
+    assert "#navigation QPushButton:focus" in stylesheet
+    assert "border: 2px solid #F1B232" in stylesheet
+    checked_rule = stylesheet.split("#navigation QPushButton:checked", 1)[1].split("}", 1)[0]
+    primary_rule = stylesheet.split('QPushButton[primary="true"]', 1)[1].split("}", 1)[0]
+    assert "background: #FBFAF4" in checked_rule
+    assert "color: #294D3C" in checked_rule
+    assert "background: #294D3C" in primary_rule
+    assert "color: #FFFDF8" in primary_rule
 
 
-def test_application_composition_closes_database_on_quit(qapp, app_context) -> None:
-    from app.__main__ import compose_application
+def test_main_lifecycle_closes_database_on_quit(
+    qapp, app_context, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.__main__ as entrypoint
 
     connection = app_context.database.connection
-    window = compose_application(qapp, app_context)
+    monkeypatch.setattr(entrypoint, "build_context", lambda *args, **kwargs: app_context)
+    QTimer.singleShot(0, qapp.quit)
 
-    assert window.isVisible()
-    qapp.aboutToQuit.emit()
+    assert entrypoint.main(["bamboo-workbench"], use_mocks=False) == 0
     with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
         connection.execute("SELECT 1")
+
+
+def test_main_closes_database_when_window_construction_fails(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.__main__ as entrypoint
+
+    context = build_context(tmp_path / "constructor-failure", use_mocks=False)
+    connection = context.database.connection
+    monkeypatch.setattr(entrypoint, "build_context", lambda *args, **kwargs: context)
+
+    class BrokenWindow:
+        def __init__(self, context) -> None:
+            raise RuntimeError("window construction failed")
+
+    monkeypatch.setattr(entrypoint, "MainWindow", BrokenWindow)
+
+    with pytest.raises(RuntimeError, match="window construction failed"):
+        entrypoint.main(["bamboo-workbench"], use_mocks=False)
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        connection.execute("SELECT 1")
+
+
+def test_main_closes_database_when_composition_fails(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import app.__main__ as entrypoint
+
+    context = build_context(tmp_path / "composition-failure", use_mocks=False)
+    connection = context.database.connection
+    monkeypatch.setattr(entrypoint, "build_context", lambda *args, **kwargs: context)
+    monkeypatch.setattr(
+        entrypoint,
+        "compose_application",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("compose failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="compose failed"):
+        entrypoint.main(["bamboo-workbench"], use_mocks=False)
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        connection.execute("SELECT 1")
+
+
+def test_repeated_main_lifecycles_disconnect_quit_callbacks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.__main__ as entrypoint
+
+    class SignalProbe:
+        def __init__(self) -> None:
+            self.callbacks = []
+
+        def connect(self, callback) -> None:
+            self.callbacks.append(callback)
+
+        def disconnect(self, callback) -> None:
+            self.callbacks.remove(callback)
+
+        def emit(self) -> None:
+            for callback in tuple(self.callbacks):
+                callback()
+
+    class ApplicationProbe:
+        def __init__(self) -> None:
+            self.aboutToQuit = SignalProbe()
+
+        def setStyleSheet(self, stylesheet: str) -> None:
+            self.stylesheet = stylesheet
+
+        def exec(self) -> int:
+            self.aboutToQuit.emit()
+            return 0
+
+    class ContextProbe:
+        stylesheet = "QMainWindow {}"
+        close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    class WindowProbe:
+        def __init__(self, context) -> None:
+            self.visible = False
+            self.closed = False
+
+        def show(self) -> None:
+            self.visible = True
+
+        def close(self) -> None:
+            self.closed = True
+
+    application = ApplicationProbe()
+    contexts = [ContextProbe(), ContextProbe()]
+    monkeypatch.setattr(entrypoint, "create_application", lambda argv=None: application)
+    monkeypatch.setattr(entrypoint, "build_context", lambda *args, **kwargs: contexts.pop(0))
+    monkeypatch.setattr(entrypoint, "MainWindow", WindowProbe)
+
+    assert entrypoint.main(["first"], use_mocks=False) == 0
+    assert application.aboutToQuit.callbacks == []
+    assert entrypoint.main(["second"], use_mocks=False) == 0
+    assert application.aboutToQuit.callbacks == []
+
+
+def test_main_closes_context_when_signal_teardown_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.__main__ as entrypoint
+
+    class BrokenSignal:
+        def connect(self, callback) -> None:
+            pass
+
+        def disconnect(self, callback) -> None:
+            raise RuntimeError("disconnect failed")
+
+    class ApplicationProbe:
+        aboutToQuit = BrokenSignal()
+
+        def setStyleSheet(self, stylesheet: str) -> None:
+            pass
+
+        def exec(self) -> int:
+            return 0
+
+    class ContextProbe:
+        stylesheet = "QMainWindow {}"
+
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        def close(self) -> None:
+            self.close_calls += 1
+
+    class WindowProbe:
+        def __init__(self, context) -> None:
+            pass
+
+        def show(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    context = ContextProbe()
+    monkeypatch.setattr(entrypoint, "create_application", lambda argv=None: ApplicationProbe())
+    monkeypatch.setattr(entrypoint, "build_context", lambda *args, **kwargs: context)
+    monkeypatch.setattr(entrypoint, "MainWindow", WindowProbe)
+
+    with pytest.raises(RuntimeError, match="disconnect failed"):
+        entrypoint.main(["bamboo-workbench"], use_mocks=False)
+    assert context.close_calls == 1

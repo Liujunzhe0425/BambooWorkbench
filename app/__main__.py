@@ -9,7 +9,6 @@ from ui.main_window import MainWindow
 
 def compose_application(application: QApplication, context: AppContext) -> MainWindow:
     application.setStyleSheet(context.stylesheet)
-    application.aboutToQuit.connect(context.close)
     window = MainWindow(context)
     window.show()
     return window
@@ -23,12 +22,24 @@ def main(
 ) -> int:
     application = create_application(list(argv) if argv is not None else None)
     context = build_context(data_root, use_mocks=use_mocks)
-    window = compose_application(application, context)
+    window: MainWindow | None = None
+    close_context = context.close
+    connected = False
     try:
+        application.aboutToQuit.connect(close_context)
+        connected = True
+        window = compose_application(application, context)
         return application.exec()
     finally:
-        window.close()
-        context.close()
+        try:
+            if connected:
+                application.aboutToQuit.disconnect(close_context)
+        finally:
+            try:
+                if window is not None:
+                    window.close()
+            finally:
+                context.close()
 
 
 if __name__ == "__main__":

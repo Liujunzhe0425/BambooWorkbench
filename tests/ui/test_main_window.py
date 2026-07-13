@@ -37,3 +37,15 @@ def test_main_window_uses_the_packaged_logo(app_context) -> None:
     logo_path = app_context.resource_root / "assets" / "brand" / "team-logo.svg"
 
     assert logo_path == Path(__file__).parents[2] / "assets" / "brand" / "team-logo.svg"
+
+
+def test_navigation_exposes_accessible_names_and_descriptions(qtbot, app_context) -> None:
+    window = MainWindow(app_context)
+    qtbot.addWidget(window)
+
+    assert window.navigation.accessibleName() == "主导航"
+    assert "竹简工作台" in window.navigation.accessibleDescription()
+    assert window.navigation.logo.accessibleName() == "湖大智竹实践团队标志"
+    assert "竹叶" in window.navigation.logo.accessibleDescription()
+    for button in window.navigation.buttons.values():
+        assert button.accessibleName() == button.text()
