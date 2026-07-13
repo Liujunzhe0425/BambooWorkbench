@@ -1,5 +1,6 @@
 import json
 import sys
+import time
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -61,6 +62,15 @@ def _registered(module_dir: Path) -> RegisteredModule:
         (module_dir / "module.json").read_text(encoding="utf-8")
     )
     return RegisteredModule(manifest=manifest, path=module_dir.resolve(), is_mock=False)
+
+
+def _wait_for_file(path: Path, timeout_seconds: float) -> bool:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if path.exists():
+            return True
+        time.sleep(0.01)
+    return path.exists()
 
 
 def test_registry_discovers_all_mock_modules() -> None:
@@ -172,6 +182,30 @@ def test_healthcheck_reports_timeout_without_crashing(tmp_path: Path) -> None:
 
     assert healthy is False
     assert "timed out" in detail
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows process-tree regression")
+def test_healthcheck_timeout_terminates_child_process_tree(tmp_path: Path) -> None:
+    module_dir = _write_module(
+        tmp_path,
+        ModuleId.BOILING,
+        launcher="@echo off\r\npython child.py\r\n",
+    )
+    (module_dir / "child.py").write_text(
+        "from pathlib import Path\n"
+        "import time\n"
+        "Path('child-started').write_text('started', encoding='utf-8')\n"
+        "time.sleep(0.6)\n"
+        "Path('delayed-sentinel').write_text('orphaned', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+    healthy, detail = run_healthcheck(_registered(module_dir), timeout_ms=200)
+
+    assert healthy is False
+    assert "timed out" in detail
+    assert _wait_for_file(module_dir / "child-started", 0.2)
+    assert not _wait_for_file(module_dir / "delayed-sentinel", 0.8)
 
 
 def test_healthcheck_reports_process_start_failure(

@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QProcess, QProcessEnvironment
 
+from .process_control import terminate_process_tree
+
 if TYPE_CHECKING:
     from .registry import RegisteredModule
 
@@ -33,8 +35,7 @@ def run_healthcheck(
     elapsed_ms = int((time.monotonic() - started_at) * 1_000)
     remaining_ms = max(timeout_ms - elapsed_ms, 0)
     if not process.waitForFinished(remaining_ms):
-        process.kill()
-        process.waitForFinished(1_000)
+        terminate_process_tree(process)
         return False, f"health check timed out after {timeout_ms} ms"
 
     output = bytes(process.readAll()).decode(locale.getencoding(), errors="replace").strip()
