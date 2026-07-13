@@ -30,8 +30,10 @@ def _task_service(app_services: dict[str, object], **kwargs: object) -> TaskServ
 
 def _confirmation_service(app_services: dict[str, object]) -> ConfirmationService:
     repository = app_services["confirmation_repository"]
+    task_repository = app_services["task_repository"]
     assert isinstance(repository, ConfirmationRepository)
-    return ConfirmationService(app_services["paths"], repository)
+    assert isinstance(task_repository, TaskRepository)
+    return ConfirmationService(app_services["paths"], repository, task_repository)
 
 
 def _start_waiting_job(
@@ -94,7 +96,7 @@ def test_confirmation_resubmits_and_finishes_at_final_result_path(
     assert Path(str(task["result_path"])).is_file()
     assert final_job.phase is JobPhase.FINALIZE
     assert final_job.parent_job_id == job_id
-    assert Path(final_job.confirmation_file or "") == bundle_path.resolve()
+    assert Path(final_job.confirmation_file or "").name == "confirmation-finalize.json"
     assert job_id not in task_service.runners
     with pytest.raises(InvalidTaskTransition):
         task_service.finalize(job_id, bundle_path)
@@ -149,9 +151,7 @@ def test_confirmation_file_is_atomically_replaced_before_answers_are_saved(
         _confirmation_service(app_services).submit(job_id, [_answer()])
 
     assert observations == [(True, [])]
-    stored_bundle = ConfirmationBundle.model_validate_json(
-        target.read_text(encoding="utf-8")
-    )
+    stored_bundle = ConfirmationBundle.model_validate_json(target.read_text(encoding="utf-8"))
     assert stored_bundle.job_id == job_id
 
 
@@ -173,6 +173,68 @@ def test_confirmation_resubmit_replaces_exact_answer_set(
     bundle = ConfirmationBundle.model_validate_json(bundle_path.read_text(encoding="utf-8"))
     assert bundle.answers == [_answer()]
     assert task_service._states[job_id].state.value == "waiting_confirmation"
+
+
+def test_confirmation_submit_rejects_non_waiting_job_without_changing_audit(
+    qtbot, app_services: dict[str, object], tmp_path: Path
+) -> None:
+    task_service, job_id = _start_waiting_job(qtbot, app_services, tmp_path)
+    confirmation_service = _confirmation_service(app_services)
+    bundle_path = confirmation_service.submit(job_id, [_answer()])
+    before_file = bundle_path.read_bytes()
+    repository = app_services["confirmation_repository"]
+    task_repository = app_services["task_repository"]
+    assert isinstance(repository, ConfirmationRepository)
+    assert isinstance(task_repository, TaskRepository)
+    before_records = repository.list_for_job(job_id)
+    task_service.finalize(job_id, bundle_path)
+
+    with pytest.raises(InvalidTaskTransition, match="waiting_confirmation"):
+        confirmation_service.submit(
+            job_id,
+            [ConfirmationAnswer(confirmation_id="mock-confirm-1", value="篡改值")],
+        )
+
+    assert bundle_path.read_bytes() == before_file
+    assert repository.list_for_job(job_id) == before_records
+    assert task_repository.get(job_id)["status"] == "running_finalize"
+
+
+def test_finalize_uses_frozen_confirmation_copy(
+    qtbot, app_services: dict[str, object], tmp_path: Path
+) -> None:
+    calls = 0
+    created: list[PassiveRunner] = []
+
+    def runner_factory() -> QObject:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            from core.modules.process_runner import ModuleProcessRunner
+
+            return ModuleProcessRunner()
+        runner = PassiveRunner()
+        created.append(runner)
+        return runner
+
+    source = tmp_path / "confirm-frozen.xlsx"
+    source.write_bytes(b"confirmation-source")
+    task_service = _task_service(app_services, runner_factory=runner_factory)
+    with qtbot.waitSignal(task_service.needs_confirmation, timeout=15_000):
+        job_id = task_service.create_and_start(ModuleId.MOISTURE, [source])
+    bundle_path = _confirmation_service(app_services).submit(job_id, [_answer()])
+    expected = bundle_path.read_bytes()
+
+    task_service.finalize(job_id, bundle_path)
+    final_job = JobRequest.model_validate_json(
+        (bundle_path.parent / "job-finalize.json").read_text(encoding="utf-8")
+    )
+    frozen_path = Path(final_job.confirmation_file or "")
+    bundle_path.write_text("{}", encoding="utf-8")
+
+    assert frozen_path.name == "confirmation-finalize.json"
+    assert frozen_path.read_bytes() == expected
+    assert frozen_path != bundle_path
 
 
 @pytest.mark.parametrize(
@@ -219,9 +281,7 @@ def test_finalize_rejects_bundle_for_a_different_job(
     first_service, first_job_id = _start_waiting_job(
         qtbot, app_services, tmp_path, name="confirm-first.xlsx"
     )
-    _, second_job_id = _start_waiting_job(
-        qtbot, app_services, tmp_path, name="confirm-second.xlsx"
-    )
+    _, second_job_id = _start_waiting_job(qtbot, app_services, tmp_path, name="confirm-second.xlsx")
     confirmation_service = _confirmation_service(app_services)
     first_bundle = confirmation_service.submit(first_job_id, [_answer()])
     second_bundle = confirmation_service.submit(second_job_id, [_answer()])

@@ -69,6 +69,7 @@ class MainWindow(QMainWindow):
         self._finalizing_job_id: str | None = None
         self._finalize_failed = False
         self._confirmation_job_ids: set[str] = set()
+        self._foreground_job_id: str | None = None
 
         layout.addWidget(self.navigation)
         layout.addWidget(self.stack, 1)
@@ -78,6 +79,10 @@ class MainWindow(QMainWindow):
         self.module_task_page.task_requested.connect(self._start_task)
         self.task_progress_page.cancel_requested.connect(self._cancel_task)
         self.confirmations_page.submitted.connect(self._submit_confirmation)
+        self.confirmations_page.job_selected.connect(self._select_confirmation_job)
+        self.result_center_page.output_files.open_failed.connect(
+            lambda message: self._show_failure("输出文件不可用", message)
+        )
         self.settings_page.action_failed.connect(
             lambda message: self._show_failure("日志目录不可用", message)
         )
@@ -87,6 +92,9 @@ class MainWindow(QMainWindow):
         context.task_service.failed.connect(self._on_failed)
         context.task_service.orchestration_error.connect(self._on_orchestration_error)
         context.task_service.status_changed.connect(self._on_status_changed)
+        for job_id, result in context.task_service.pending_confirmations():
+            self._confirmation_job_ids.add(job_id)
+            self.confirmations_page.load(job_id, result.confirmations)
         self.navigate(PageId.WORKBENCH)
 
     @staticmethod
@@ -119,13 +127,13 @@ class MainWindow(QMainWindow):
             lifecycle = TaskLifecycleState(status)
         except ValueError:
             return
-        if (
-            lifecycle is TaskLifecycleState.CANCELLED
-            and self.task_progress_page.current_job_id == job_id
-        ):
-            self.task_progress_page.current_job_id = ""
-            self.task_progress_page.cancel_button.setEnabled(False)
-            self.task_progress_page.message_label.setText("任务已取消")
+        if lifecycle is TaskLifecycleState.CANCELLED:
+            self._clear_confirmation(job_id)
+            if self._is_foreground(job_id):
+                self.task_progress_page.current_job_id = ""
+                self.task_progress_page.cancel_button.setEnabled(False)
+                self.task_progress_page.message_label.setText("任务已取消")
+                self._foreground_job_id = None
 
     def _open_module(self, module_id: object) -> None:
         try:
@@ -153,11 +161,14 @@ class MainWindow(QMainWindow):
             self._starting_task = False
         if self._start_failure_job_id == job_id:
             return
+        self._foreground_job_id = job_id
         self.task_progress_page.bind(job_id)
         self.stack.setCurrentWidget(self.task_progress_page)
 
     def _on_progress(self, job_id: str, event: object) -> None:
         if not isinstance(event, ProgressEvent):
+            return
+        if self._foreground_job_id != job_id:
             return
         if self.task_progress_page.current_job_id != job_id:
             self.task_progress_page.bind(job_id)
@@ -166,27 +177,40 @@ class MainWindow(QMainWindow):
     def _on_confirmation(self, job_id: str, result: ModuleResult) -> None:
         self._confirmation_job_ids.add(job_id)
         self.confirmations_page.load(job_id, result.confirmations)
+        if self._foreground_job_id == job_id:
+            self.confirmations_page.select_job(job_id, user_selected=False)
+            self.stack.setCurrentWidget(self.confirmations_page)
+            self.navigation.set_current_page(PageId.CONFIRMATIONS)
+
+    def _select_confirmation_job(self, job_id: str) -> None:
+        self._foreground_job_id = job_id
         self.stack.setCurrentWidget(self.confirmations_page)
         self.navigation.set_current_page(PageId.CONFIRMATIONS)
 
     def _submit_confirmation(self, job_id: str, answers: list) -> None:
+        self._foreground_job_id = job_id
         self._finalizing_job_id = job_id
         self._finalize_failed = False
         try:
             bundle_path = self.context.confirmation_service.submit(job_id, answers)
             self.context.task_service.finalize(job_id, bundle_path)
         except Exception as error:
+            self.confirmations_page.submission_failed(job_id)
             self._show_failure("确认提交失败", str(error))
             return
         finally:
             self._finalizing_job_id = None
         if self._finalize_failed:
             return
+        self._clear_confirmation(job_id)
         self.task_progress_page.bind(job_id)
         self.stack.setCurrentWidget(self.task_progress_page)
 
     def _on_finished(self, result: ModuleResult) -> None:
-        self._confirmation_job_ids.discard(result.job_id)
+        self._clear_confirmation(result.job_id)
+        if self._foreground_job_id != result.job_id:
+            self.history_page.refresh()
+            return
         if self.task_progress_page.current_job_id == result.job_id:
             self.task_progress_page.current_job_id = ""
             self.task_progress_page.cancel_button.setEnabled(False)
@@ -194,22 +218,22 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.result_center_page)
         if result.status in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
             self._show_failure("任务未完成", "；".join(result.errors) or result.status.value)
+        self._foreground_job_id = None
 
     def _on_failed(self, job_id: str, message: str) -> None:
         if self._starting_task:
             self._start_failure_job_id = job_id
         if self._finalizing_job_id == job_id:
             self._finalize_failed = True
-        if self.task_progress_page.current_job_id == job_id:
-            target = (
-                self.confirmations_page
-                if job_id in self._confirmation_job_ids
-                else self.module_task_page
-            )
+        was_confirmation = job_id in self._confirmation_job_ids
+        self._clear_confirmation(job_id)
+        if self._foreground_job_id == job_id:
+            target = self.confirmations_page if was_confirmation else self.module_task_page
             self.stack.setCurrentWidget(target)
             self.task_progress_page.current_job_id = ""
             self.task_progress_page.cancel_button.setEnabled(False)
             self.task_progress_page.message_label.setText("任务执行失败")
+            self._foreground_job_id = None
         self._show_failure("任务未完成", f"任务 {job_id}：{message}")
 
     def _on_orchestration_error(self, job_id: str, message: str) -> None:
@@ -217,17 +241,25 @@ class MainWindow(QMainWindow):
             self._start_failure_job_id = job_id
         if self._finalizing_job_id == job_id:
             self._finalize_failed = True
-        if self.task_progress_page.current_job_id == job_id:
-            target = (
-                self.confirmations_page
-                if job_id in self._confirmation_job_ids
-                else self.module_task_page
-            )
+        was_confirmation = job_id in self._confirmation_job_ids
+        self._clear_confirmation(job_id)
+        if self._foreground_job_id == job_id:
+            target = self.confirmations_page if was_confirmation else self.module_task_page
             self.stack.setCurrentWidget(target)
             self.task_progress_page.current_job_id = ""
             self.task_progress_page.cancel_button.setEnabled(False)
             self.task_progress_page.message_label.setText("任务协调错误")
+            self._foreground_job_id = None
         self._show_failure("任务协调错误", f"任务 {job_id}：{message}")
+
+    def _clear_confirmation(self, job_id: str) -> None:
+        self._confirmation_job_ids.discard(job_id)
+        self.confirmations_page.remove(job_id)
+
+    def _is_foreground(self, job_id: str) -> bool:
+        return self._foreground_job_id == job_id or (
+            self._foreground_job_id is None and self.task_progress_page.current_job_id == job_id
+        )
 
     def _show_failure(self, title: str, message: str) -> None:
         dialog = QMessageBox(self)

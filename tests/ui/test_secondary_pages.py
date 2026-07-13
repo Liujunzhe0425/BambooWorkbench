@@ -283,3 +283,49 @@ def test_diagnostics_contains_only_allowlisted_nonsecret_fields(
         "token",
     ):
         assert forbidden not in serialized
+
+
+def test_module_card_renders_unknown_health_explicitly(app_context) -> None:
+    from dataclasses import replace
+
+    from ui.widgets.module_card import ModuleCard
+
+    module_id = ModuleId.MOISTURE
+    app_context.registry._modules[module_id] = replace(
+        app_context.registry.get(module_id), health="unknown"
+    )
+    card = ModuleCard(module_id, "原竹丝水分检测", app_context.registry)
+
+    assert "状态未知" in card.state_label.text()
+
+
+def test_output_click_rechecks_missing_file_and_never_opens(
+    qtbot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core.contracts.result import OutputArtifact
+    from ui.widgets.output_files import OutputFilesWidget
+
+    target = tmp_path / "report.txt"
+    target.write_text("ready", encoding="utf-8")
+    opened: list[QUrl] = []
+    failures: list[str] = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url) or True)
+    widget = OutputFilesWidget()
+    qtbot.addWidget(widget)
+    widget.open_failed.connect(failures.append)
+    widget.set_outputs(
+        [
+            OutputArtifact(
+                type="report",
+                path=str(target),
+                label="报告",
+                mime_type="text/plain",
+            )
+        ]
+    )
+    target.unlink()
+
+    qtbot.mouseClick(widget.buttons[0], Qt.MouseButton.LeftButton)
+
+    assert opened == []
+    assert failures and "不可用" in failures[0]

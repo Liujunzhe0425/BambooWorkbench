@@ -1,6 +1,7 @@
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QLabel,
     QLineEdit,
@@ -15,11 +16,14 @@ from core.contracts.result import ConfirmationPrompt
 
 class ConfirmationsPage(QWidget):
     submitted = Signal(str, list)
+    job_selected = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
         self.setObjectName("page-confirmations")
         self.current_job_id = ""
+        self._models: dict[str, list[ConfirmationPrompt]] = {}
+        self._submitting_jobs: set[str] = set()
         self.prompts: list[ConfirmationPrompt] = []
         self.answer_inputs: dict[str, QLineEdit] = {}
         self.batch_checks: dict[str, QCheckBox] = {}
@@ -29,6 +33,9 @@ class ConfirmationsPage(QWidget):
         title = QLabel("待确认事项")
         title.setProperty("heading", True)
         self.status_label = QLabel("当前没有待确认事项")
+        self.job_selector = QComboBox()
+        self.job_selector.setAccessibleName("选择待确认任务")
+        self.job_selector.currentIndexChanged.connect(self._selector_changed)
         self.form_host = QWidget()
         self.form_layout = QFormLayout(self.form_host)
         self.submit_button = QPushButton("提交确认")
@@ -38,13 +45,67 @@ class ConfirmationsPage(QWidget):
         self.submit_button.clicked.connect(self._submit)
         layout.addWidget(title)
         layout.addWidget(self.status_label)
+        layout.addWidget(self.job_selector)
         layout.addWidget(self.form_host)
         layout.addWidget(self.submit_button)
         layout.addStretch()
 
     def load(self, job_id: str, prompts: list[ConfirmationPrompt]) -> None:
+        is_new = job_id not in self._models
+        self._models[job_id] = list(prompts)
+        if is_new:
+            self.job_selector.blockSignals(True)
+            self.job_selector.addItem(job_id, job_id)
+            self.job_selector.blockSignals(False)
+        if not self.current_job_id:
+            self.select_job(job_id, user_selected=False)
+        elif self.current_job_id == job_id:
+            self._render(job_id)
+
+    @property
+    def pending_job_ids(self) -> tuple[str, ...]:
+        return tuple(self._models)
+
+    def select_job(self, job_id: str, *, user_selected: bool = True) -> None:
+        if job_id not in self._models:
+            raise KeyError(job_id)
+        index = self.job_selector.findData(job_id)
+        if index >= 0 and self.job_selector.currentIndex() != index:
+            self.job_selector.blockSignals(True)
+            self.job_selector.setCurrentIndex(index)
+            self.job_selector.blockSignals(False)
+        self._render(job_id)
+        if user_selected:
+            self.job_selected.emit(job_id)
+
+    def remove(self, job_id: str) -> None:
+        self._models.pop(job_id, None)
+        self._submitting_jobs.discard(job_id)
+        index = self.job_selector.findData(job_id)
+        if index >= 0:
+            self.job_selector.blockSignals(True)
+            self.job_selector.removeItem(index)
+            self.job_selector.blockSignals(False)
+        if self.current_job_id == job_id:
+            self.current_job_id = ""
+            self.prompts = []
+            self._clear_form()
+            if self.job_selector.count():
+                next_job = str(self.job_selector.itemData(0))
+                self.select_job(next_job, user_selected=False)
+            else:
+                self.status_label.setText("当前没有待确认事项")
+                self.submit_button.setEnabled(False)
+
+    def submission_failed(self, job_id: str) -> None:
+        self._submitting_jobs.discard(job_id)
+        if self.current_job_id == job_id and job_id in self._models:
+            self.submit_button.setEnabled(True)
+
+    def _render(self, job_id: str) -> None:
         self._clear_form()
         self.current_job_id = job_id
+        prompts = self._models[job_id]
         self.prompts = list(prompts)
         self.status_label.setText(f"任务 {job_id} 需要确认 {len(prompts)} 项")
         for prompt in prompts:
@@ -72,7 +133,16 @@ class ConfirmationsPage(QWidget):
                 editor_layout.addWidget(remember)
             label = f"{prompt.field}（{'必填' if prompt.blocking else '可选'}）"
             self.form_layout.addRow(label, editor_host)
-        self.submit_button.setEnabled(bool(job_id) and bool(prompts))
+        self.submit_button.setEnabled(
+            bool(job_id) and bool(prompts) and job_id not in self._submitting_jobs
+        )
+
+    def _selector_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        job_id = str(self.job_selector.itemData(index))
+        if job_id in self._models:
+            self.select_job(job_id)
 
     def _clear_form(self) -> None:
         while self.form_layout.rowCount():
@@ -95,4 +165,9 @@ class ConfirmationsPage(QWidget):
                 )
             )
         if self.current_job_id and answers:
-            self.submitted.emit(self.current_job_id, answers)
+            job_id = self.current_job_id
+            if job_id in self._submitting_jobs:
+                return
+            self._submitting_jobs.add(job_id)
+            self.submit_button.setEnabled(False)
+            self.submitted.emit(job_id, answers)

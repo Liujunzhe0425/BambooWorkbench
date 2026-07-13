@@ -236,6 +236,22 @@ def test_cancel_returns_false_when_no_run_can_accept_cancellation() -> None:
     assert runner.cancel() is False
 
 
+def test_shutdown_is_bounded_stops_real_process_and_emits_no_terminal(
+    qtbot, tmp_path: Path
+) -> None:
+    job_path, _ = _write_job(tmp_path, name="timeout.xlsx", job_id="shutdown-job")
+    runner = ModuleProcessRunner(timeout_ms=30_000)
+    terminals = _terminal_spies(runner)
+    runner.start(_registered_mock(), job_path)
+    qtbot.waitUntil(lambda: runner.is_running, timeout=2_000)
+
+    assert runner.shutdown(timeout_ms=3_000) is True
+
+    qtbot.wait(100)
+    assert runner.is_running is False
+    assert sum(spy.count() for spy in terminals) == 0
+
+
 def test_cancel_returns_false_in_not_running_callback_window() -> None:
     runner = ModuleProcessRunner()
     process = QProcess(runner)

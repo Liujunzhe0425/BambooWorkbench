@@ -29,5 +29,9 @@ class ModuleCard(QWidget):
         except KeyError:
             return "未安装 · 状态未知"
         source = "模拟模块" if module.is_mock else "正式模块"
-        health = "健康" if module.health == "healthy" else "异常"
+        health = {
+            "healthy": "健康",
+            "unhealthy": "异常",
+            "unknown": "状态未知",
+        }.get(module.health, "状态未知")
         return f"已安装 · {source} · {health}"

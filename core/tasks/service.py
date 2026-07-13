@@ -1,4 +1,6 @@
 import hashlib
+import json
+import logging
 import os
 import re
 import shutil
@@ -30,6 +32,8 @@ from core.tasks.models import InvalidTaskTransition, TaskLifecycleState, TaskSta
 from core.tasks.snapshots import remove_snapshots, snapshot_inputs
 
 _JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{6,64}$")
+_TERMINAL_MARKER = ".terminal-pending.json"
+_LOG = logging.getLogger("bamboo_workbench")
 
 
 def _new_job_id() -> str:
@@ -84,6 +88,55 @@ class TaskService(QObject):
         self._jobs: dict[str, JobRequest] = {}
         self._failed_signals: set[str] = set()
         self._cancellation_pending: set[str] = set()
+        self._pending_confirmation_results: dict[str, ModuleResult] = {}
+        self._shutdown = False
+        self._reconcile_startup()
+
+    def pending_confirmations(self) -> list[tuple[str, ModuleResult]]:
+        return sorted(self._pending_confirmation_results.items())
+
+    def shutdown(self) -> None:
+        if self._shutdown:
+            return
+        self._shutdown = True
+        for job_id, runner in tuple(self.runners.items()):
+            try:
+                shutdown = getattr(runner, "shutdown", None)
+                stopped = bool(shutdown()) if callable(shutdown) else False
+                if not stopped:
+                    cancel = getattr(runner, "cancel", None)
+                    if callable(cancel):
+                        cancel()
+            except Exception as exc:
+                _LOG.error("task shutdown runner fault job=%s error=%s", job_id, exc)
+            machine = self._states.get(job_id)
+            if machine is not None and machine.state in {
+                TaskLifecycleState.CREATED,
+                TaskLifecycleState.RUNNING_DRAFT,
+                TaskLifecycleState.RUNNING_FINALIZE,
+            }:
+                try:
+                    self._persist_transition(
+                        job_id,
+                        TaskLifecycleState.CANCELLED,
+                        error="application shutdown interrupted active task",
+                    )
+                except Exception as exc:
+                    try:
+                        self._write_terminal_marker(
+                            job_id,
+                            TaskLifecycleState.CANCELLED,
+                            f"application shutdown interrupted active task: {exc}",
+                        )
+                    except Exception as marker_error:
+                        _LOG.error(
+                            "task shutdown persistence fault job=%s error=%s marker_error=%s",
+                            job_id,
+                            exc,
+                            marker_error,
+                        )
+            self._cleanup_runner(job_id, runner, task_terminal=True)
+        _LOG.info("task service shutdown complete")
 
     def cancel(self, job_id: str) -> None:
         runner = self.runners.get(job_id)
@@ -218,6 +271,12 @@ class TaskService(QObject):
         if trusted_draft.module_id.value != task["module_id"]:
             raise ValueError("job-draft module_id does not match persisted task")
         self._validate_draft_paths(job_id, task_dir, trusted_draft)
+        frozen_bundle_path = resolve_contained_target(
+            task_dir / "confirmation-finalize.json",
+            task_dir,
+            "frozen confirmation file",
+            reject_link=True,
+        )
 
         final_output_dir = resolve_contained_target(
             task_dir / "output-final",
@@ -231,11 +290,12 @@ class TaskService(QObject):
         final_payload.update(
             phase=JobPhase.FINALIZE,
             parent_job_id=job_id,
-            confirmation_file=str(resolved_bundle_path),
+            confirmation_file=str(frozen_bundle_path),
             output_dir=str(final_output_dir),
         )
         final_job = JobRequest.model_validate(final_payload)
         final_path = task_dir / "job-finalize.json"
+        _atomic_write_text(frozen_bundle_path, bundle.model_dump_json(indent=2))
         _atomic_write_text(final_path, final_job.model_dump_json(indent=2))
 
         self._persist_transition(job_id, TaskLifecycleState.RUNNING_FINALIZE)
@@ -362,6 +422,7 @@ class TaskService(QObject):
                     TaskLifecycleState.WAITING_CONFIRMATION,
                     result_path=result_path,
                 )
+                self._pending_confirmation_results[job_id] = result
                 self.needs_confirmation.emit(job_id, result)
                 task_terminal = False
             else:
@@ -369,6 +430,7 @@ class TaskService(QObject):
                 if result.status in {TaskStatus.SUCCESS, TaskStatus.PARTIAL_SUCCESS}:
                     self.task_repository.replace_outputs(job_id, result.outputs)
                 self._persist_transition(job_id, target, result_path=result_path)
+                _LOG.info("task terminal job=%s status=%s", job_id, target.value)
                 self.finished.emit(result)
                 task_terminal = True
         except Exception as exc:
@@ -381,6 +443,7 @@ class TaskService(QObject):
             return
         try:
             self._persist_transition(job_id, TaskLifecycleState.CANCELLED)
+            _LOG.info("task terminal job=%s status=cancelled", job_id)
         except Exception as exc:
             self._record_failure(job_id, self._error_message(exc), runner)
             return
@@ -400,15 +463,28 @@ class TaskService(QObject):
         try:
             self._persist_transition(job_id, TaskLifecycleState.FAILED, error=message)
         except Exception as persistence_error:
-            self._cleanup_runner(job_id, runner, task_terminal=False)
+            marker_error: Exception | None = None
+            try:
+                self._write_terminal_marker(job_id, TaskLifecycleState.FAILED, message)
+            except Exception as exc:
+                marker_error = exc
+            self._cleanup_runner(job_id, runner, task_terminal=True)
             self.orchestration_error.emit(
                 job_id,
                 f"{message}; failed to persist failed task state: "
-                f"{type(persistence_error).__name__}: {persistence_error}",
+                f"{type(persistence_error).__name__}: {persistence_error}"
+                + (
+                    f"; failed to persist terminal marker: {type(marker_error).__name__}: "
+                    f"{marker_error}"
+                    if marker_error is not None
+                    else ""
+                ),
             )
+            _LOG.error("task orchestration persistence fault job=%s error=%s", job_id, message)
             return
         self._failed_signals.add(job_id)
         self.failed.emit(job_id, message)
+        _LOG.error("task failed job=%s error=%s", job_id, message)
         self._cleanup_runner(job_id, runner, task_terminal=True)
 
     def _persist_transition(
@@ -447,7 +523,128 @@ class TaskService(QObject):
         if task_terminal:
             self._states.pop(job_id, None)
             self._jobs.pop(job_id, None)
+            self._pending_confirmation_results.pop(job_id, None)
             self._failed_signals.discard(job_id)
+
+    def _write_terminal_marker(
+        self,
+        job_id: str,
+        status: TaskLifecycleState,
+        error: str,
+    ) -> None:
+        task_dir = self.paths.tasks / job_id
+        marker = task_dir / _TERMINAL_MARKER
+        payload = {"job_id": job_id, "status": status.value, "error": error}
+        _atomic_write_text(marker, json.dumps(payload, ensure_ascii=False, indent=2))
+
+    def _reconcile_startup(self) -> None:
+        self.paths.ensure()
+        self._apply_terminal_markers()
+        active_statuses = (
+            TaskLifecycleState.CREATED.value,
+            TaskLifecycleState.RUNNING_DRAFT.value,
+            TaskLifecycleState.RUNNING_FINALIZE.value,
+            TaskLifecycleState.WAITING_CONFIRMATION.value,
+        )
+        for task in self.task_repository.list_by_status(active_statuses):
+            job_id = str(task["job_id"])
+            status = str(task["status"])
+            if status == TaskLifecycleState.WAITING_CONFIRMATION.value:
+                try:
+                    self._recover_waiting_confirmation(task)
+                except Exception as exc:
+                    self.task_repository.update_status(
+                        job_id,
+                        TaskLifecycleState.FAILED.value,
+                        error=f"interrupted waiting-confirmation recovery failed: {exc}",
+                    )
+                    _LOG.error("task recovery failed job=%s error=%s", job_id, exc)
+                continue
+            self.task_repository.update_status(
+                job_id,
+                TaskLifecycleState.FAILED.value,
+                error=f"interrupted application restart from {status}",
+            )
+            _LOG.warning("task reconciled as interrupted job=%s prior_status=%s", job_id, status)
+
+    def _apply_terminal_markers(self) -> None:
+        for marker in self.paths.tasks.glob(f"*/{_TERMINAL_MARKER}"):
+            try:
+                if marker.is_symlink() or not marker.is_file():
+                    continue
+                payload = json.loads(marker.read_text(encoding="utf-8"))
+                job_id = str(payload["job_id"])
+                status = TaskLifecycleState(str(payload["status"]))
+                error = str(payload["error"])
+                if marker.parent.name != job_id or status not in {
+                    TaskLifecycleState.FAILED,
+                    TaskLifecycleState.CANCELLED,
+                }:
+                    raise ValueError("invalid terminal marker identity or status")
+                self.task_repository.get(job_id)
+                self.task_repository.update_status(job_id, status.value, error=error)
+                marker.unlink()
+                _LOG.warning("terminal marker applied job=%s status=%s", job_id, status.value)
+            except Exception as exc:
+                _LOG.error("terminal marker recovery fault path=%s error=%s", marker, exc)
+
+    def _recover_waiting_confirmation(self, task: dict[str, object]) -> None:
+        job_id = str(task["job_id"])
+        tasks_root = resolve_path(self.paths.tasks, "tasks root", strict=True)
+        task_dir = resolve_contained_directory(
+            self.paths.tasks / job_id,
+            tasks_root,
+            "task directory",
+            reject_link=True,
+        )
+        draft_path = resolve_contained_file(
+            task_dir / "job-draft.json",
+            task_dir,
+            "draft job file",
+            reject_link=True,
+        )
+        draft = JobRequest.model_validate_json(draft_path.read_text(encoding="utf-8"))
+        if (
+            draft.job_id != job_id
+            or draft.phase is not JobPhase.DRAFT
+            or draft.module_id.value != task["module_id"]
+        ):
+            raise ValueError("persisted draft identity is invalid")
+        self._validate_draft_paths(job_id, task_dir, draft)
+        expected_result = resolve_contained_file(
+            Path(draft.output_dir) / "result.json",
+            task_dir,
+            "draft result file",
+            reject_link=True,
+        )
+        if Path(str(task["result_path"])).resolve() != expected_result:
+            raise ValueError("persisted result path does not match draft output")
+        result = ModuleResult.model_validate_json(expected_result.read_text(encoding="utf-8"))
+        if (
+            result.job_id != job_id
+            or result.module_id is not draft.module_id
+            or result.status is not TaskStatus.NEEDS_CONFIRMATION
+        ):
+            raise ValueError("persisted draft result identity or status is invalid")
+        records = self.confirmation_repository.list_for_job(job_id)
+        canonical = {
+            item.confirmation_id: item.model_dump(mode="json")
+            for item in (
+                ConfirmationPrompt.model_validate(record["original_prompt"]) for record in records
+            )
+        }
+        result_prompts = {
+            item.confirmation_id: item.model_dump(mode="json") for item in result.confirmations
+        }
+        if canonical != result_prompts:
+            raise ValueError("persisted canonical prompts do not match draft result")
+        machine = TaskStateMachine()
+        machine.transition(TaskLifecycleState.RUNNING_DRAFT)
+        machine.transition(TaskLifecycleState.WAITING_CONFIRMATION)
+        self._states[job_id] = machine
+        self._jobs[job_id] = draft
+        self._pending_confirmation_results[job_id] = result
+        _LOG.info("waiting confirmation recovered job=%s", job_id)
 
     @staticmethod
     def _error_message(error: Exception) -> str:

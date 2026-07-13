@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -246,8 +247,14 @@ def test_failed_status_persistence_error_uses_non_lifecycle_signal_and_keeps_con
     assert orchestration_errors and orchestration_errors[0][0] == job_id
     assert "database unavailable" in orchestration_errors[0][1]
     assert job_id not in service.runners
-    assert job_id in service._states
-    assert job_id in service._jobs
+    assert job_id not in service._states
+    assert job_id not in service._jobs
+    marker = service.paths.tasks / job_id / ".terminal-pending.json"
+    assert json.loads(marker.read_text(encoding="utf-8")) == {
+        "job_id": job_id,
+        "status": "failed",
+        "error": "task orchestration failed: RuntimeError: simulated start crash",
+    }
 
 
 def test_status_changed_payload_is_lifecycle_value_string(

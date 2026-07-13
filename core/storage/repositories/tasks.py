@@ -52,6 +52,16 @@ class TaskRepository:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def list_by_status(self, statuses: tuple[str, ...]) -> list[dict[str, object]]:
+        if not statuses:
+            return []
+        placeholders = ", ".join("?" for _ in statuses)
+        rows = self.database.connection.execute(
+            f"SELECT * FROM tasks WHERE status IN ({placeholders}) ORDER BY created_at",
+            statuses,
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def add_file(
         self,
         job_id: str,

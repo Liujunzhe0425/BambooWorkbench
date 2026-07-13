@@ -12,6 +12,8 @@ from core.platform.path_safety import (
 )
 from core.platform.paths import AppPaths
 from core.storage.repositories.confirmations import ConfirmationRepository
+from core.storage.repositories.tasks import TaskRepository
+from core.tasks.models import InvalidTaskTransition, TaskLifecycleState
 
 _JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{6,64}$")
 
@@ -36,13 +38,24 @@ def _atomic_write_text(path: Path, content: str) -> None:
 
 
 class ConfirmationService:
-    def __init__(self, paths: AppPaths, repository: ConfirmationRepository) -> None:
+    def __init__(
+        self,
+        paths: AppPaths,
+        repository: ConfirmationRepository,
+        task_repository: TaskRepository,
+    ) -> None:
         self.paths = paths
         self.repository = repository
+        self.task_repository = task_repository
 
     def submit(self, job_id: str, answers: list[ConfirmationAnswer]) -> Path:
         if not _JOB_ID_PATTERN.fullmatch(job_id):
             raise ValueError("invalid job ID")
+        task = self.task_repository.get(job_id)
+        if task["status"] != TaskLifecycleState.WAITING_CONFIRMATION.value:
+            raise InvalidTaskTransition(
+                "confirmation submit requires persisted waiting_confirmation state"
+            )
         tasks_root = resolve_path(self.paths.tasks, "tasks root", strict=True)
         if not tasks_root.is_dir():
             raise ValueError("tasks root is not a directory")
@@ -57,8 +70,7 @@ class ConfirmationService:
         if not records:
             raise ValueError(f"no stored confirmation prompts for {job_id}")
         prompts = [
-            ConfirmationPrompt.model_validate(record["original_prompt"])
-            for record in records
+            ConfirmationPrompt.model_validate(record["original_prompt"]) for record in records
         ]
         answer_ids = [answer.confirmation_id for answer in answers]
         supplied = set(answer_ids)

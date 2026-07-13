@@ -1,3 +1,4 @@
+import logging
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -6,6 +7,7 @@ from PySide6.QtWidgets import QApplication
 
 from core.confirmations.service import ConfirmationService
 from core.modules.registry import ModuleRegistry, RegisteredModule
+from core.platform.logging import configure_logging
 from core.platform.paths import AppPaths
 from core.storage.database import Database
 from core.storage.repositories.confirmations import ConfirmationRepository
@@ -30,13 +32,17 @@ class AppContext:
     confirmation_service: ConfirmationService
     scan_results: dict[object, RegisteredModule]
     stylesheet: str
+    logger: logging.Logger
     _closed: bool = field(default=False, init=False, repr=False)
 
     def close(self) -> None:
         if self._closed:
             return
-        self.database.close()
-        self._closed = True
+        try:
+            self.task_service.shutdown()
+        finally:
+            self.database.close()
+            self._closed = True
 
 
 def resolve_resource_root() -> Path:
@@ -48,6 +54,8 @@ def resolve_resource_root() -> Path:
 def build_context(data_root: Path | None = None, use_mocks: bool = True) -> AppContext:
     resource_root = resolve_resource_root()
     paths = AppPaths.for_root(data_root)
+    logger = configure_logging(paths)
+    logger.info("application startup data_root=%s", paths.root)
     database = Database.open(paths)
     try:
         database.migrate()
@@ -62,13 +70,18 @@ def build_context(data_root: Path | None = None, use_mocks: bool = True) -> AppC
             repository=module_repository,
         )
         scan_results = registry.scan()
+        logger.info("module scan completed count=%d", len(scan_results))
         task_service = TaskService(
             paths,
             registry,
             task_repository,
             confirmation_repository,
         )
-        confirmation_service = ConfirmationService(paths, confirmation_repository)
+        confirmation_service = ConfirmationService(
+            paths,
+            confirmation_repository,
+            task_repository,
+        )
         return AppContext(
             resource_root=resource_root,
             paths=paths,
@@ -82,6 +95,7 @@ def build_context(data_root: Path | None = None, use_mocks: bool = True) -> AppC
             confirmation_service=confirmation_service,
             scan_results=scan_results,
             stylesheet=load_stylesheet(resource_root),
+            logger=logger,
         )
     except Exception:
         database.close()

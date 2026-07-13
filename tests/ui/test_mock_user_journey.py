@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import QMimeData, Qt, QTimer, QUrl
+from PySide6.QtCore import QMimeData, QObject, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtTest import QSignalSpy
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
@@ -55,6 +55,24 @@ class _DropEvent:
 
     def acceptProposedAction(self) -> None:
         self.accepted = True
+
+
+class _ConcurrentRunner(QObject):
+    progress = Signal(object)
+    completed = Signal(object)
+    failed = Signal(str)
+    cancelled = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancel_calls = 0
+
+    def start(self, _module: object, _job_path: Path) -> None:
+        pass
+
+    def cancel(self) -> bool:
+        self.cancel_calls += 1
+        return True
 
 
 def _result(output_path: Path) -> ModuleResult:
@@ -407,3 +425,205 @@ def test_workflow_controls_expose_keyboard_accessibility_metadata(qtbot, app_con
     assert all(control.accessibleName() for control in controls)
     assert window.module_task_page.run_button.focusPolicy() is not Qt.FocusPolicy.NoFocus
     assert window.confirmations_page.submit_button.focusPolicy() is not Qt.FocusPolicy.NoFocus
+
+
+def test_background_job_events_do_not_replace_foreground_workflow(
+    qtbot, app_context, tmp_path: Path
+) -> None:
+    first_output = tmp_path / "first.txt"
+    first_output.write_text("first", encoding="utf-8")
+    second_output = tmp_path / "second.txt"
+    second_output.write_text("second", encoding="utf-8")
+    window = MainWindow(app_context)
+    qtbot.addWidget(window)
+    window._foreground_job_id = "foreground-job"
+    window.task_progress_page.bind("foreground-job")
+    window.stack.setCurrentWidget(window.task_progress_page)
+
+    window._on_progress(
+        "background-job",
+        ProgressEvent(type="progress", percent=91, message="后台进度"),
+    )
+    window._on_finished(_result(second_output).model_copy(update={"job_id": "background-job"}))
+
+    assert window.task_progress_page.current_job_id == "foreground-job"
+    assert window.stack.currentWidget() is window.task_progress_page
+    assert window.result_center_page.current_result is None
+
+    foreground = _result(first_output).model_copy(update={"job_id": "foreground-job"})
+    window._on_finished(foreground)
+
+    assert window.stack.currentWidget() is window.result_center_page
+    assert window.result_center_page.current_result == foreground
+
+
+def test_multiple_confirmation_models_are_isolated_and_selection_sets_foreground(
+    qtbot, app_context, tmp_path: Path
+) -> None:
+    prompt_one = ConfirmationPrompt(
+        confirmation_id="confirm-one",
+        field="field_one",
+        reason="reason one",
+        suggested_value="one",
+        options=["one"],
+        confidence=0.8,
+        blocking=True,
+        batch_applicable=False,
+        rememberable=False,
+        source=SourceRef(source_file=str(tmp_path / "one.xlsx")),
+    )
+    prompt_two = prompt_one.model_copy(
+        update={"confirmation_id": "confirm-two", "field": "field_two"}
+    )
+    window = MainWindow(app_context)
+    qtbot.addWidget(window)
+    window._foreground_job_id = "job-one"
+    summary = ResultSummary(
+        input_count=1,
+        processed_count=0,
+        skipped_count=0,
+        failed_count=0,
+        anomaly_count=0,
+        confirmation_count=1,
+    )
+    first = _result(tmp_path / "unused-one.txt").model_copy(
+        update={
+            "job_id": "job-one",
+            "status": TaskStatus.NEEDS_CONFIRMATION,
+            "confirmations": [prompt_one],
+            "summary": summary,
+            "outputs": [],
+        }
+    )
+    second = first.model_copy(update={"job_id": "job-two", "confirmations": [prompt_two]})
+
+    window._on_confirmation("job-one", first)
+    window._on_confirmation("job-two", second)
+
+    assert set(window.confirmations_page.pending_job_ids) == {"job-one", "job-two"}
+    assert window.confirmations_page.current_job_id == "job-one"
+    assert "confirm-one" in window.confirmations_page.answer_inputs
+    assert "confirm-two" not in window.confirmations_page.answer_inputs
+
+    window.confirmations_page.select_job("job-two")
+
+    assert window._foreground_job_id == "job-two"
+    assert window.confirmations_page.current_job_id == "job-two"
+    assert "confirm-two" in window.confirmations_page.answer_inputs
+
+
+def test_background_cancel_does_not_clear_foreground_progress(qtbot, app_context) -> None:
+    window = MainWindow(app_context)
+    qtbot.addWidget(window)
+    window._foreground_job_id = "foreground-job"
+    window.task_progress_page.bind("foreground-job")
+    window.stack.setCurrentWidget(window.task_progress_page)
+    window.confirmations_page.load("background-job", [])
+    window._confirmation_job_ids.add("background-job")
+
+    window._on_status_changed("background-job", "cancelled")
+
+    assert window._foreground_job_id == "foreground-job"
+    assert window.task_progress_page.current_job_id == "foreground-job"
+    assert window.stack.currentWidget() is window.task_progress_page
+    assert "background-job" not in window.confirmations_page.pending_job_ids
+
+
+def test_two_fake_jobs_interleave_progress_cancel_and_finish_without_ui_crosstalk(
+    qtbot, app_context, tmp_path: Path
+) -> None:
+    runners: list[_ConcurrentRunner] = []
+
+    def runner_factory() -> _ConcurrentRunner:
+        runner = _ConcurrentRunner()
+        runners.append(runner)
+        return runner
+
+    app_context.task_service.runner_factory = runner_factory
+    first_source = tmp_path / "first.xlsx"
+    second_source = tmp_path / "second.xlsx"
+    first_source.write_bytes(b"first")
+    second_source.write_bytes(b"second")
+    first_output = tmp_path / "first-result.txt"
+    first_output.write_text("first", encoding="utf-8")
+    first_job = app_context.task_service.create_and_start(ModuleId.MOISTURE, [first_source])
+    second_job = app_context.task_service.create_and_start(ModuleId.MOISTURE, [second_source])
+    window = MainWindow(app_context)
+    qtbot.addWidget(window)
+    window._foreground_job_id = first_job
+    window.task_progress_page.bind(first_job)
+    window.stack.setCurrentWidget(window.task_progress_page)
+
+    runners[1].progress.emit(ProgressEvent(type="progress", percent=90, message="后台进度"))
+    runners[0].progress.emit(ProgressEvent(type="progress", percent=30, message="前台进度"))
+    app_context.task_service.cancel(second_job)
+    runners[1].cancelled.emit()
+    runners[0].completed.emit(_result(first_output).model_copy(update={"job_id": first_job}))
+
+    assert runners[1].cancel_calls == 1
+    assert app_context.task_repository.get(second_job)["status"] == "cancelled"
+    assert window.result_center_page.current_result.job_id == first_job
+    assert window.stack.currentWidget() is window.result_center_page
+
+
+def test_two_fake_jobs_interleave_confirmations_without_overwriting_foreground(
+    qtbot, app_context, tmp_path: Path
+) -> None:
+    runners: list[_ConcurrentRunner] = []
+
+    def runner_factory() -> _ConcurrentRunner:
+        runner = _ConcurrentRunner()
+        runners.append(runner)
+        return runner
+
+    app_context.task_service.runner_factory = runner_factory
+    sources = [tmp_path / "one.xlsx", tmp_path / "two.xlsx"]
+    for source in sources:
+        source.write_bytes(b"mock")
+    jobs = [
+        app_context.task_service.create_and_start(ModuleId.MOISTURE, [source]) for source in sources
+    ]
+    window = MainWindow(app_context)
+    qtbot.addWidget(window)
+    window._foreground_job_id = jobs[0]
+    prompt = ConfirmationPrompt(
+        confirmation_id="confirm-one",
+        field="field_one",
+        reason="reason",
+        suggested_value="one",
+        options=["one"],
+        confidence=0.8,
+        blocking=True,
+        batch_applicable=False,
+        rememberable=False,
+        source=SourceRef(source_file=str(sources[0])),
+    )
+    summary = ResultSummary(
+        input_count=1,
+        processed_count=0,
+        skipped_count=0,
+        failed_count=0,
+        anomaly_count=0,
+        confirmation_count=1,
+    )
+    first = _result(tmp_path / "unused.txt").model_copy(
+        update={
+            "job_id": jobs[0],
+            "status": TaskStatus.NEEDS_CONFIRMATION,
+            "confirmations": [prompt],
+            "summary": summary,
+            "outputs": [],
+        }
+    )
+    second_prompt = prompt.model_copy(
+        update={"confirmation_id": "confirm-two", "field": "field_two"}
+    )
+    second = first.model_copy(update={"job_id": jobs[1], "confirmations": [second_prompt]})
+
+    runners[0].completed.emit(first)
+    runners[1].completed.emit(second)
+
+    assert window.confirmations_page.current_job_id == jobs[0]
+    assert "confirm-one" in window.confirmations_page.answer_inputs
+    assert "confirm-two" not in window.confirmations_page.answer_inputs
+    assert set(window.confirmations_page.pending_job_ids) == set(jobs)

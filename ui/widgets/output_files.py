@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from PySide6.QtCore import QUrl
+from PySide6.QtCore import QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
@@ -8,6 +8,8 @@ from core.contracts.result import OutputArtifact
 
 
 class OutputFilesWidget(QWidget):
+    open_failed = Signal(str)
+
     def __init__(self) -> None:
         super().__init__()
         self._layout = QVBoxLayout(self)
@@ -22,7 +24,8 @@ class OutputFilesWidget(QWidget):
             button = QPushButton(f"打开{artifact.label}")
             button.setAccessibleName(f"打开{artifact.label}")
             button.setAccessibleDescription(str(path))
-            button.clicked.connect(lambda checked=False, target=path: self._open_output(target))
+            raw_path = Path(artifact.path)
+            button.clicked.connect(lambda checked=False, target=raw_path: self._open_output(target))
             self.buttons.append(button)
             self._layout.addWidget(button)
         if not self.buttons:
@@ -41,12 +44,16 @@ class OutputFilesWidget(QWidget):
     def _existing_file(raw_path: str) -> Path | None:
         path = Path(raw_path)
         try:
-            if not path.is_file():
+            if path.is_symlink() or not path.is_file():
                 return None
             return path.resolve(strict=True)
-        except OSError:
+        except (OSError, RuntimeError):
             return None
 
-    @staticmethod
-    def _open_output(path: Path) -> None:
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+    def _open_output(self, path: Path) -> None:
+        resolved = self._existing_file(str(path))
+        if resolved is None:
+            self.open_failed.emit("输出文件不可用，可能已移动、删除或被链接替换")
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(resolved))):
+            self.open_failed.emit("系统未能打开输出文件")

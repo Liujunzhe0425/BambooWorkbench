@@ -9,6 +9,7 @@ from core.contracts.job import JobRequest
 from core.contracts.result import ModuleResult
 from core.platform.path_safety import resolve_path
 
+from .process_control import terminate_process
 from .progress_parser import parse_progress
 from .registry import RegisteredModule
 
@@ -132,6 +133,23 @@ class ModuleProcessRunner(QObject):
             "cancelled",
             None,
         )
+
+    def shutdown(self, timeout_ms: int = 3_000) -> bool:
+        """Synchronously stop the host tree without emitting a lifecycle terminal."""
+        process = self._process
+        if process is None or self._active_generation is None:
+            return True
+        self._active_generation = None
+        self._pending_terminal = None
+        grace_ms = min(self.cancellation_grace_ms, max(timeout_ms, 0))
+        force_ms = max(timeout_ms - grace_ms, 0)
+        result = terminate_process(process, grace_ms=grace_ms, force_ms=force_ms)
+        self._process = None
+        self._job = None
+        self._module = None
+        self._stdout_buffer.clear()
+        process.deleteLater()
+        return result.process_stopped
 
     def _read_stdout(self, generation: int, process: QProcess) -> None:
         data = bytes(process.readAllStandardOutput())

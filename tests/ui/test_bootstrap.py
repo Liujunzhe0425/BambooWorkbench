@@ -66,6 +66,46 @@ def test_context_close_releases_the_database(tmp_path: Path) -> None:
         connection.execute("SELECT 1")
 
 
+def test_context_close_shuts_down_tasks_before_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context = build_context(tmp_path / "data", use_mocks=False)
+    events: list[str] = []
+    monkeypatch.setattr(context.task_service, "shutdown", lambda: events.append("tasks"))
+    original_close = context.database.close
+
+    def close_database() -> None:
+        events.append("database")
+        original_close()
+
+    monkeypatch.setattr(context.database, "close", close_database)
+
+    context.close()
+
+    assert events == ["tasks", "database"]
+
+
+def test_bootstrap_configures_logging_idempotently(tmp_path: Path) -> None:
+    first = build_context(tmp_path / "data", use_mocks=False)
+    first.close()
+    log_path = first.paths.logs / "bamboo-workbench.log"
+    content = log_path.read_text(encoding="utf-8")
+    assert "application startup" in content
+    assert "module scan completed" in content
+    assert "task service shutdown complete" in content
+    second = build_context(tmp_path / "data", use_mocks=False)
+    try:
+        handlers = [
+            handler
+            for handler in second.logger.handlers
+            if getattr(handler, "_bamboo_workbench_handler", False)
+        ]
+        assert len(handlers) == 1
+        assert log_path.is_file()
+    finally:
+        second.close()
+
+
 def test_resource_root_uses_repository_during_development() -> None:
     assert resolve_resource_root() == Path(__file__).parents[2]
 
