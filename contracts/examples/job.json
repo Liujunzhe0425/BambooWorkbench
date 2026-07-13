@@ -1,0 +1,17 @@
+{
+  "ai_enabled": false,
+  "allowed_knowledge_scopes": [],
+  "confirmation_file": null,
+  "input_files": [
+    "D:/BambooWorkbench/inbox/example.csv"
+  ],
+  "job_id": "20260713-0001",
+  "module_config_file": null,
+  "module_id": "moisture",
+  "output_dir": "D:/BambooWorkbench/tasks/20260713-0001",
+  "parent_job_id": null,
+  "phase": "draft",
+  "run_mode": "single",
+  "schema_version": "1.0",
+  "service_response_file": null
+}

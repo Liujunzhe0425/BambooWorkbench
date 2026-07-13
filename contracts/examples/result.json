@@ -1,0 +1,25 @@
+{
+  "analysis_summary": null,
+  "anomalies": [],
+  "confirmations": [],
+  "errors": [],
+  "file_results": [],
+  "finished_at": "2026-07-13T09:00:01+08:00",
+  "job_id": "20260713-0001",
+  "module_id": "moisture",
+  "module_version": "0.1.0",
+  "outputs": [],
+  "rule_version": null,
+  "schema_version": "1.0",
+  "service_requests": [],
+  "started_at": "2026-07-13T09:00:00+08:00",
+  "status": "success",
+  "summary": {
+    "anomaly_count": 0,
+    "confirmation_count": 0,
+    "failed_count": 0,
+    "input_count": 1,
+    "processed_count": 1,
+    "skipped_count": 0
+  }
+}

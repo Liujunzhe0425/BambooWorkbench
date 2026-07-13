@@ -1,0 +1,14 @@
+{
+  "entrypoint": "run_module.bat",
+  "module_id": "moisture",
+  "module_name": "示例模块",
+  "module_version": "0.1.0",
+  "requires_network": false,
+  "schema_version": "1.0",
+  "supported_extensions": [
+    ".csv"
+  ],
+  "supports_batch": true,
+  "supports_incremental": false,
+  "supports_single_file": true
+}
