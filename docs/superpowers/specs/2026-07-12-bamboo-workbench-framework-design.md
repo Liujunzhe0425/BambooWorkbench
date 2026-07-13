@@ -35,6 +35,7 @@
 - 中文产品名：竹简工作台；
 - 产品英文名：BambooWorkbench；
 - 项目总文件夹名：BambooWorkbench；
+- 本地项目根目录：`D:\Project\BambooWorkbench`；
 - GitHub仓库名：BambooWorkbench；
 - 企业专属标识：湖南桃花江竹材科技股份有限公司；
 - 团队暂定标准文字：湖大智竹实践团队。
