@@ -55,6 +55,16 @@ class SynchronousCancelRunner(ControlledRunner):
         return True
 
 
+class FailedShutdownRunner(ControlledRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self.shutdown_calls = 0
+
+    def shutdown(self) -> bool:
+        self.shutdown_calls += 1
+        return False
+
+
 def _service(app_services: dict[str, object], **kwargs: object) -> TaskService:
     return TaskService(
         paths=app_services["paths"],
@@ -272,6 +282,28 @@ def test_status_changed_payload_is_lifecycle_value_string(
     assert service.metaObject().indexOfSignal("status_changed(QString,QString)") >= 0
     assert payloads == [(job_id, TaskLifecycleState.RUNNING_DRAFT.value)]
     assert type(payloads[0][1]) is str
+
+
+def test_shutdown_cleanup_failure_persists_failed_retains_runner_and_blocks_callbacks(
+    app_services: dict[str, object], tmp_path: Path
+) -> None:
+    source = tmp_path / "timeout.xlsx"
+    source.write_bytes(b"mock")
+    service = _service(app_services, runner_factory=FailedShutdownRunner)
+    repository = app_services["task_repository"]
+    assert isinstance(repository, TaskRepository)
+    job_id = service.create_and_start(ModuleId.MOISTURE, [source])
+    runner = service.runners[job_id]
+    assert isinstance(runner, FailedShutdownRunner)
+
+    assert service.shutdown() is False
+    runner.completed.emit(object())
+
+    record = repository.get(job_id)
+    assert record["status"] == "failed"
+    assert "cleanup" in str(record["error"])
+    assert service.runners[job_id] is runner
+    assert runner.shutdown_calls == 1
 
 
 def test_failed_status_persistence_error_restores_ui_with_nonmodal_error(

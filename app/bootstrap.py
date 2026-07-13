@@ -39,7 +39,9 @@ class AppContext:
         if self._closed:
             return
         try:
-            self.task_service.shutdown()
+            cleanup_ok = self.task_service.shutdown()
+            if not cleanup_ok:
+                self.logger.error("application task cleanup failure before database close")
         finally:
             self.database.close()
             self._closed = True

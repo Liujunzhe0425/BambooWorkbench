@@ -13,7 +13,7 @@ from uuid import uuid4
 from PySide6.QtCore import QObject, Signal
 
 from core.contracts.confirmation import ConfirmationAnswer, ConfirmationBundle
-from core.contracts.enums import JobPhase, ModuleId, TaskStatus
+from core.contracts.enums import JobPhase, ModuleId, RunMode, TaskStatus
 from core.contracts.job import JobRequest
 from core.contracts.result import ConfirmationPrompt, ModuleResult
 from core.modules.process_runner import ModuleProcessRunner
@@ -90,26 +90,57 @@ class TaskService(QObject):
         self._cancellation_pending: set[str] = set()
         self._pending_confirmation_results: dict[str, ModuleResult] = {}
         self._shutdown = False
+        self._shutdown_result = True
+        self._blocked_callbacks: set[str] = set()
         self._reconcile_startup()
 
     def pending_confirmations(self) -> list[tuple[str, ModuleResult]]:
         return sorted(self._pending_confirmation_results.items())
 
-    def shutdown(self) -> None:
+    def shutdown(self) -> bool:
         if self._shutdown:
-            return
+            return self._shutdown_result
         self._shutdown = True
+        cleanup_ok = True
         for job_id, runner in tuple(self.runners.items()):
+            self._blocked_callbacks.add(job_id)
             try:
                 shutdown = getattr(runner, "shutdown", None)
                 stopped = bool(shutdown()) if callable(shutdown) else False
-                if not stopped:
-                    cancel = getattr(runner, "cancel", None)
-                    if callable(cancel):
-                        cancel()
             except Exception as exc:
                 _LOG.error("task shutdown runner fault job=%s error=%s", job_id, exc)
+                stopped = False
             machine = self._states.get(job_id)
+            if not stopped:
+                cleanup_ok = False
+                message = "module process cleanup failure during application shutdown"
+                if machine is not None and machine.state in {
+                    TaskLifecycleState.CREATED,
+                    TaskLifecycleState.RUNNING_DRAFT,
+                    TaskLifecycleState.RUNNING_FINALIZE,
+                }:
+                    try:
+                        self._persist_transition(
+                            job_id,
+                            TaskLifecycleState.FAILED,
+                            error=message,
+                        )
+                    except Exception as exc:
+                        try:
+                            self._write_terminal_marker(
+                                job_id,
+                                TaskLifecycleState.FAILED,
+                                f"{message}: {exc}",
+                            )
+                        except Exception as marker_error:
+                            _LOG.error(
+                                "task shutdown persistence fault job=%s error=%s marker_error=%s",
+                                job_id,
+                                exc,
+                                marker_error,
+                            )
+                _LOG.error("task process cleanup failure job=%s", job_id)
+                continue
             if machine is not None and machine.state in {
                 TaskLifecycleState.CREATED,
                 TaskLifecycleState.RUNNING_DRAFT,
@@ -136,7 +167,13 @@ class TaskService(QObject):
                             marker_error,
                         )
             self._cleanup_runner(job_id, runner, task_terminal=True)
-        _LOG.info("task service shutdown complete")
+            self._blocked_callbacks.discard(job_id)
+        self._shutdown_result = cleanup_ok
+        if cleanup_ok:
+            _LOG.info("task service shutdown complete")
+        else:
+            _LOG.error("task service shutdown completed with cleanup failure")
+        return cleanup_ok
 
     def cancel(self, job_id: str) -> None:
         runner = self.runners.get(job_id)
@@ -352,6 +389,24 @@ class TaskService(QObject):
         if draft_output != expected_output:
             raise ValueError("job-draft output does not match task-local draft output")
 
+        expected_mode = RunMode.SINGLE if len(draft_inputs) == 1 else RunMode.BATCH
+        if draft.run_mode is not expected_mode:
+            raise ValueError("job-draft run_mode does not match persisted snapshot count")
+        if draft.ai_enabled:
+            raise ValueError("job-draft ai_enabled must remain false")
+        if draft.allowed_knowledge_scopes != ["shared", draft.module_id.value]:
+            raise ValueError("job-draft knowledge scopes are not canonical")
+        if any(
+            value is not None
+            for value in (
+                draft.module_config_file,
+                draft.service_response_file,
+                draft.parent_job_id,
+                draft.confirmation_file,
+            )
+        ):
+            raise ValueError("job-draft finalize-only or config fields must be empty")
+
     @staticmethod
     def _sha256(path: Path) -> str:
         digest = hashlib.sha256()
@@ -406,10 +461,14 @@ class TaskService(QObject):
         runner.cancelled.connect(lambda active=runner: self._cancelled(job_id, active))
 
     def _forward_progress(self, job_id: str, event: object, runner: ModuleProcessRunner) -> None:
+        if job_id in self._blocked_callbacks:
+            return
         if self.runners.get(job_id) is runner:
             self.progress.emit(job_id, event)
 
     def _complete(self, job_id: str, result: ModuleResult, runner: ModuleProcessRunner) -> None:
+        if job_id in self._blocked_callbacks:
+            return
         if self.runners.get(job_id) is not runner:
             return
         try:
@@ -439,6 +498,8 @@ class TaskService(QObject):
         self._cleanup_runner(job_id, runner, task_terminal=task_terminal)
 
     def _cancelled(self, job_id: str, runner: ModuleProcessRunner) -> None:
+        if job_id in self._blocked_callbacks:
+            return
         if self.runners.get(job_id) is not runner:
             return
         try:
@@ -455,6 +516,8 @@ class TaskService(QObject):
         message: str,
         runner: ModuleProcessRunner | None = None,
     ) -> None:
+        if job_id in self._blocked_callbacks:
+            return
         if runner is not None and self.runners.get(job_id) is not runner:
             return
         if job_id in self._failed_signals:
@@ -532,8 +595,23 @@ class TaskService(QObject):
         status: TaskLifecycleState,
         error: str,
     ) -> None:
-        task_dir = self.paths.tasks / job_id
-        marker = task_dir / _TERMINAL_MARKER
+        if not _JOB_ID_PATTERN.fullmatch(job_id):
+            raise ValueError("invalid job ID for terminal marker")
+        tasks_root = resolve_path(self.paths.tasks, "tasks root", strict=True)
+        if not tasks_root.is_dir():
+            raise ValueError("tasks root is not a directory")
+        task_dir = resolve_contained_directory(
+            self.paths.tasks / job_id,
+            tasks_root,
+            "terminal marker task directory",
+            reject_link=True,
+        )
+        marker = resolve_contained_target(
+            task_dir / _TERMINAL_MARKER,
+            task_dir,
+            "terminal marker target",
+            reject_link=True,
+        )
         payload = {"job_id": job_id, "status": status.value, "error": error}
         _atomic_write_text(marker, json.dumps(payload, ensure_ascii=False, indent=2))
 
@@ -568,20 +646,65 @@ class TaskService(QObject):
             _LOG.warning("task reconciled as interrupted job=%s prior_status=%s", job_id, status)
 
     def _apply_terminal_markers(self) -> None:
-        for marker in self.paths.tasks.glob(f"*/{_TERMINAL_MARKER}"):
+        try:
+            tasks_root = resolve_path(self.paths.tasks, "tasks root", strict=True)
+            if not tasks_root.is_dir():
+                raise ValueError("tasks root is not a directory")
+            candidates = tuple(tasks_root.iterdir())
+        except Exception as exc:
+            _LOG.error("terminal marker tasks-root fault error=%s", exc)
+            return
+        allowed_sources = {
+            TaskLifecycleState.CREATED.value,
+            TaskLifecycleState.RUNNING_DRAFT.value,
+            TaskLifecycleState.RUNNING_FINALIZE.value,
+        }
+        for candidate in candidates:
+            marker = candidate / _TERMINAL_MARKER
             try:
-                if marker.is_symlink() or not marker.is_file():
+                job_id = candidate.name
+                if not _JOB_ID_PATTERN.fullmatch(job_id):
                     continue
+                task_dir = resolve_contained_directory(
+                    candidate,
+                    tasks_root,
+                    "terminal marker task directory",
+                    reject_link=True,
+                )
+                marker = task_dir / _TERMINAL_MARKER
+                if not marker.exists():
+                    continue
+                marker = resolve_contained_file(
+                    marker,
+                    task_dir,
+                    "terminal marker file",
+                    reject_link=True,
+                )
                 payload = json.loads(marker.read_text(encoding="utf-8"))
-                job_id = str(payload["job_id"])
-                status = TaskLifecycleState(str(payload["status"]))
-                error = str(payload["error"])
-                if marker.parent.name != job_id or status not in {
+                if not isinstance(payload, dict) or set(payload) != {
+                    "job_id",
+                    "status",
+                    "error",
+                }:
+                    raise ValueError("terminal marker payload keys are invalid")
+                payload_job_id = payload["job_id"]
+                payload_status = payload["status"]
+                error = payload["error"]
+                if not all(
+                    isinstance(value, str) for value in (payload_job_id, payload_status, error)
+                ):
+                    raise ValueError("terminal marker payload values must be strings")
+                if not _JOB_ID_PATTERN.fullmatch(payload_job_id):
+                    raise ValueError("terminal marker job ID is invalid")
+                status = TaskLifecycleState(payload_status)
+                if payload_job_id != job_id or status not in {
                     TaskLifecycleState.FAILED,
                     TaskLifecycleState.CANCELLED,
                 }:
                     raise ValueError("invalid terminal marker identity or status")
-                self.task_repository.get(job_id)
+                task = self.task_repository.get(job_id)
+                if task["status"] not in allowed_sources:
+                    raise ValueError("terminal marker cannot overwrite persisted task status")
                 self.task_repository.update_status(job_id, status.value, error=error)
                 marker.unlink()
                 _LOG.warning("terminal marker applied job=%s status=%s", job_id, status.value)

@@ -9,6 +9,7 @@ from PySide6.QtTest import QSignalSpy
 
 from core.contracts.enums import ModuleId
 from core.contracts.progress import ProgressEvent
+from core.modules.process_control import ProcessCleanupResult
 from core.modules.process_runner import ModuleProcessRunner
 from core.modules.registry import ModuleRegistry, RegisteredModule
 
@@ -250,6 +251,49 @@ def test_shutdown_is_bounded_stops_real_process_and_emits_no_terminal(
     qtbot.wait(100)
     assert runner.is_running is False
     assert sum(spy.count() for spy in terminals) == 0
+
+
+def test_shutdown_failure_retains_ownership_blocks_callbacks_and_can_retry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from core.contracts.job import JobRequest
+    from core.modules import process_runner as process_runner_module
+
+    job_path, _ = _write_job(tmp_path, job_id="shutdown-retry-job")
+    job = JobRequest.model_validate_json(job_path.read_text(encoding="utf-8"))
+    module = _registered_mock()
+    runner = ModuleProcessRunner()
+    process = QProcess(runner)
+    runner._process = process
+    runner._job = job
+    runner._module = module
+    runner._active_generation = 1
+    results = [
+        ProcessCleanupResult(False, "still running"),
+        ProcessCleanupResult(True, "stopped on retry"),
+    ]
+    calls: list[QProcess] = []
+
+    def terminate(candidate: QProcess, **_kwargs: object) -> ProcessCleanupResult:
+        calls.append(candidate)
+        return results.pop(0)
+
+    monkeypatch.setattr(process_runner_module, "terminate_process", terminate)
+    terminals = _terminal_spies(runner)
+
+    assert runner.shutdown(timeout_ms=25) is False
+    runner._finished(1, process, 0, QProcess.ExitStatus.NormalExit)
+
+    assert runner._process is process
+    assert runner._job is job
+    assert runner._module is module
+    assert runner.is_running is True
+    assert sum(spy.count() for spy in terminals) == 0
+    assert runner.shutdown(timeout_ms=25) is True
+    assert calls == [process, process]
+    assert runner._process is None
+    assert runner._job is None
+    assert runner._module is None
 
 
 def test_cancel_returns_false_in_not_running_callback_window() -> None:

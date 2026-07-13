@@ -85,6 +85,21 @@ def test_context_close_shuts_down_tasks_before_database(
     assert events == ["tasks", "database"]
 
 
+def test_context_close_logs_task_cleanup_failure_and_still_closes_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context = build_context(tmp_path / "cleanup-failure", use_mocks=False)
+    connection = context.database.connection
+    monkeypatch.setattr(context.task_service, "shutdown", lambda: False)
+
+    context.close()
+
+    content = (context.paths.logs / "bamboo-workbench.log").read_text(encoding="utf-8")
+    assert "cleanup failure" in content
+    with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+        connection.execute("SELECT 1")
+
+
 def test_bootstrap_configures_logging_idempotently(tmp_path: Path) -> None:
     first = build_context(tmp_path / "data", use_mocks=False)
     first.close()

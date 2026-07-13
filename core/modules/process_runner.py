@@ -57,7 +57,7 @@ class ModuleProcessRunner(QObject):
 
     @property
     def is_running(self) -> bool:
-        return self._active_generation is not None
+        return self._process is not None
 
     def start(self, module: RegisteredModule, job_path: Path) -> None:
         if self.is_running:
@@ -137,13 +137,15 @@ class ModuleProcessRunner(QObject):
     def shutdown(self, timeout_ms: int = 3_000) -> bool:
         """Synchronously stop the host tree without emitting a lifecycle terminal."""
         process = self._process
-        if process is None or self._active_generation is None:
+        if process is None:
             return True
         self._active_generation = None
         self._pending_terminal = None
         grace_ms = min(self.cancellation_grace_ms, max(timeout_ms, 0))
         force_ms = max(timeout_ms - grace_ms, 0)
         result = terminate_process(process, grace_ms=grace_ms, force_ms=force_ms)
+        if not result.process_stopped:
+            return False
         self._process = None
         self._job = None
         self._module = None
