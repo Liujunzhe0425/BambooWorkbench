@@ -11,13 +11,13 @@ _REDACTION = "[REDACTED]"
 _SECRET_PATTERNS = (
     re.compile(
         r"(?i)(?P<prefix>(?P<quote>[\"']?)api_key(?P=quote)\s*[:=]\s*)"
-        r'(?:"[^"\r\n]*"|\'[^\'\r\n]*\'|[^\s,;}\]]+)'
+        r"[^\r\n]*"
     ),
     re.compile(
         r"(?i)(?P<prefix>(?P<quote>[\"']?)authorization(?P=quote)\s*[:=]\s*)"
-        r'(?:"[^"\r\n]*"|\'[^\'\r\n]*\'|[^\r\n,;}\]]+)'
+        r"[^\r\n]*"
     ),
-    re.compile(r"(?i)\b(bearer)\b\s+[^\s,;]+"),
+    re.compile(r"(?i)\b(bearer)\b[^\r\n]*"),
 )
 
 

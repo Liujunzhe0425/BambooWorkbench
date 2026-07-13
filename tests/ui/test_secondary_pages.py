@@ -193,6 +193,63 @@ def test_logging_redacts_quoted_mapping_json_headers_and_exception_chains(
         assert secret not in content
 
 
+def test_logging_redacts_entire_line_after_sensitive_prefix(
+    app_context,
+) -> None:
+    logging_module = importlib.import_module("core.platform.logging")
+    logger = logging_module.configure_logging(app_context.paths)
+    handler = next(
+        handler
+        for handler in logger.handlers
+        if getattr(handler, "_bamboo_workbench_handler", False)
+    )
+
+    logger.info(r'json {"api_key":"json-prefix\"json-secret-suffix"}')
+    logger.info({"api_key": "python-prefix'\"python-secret-suffix"})
+    logger.warning(
+        'Authorization: Digest username="digest-user-secret", '
+        'realm="digest-realm-secret", response="digest-response-secret"'
+    )
+    logger.warning(
+        "headers {'Authorization': 'Custom primary-secret, "
+        "secondary=secondary-secret, third=third-secret'}"
+    )
+    logger.error("Bearer bearer-token-secret, trace=trace-context-secret")
+    try:
+        try:
+            raise ValueError(r'{"api_key":"inner-prefix\"inner-exception-secret"}')
+        except ValueError as error:
+            raise RuntimeError(
+                r"{'Authorization': 'Digest outer-prefix\'outer-exception-secret, "
+                r"response=outer-response-secret'}"
+            ) from error
+    except RuntimeError:
+        logger.exception("escaped exception chain")
+    handler.flush()
+
+    content = Path(handler.baseFilename).read_text(encoding="utf-8")
+    for raw_fragment in (
+        "json-prefix",
+        "json-secret-suffix",
+        "python-prefix",
+        "python-secret-suffix",
+        "digest-user-secret",
+        "digest-realm-secret",
+        "digest-response-secret",
+        "primary-secret",
+        "secondary-secret",
+        "third-secret",
+        "bearer-token-secret",
+        "trace-context-secret",
+        "inner-prefix",
+        "inner-exception-secret",
+        "outer-prefix",
+        "outer-exception-secret",
+        "outer-response-secret",
+    ):
+        assert raw_fragment not in content
+
+
 def test_diagnostics_contains_only_allowlisted_nonsecret_fields(
     app_context,
     monkeypatch: pytest.MonkeyPatch,
