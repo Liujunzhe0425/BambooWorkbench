@@ -85,6 +85,7 @@ class MainWindow(QMainWindow):
         context.task_service.needs_confirmation.connect(self._on_confirmation)
         context.task_service.finished.connect(self._on_finished)
         context.task_service.failed.connect(self._on_failed)
+        context.task_service.orchestration_error.connect(self._on_orchestration_error)
         context.task_service.status_changed.connect(self._on_status_changed)
         self.navigate(PageId.WORKBENCH)
 
@@ -112,10 +113,14 @@ class MainWindow(QMainWindow):
     def _on_status_changed(
         self,
         job_id: str,
-        status: TaskLifecycleState,
+        status: str,
     ) -> None:
+        try:
+            lifecycle = TaskLifecycleState(status)
+        except ValueError:
+            return
         if (
-            status is TaskLifecycleState.CANCELLED
+            lifecycle is TaskLifecycleState.CANCELLED
             and self.task_progress_page.current_job_id == job_id
         ):
             self.task_progress_page.current_job_id = ""
@@ -206,6 +211,23 @@ class MainWindow(QMainWindow):
             self.task_progress_page.cancel_button.setEnabled(False)
             self.task_progress_page.message_label.setText("任务执行失败")
         self._show_failure("任务未完成", f"任务 {job_id}：{message}")
+
+    def _on_orchestration_error(self, job_id: str, message: str) -> None:
+        if self._starting_task:
+            self._start_failure_job_id = job_id
+        if self._finalizing_job_id == job_id:
+            self._finalize_failed = True
+        if self.task_progress_page.current_job_id == job_id:
+            target = (
+                self.confirmations_page
+                if job_id in self._confirmation_job_ids
+                else self.module_task_page
+            )
+            self.stack.setCurrentWidget(target)
+            self.task_progress_page.current_job_id = ""
+            self.task_progress_page.cancel_button.setEnabled(False)
+            self.task_progress_page.message_label.setText("任务协调错误")
+        self._show_failure("任务协调错误", f"任务 {job_id}：{message}")
 
     def _show_failure(self, title: str, message: str) -> None:
         dialog = QMessageBox(self)

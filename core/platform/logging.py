@@ -9,16 +9,22 @@ _LOGGER_NAME = "bamboo_workbench"
 _HANDLER_MARKER = "_bamboo_workbench_handler"
 _REDACTION = "[REDACTED]"
 _SECRET_PATTERNS = (
-    re.compile(r"(?i)\b(api_key)\b(\s*[:=]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)"),
-    re.compile(r"(?i)\b(authorization)\b(\s*[:=]\s*)[^\r\n]+"),
+    re.compile(
+        r"(?i)(?P<prefix>(?P<quote>[\"']?)api_key(?P=quote)\s*[:=]\s*)"
+        r'(?:"[^"\r\n]*"|\'[^\'\r\n]*\'|[^\s,;}\]]+)'
+    ),
+    re.compile(
+        r"(?i)(?P<prefix>(?P<quote>[\"']?)authorization(?P=quote)\s*[:=]\s*)"
+        r'(?:"[^"\r\n]*"|\'[^\'\r\n]*\'|[^\r\n,;}\]]+)'
+    ),
     re.compile(r"(?i)\b(bearer)\b\s+[^\s,;]+"),
 )
 
 
 def redact_secrets(value: object) -> str:
     redacted = str(value)
-    redacted = _SECRET_PATTERNS[0].sub(rf"\1\2{_REDACTION}", redacted)
-    redacted = _SECRET_PATTERNS[1].sub(rf"\1\2{_REDACTION}", redacted)
+    redacted = _SECRET_PATTERNS[0].sub(rf"\g<prefix>{_REDACTION}", redacted)
+    redacted = _SECRET_PATTERNS[1].sub(rf"\g<prefix>{_REDACTION}", redacted)
     redacted = _SECRET_PATTERNS[2].sub(rf"\1 {_REDACTION}", redacted)
     return redacted
 

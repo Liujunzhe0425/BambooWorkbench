@@ -223,11 +223,39 @@ def test_user_cancellation_emits_cancelled_once_and_is_nonblocking(qtbot, tmp_pa
 
     runner.start(_registered_mock(), job_path)
     qtbot.waitUntil(lambda: runner.is_running, timeout=5_000)
-    runner.cancel()
+    assert runner.cancel() is True
     assert terminals[2].count() == 0
     _wait_terminal(qtbot, terminals)
 
     assert terminals[2].count() == 1
+
+
+def test_cancel_returns_false_when_no_run_can_accept_cancellation() -> None:
+    runner = ModuleProcessRunner()
+
+    assert runner.cancel() is False
+
+
+def test_cancel_returns_false_in_not_running_callback_window() -> None:
+    runner = ModuleProcessRunner()
+    process = QProcess(runner)
+    runner._active_generation = 1
+    runner._process = process
+
+    assert process.state() == QProcess.ProcessState.NotRunning
+    assert runner.cancel() is False
+    assert runner._pending_terminal is None
+
+
+def test_cancel_returns_false_without_replacing_pending_terminal() -> None:
+    runner = ModuleProcessRunner()
+    process = QProcess(runner)
+    runner._active_generation = 1
+    runner._process = process
+    runner._pending_terminal = ("failed", "process already failed")
+
+    assert runner.cancel() is False
+    assert runner._pending_terminal == ("failed", "process already failed")
 
 
 def test_fragmented_progress_is_buffered_until_newline(qtbot, tmp_path: Path) -> None:
@@ -307,9 +335,7 @@ def test_qprocess_start_error_emits_one_failure(qtbot, tmp_path: Path, monkeypat
     assert "process error" in terminals[1].at(0)[0]
 
 
-def test_special_job_and_launcher_paths_are_not_expanded_or_injected(
-    qtbot, tmp_path: Path
-) -> None:
+def test_special_job_and_launcher_paths_are_not_expanded_or_injected(qtbot, tmp_path: Path) -> None:
     special = tmp_path / "用户 & %PATH% ^ (space) !"
     special.mkdir()
     job_path, _ = _write_job(special, job_id="runner-003")
@@ -347,9 +373,7 @@ def test_start_normalizes_path_resolution_loops_to_one_failure(
     assert not runner.is_running
 
 
-@pytest.mark.parametrize(
-    "loop_name", ["output", "result.json", "artifact.txt", "normal.xlsx"]
-)
+@pytest.mark.parametrize("loop_name", ["output", "result.json", "artifact.txt", "normal.xlsx"])
 def test_result_boundary_resolution_loops_fail_once_without_callback_exception(
     qtbot, tmp_path: Path, monkeypatch, loop_name: str
 ) -> None:

@@ -60,7 +60,8 @@ class TaskService(QObject):
     finished = Signal(object)
     needs_confirmation = Signal(str, object)
     failed = Signal(str, str)
-    status_changed = Signal(str, object)
+    orchestration_error = Signal(str, str)
+    status_changed = Signal(str, str)
 
     def __init__(
         self,
@@ -92,10 +93,13 @@ class TaskService(QObject):
             raise InvalidTaskTransition(f"job {job_id} cancellation is pending")
         self._cancellation_pending.add(job_id)
         try:
-            runner.cancel()
+            accepted = runner.cancel()
         except Exception:
             self._cancellation_pending.discard(job_id)
             raise
+        if not accepted:
+            self._cancellation_pending.discard(job_id)
+            raise InvalidTaskTransition(f"job {job_id} cancellation was not accepted")
 
     def create_and_start(self, module_id: ModuleId, inputs: list[Path]) -> str:
         timestamp = datetime.now().astimezone()
@@ -395,8 +399,13 @@ class TaskService(QObject):
             return
         try:
             self._persist_transition(job_id, TaskLifecycleState.FAILED, error=message)
-        except Exception:
-            self._cleanup_runner(job_id, runner, task_terminal=True)
+        except Exception as persistence_error:
+            self._cleanup_runner(job_id, runner, task_terminal=False)
+            self.orchestration_error.emit(
+                job_id,
+                f"{message}; failed to persist failed task state: "
+                f"{type(persistence_error).__name__}: {persistence_error}",
+            )
             return
         self._failed_signals.add(job_id)
         self.failed.emit(job_id, message)
@@ -419,7 +428,7 @@ class TaskService(QObject):
             result_path=result_path,
         )
         machine.transition(target)
-        self.status_changed.emit(job_id, target)
+        self.status_changed.emit(job_id, target.value)
 
     def _cleanup_runner(
         self,

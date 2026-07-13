@@ -64,9 +64,7 @@ class ModuleProcessRunner(QObject):
 
         try:
             resolved_job_path = _resolve_path(job_path, strict=True)
-            job = JobRequest.model_validate_json(
-                resolved_job_path.read_text(encoding="utf-8")
-            )
+            job = JobRequest.model_validate_json(resolved_job_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, ValidationError, ValueError) as exc:
             self.failed.emit(f"invalid job request: {exc}")
             return
@@ -90,17 +88,11 @@ class ModuleProcessRunner(QObject):
         self._stdout_buffer.clear()
         self._pending_terminal = None
         self._active_generation = generation
-        process.readyReadStandardOutput.connect(
-            lambda: self._read_stdout(generation, process)
-        )
+        process.readyReadStandardOutput.connect(lambda: self._read_stdout(generation, process))
         process.finished.connect(
-            lambda exit_code, status: self._finished(
-                generation, process, exit_code, status
-            )
+            lambda exit_code, status: self._finished(generation, process, exit_code, status)
         )
-        process.errorOccurred.connect(
-            lambda error: self._process_error(generation, process, error)
-        )
+        process.errorOccurred.connect(lambda error: self._process_error(generation, process, error))
 
         environment = QProcessEnvironment.systemEnvironment()
         runtime_dir = str(Path(sys.executable).parent)
@@ -125,12 +117,16 @@ class ModuleProcessRunner(QObject):
             lambda: self._timeout(generation, process),
         )
 
-    def cancel(self) -> None:
-        if not self.is_running or self._pending_terminal is not None:
-            return
+    def cancel(self) -> bool:
+        if (
+            not self.is_running
+            or self._pending_terminal is not None
+            or self._process is None
+            or self._process.state() == QProcess.ProcessState.NotRunning
+        ):
+            return False
         assert self._active_generation is not None
-        assert self._process is not None
-        self._request_stop(
+        return self._request_stop(
             self._active_generation,
             self._process,
             "cancelled",
@@ -181,9 +177,9 @@ class ModuleProcessRunner(QObject):
             )
             return
         if exit_code != 0:
-            error_text = bytes(process.readAllStandardError()).decode(
-                "utf-8", errors="replace"
-            ).strip()
+            error_text = (
+                bytes(process.readAllStandardError()).decode("utf-8", errors="replace").strip()
+            )
             detail = f"module exited with code {exit_code}"
             self._finalize(
                 generation,
@@ -254,17 +250,18 @@ class ModuleProcessRunner(QObject):
         process: QProcess,
         kind: str,
         payload: object | None,
-    ) -> None:
+    ) -> bool:
         if not self._is_current(generation, process) or self._pending_terminal is not None:
-            return
+            return False
         self._pending_terminal = (kind, payload)
         if process.state() == QProcess.ProcessState.NotRunning:
             QTimer.singleShot(
                 0,
                 lambda: self._emit_pending_if_stopped(generation, process),
             )
-            return
+            return True
         self._stop_process(generation, process)
+        return True
 
     def _stop_process(self, generation: int, process: QProcess) -> None:
         process.terminate()

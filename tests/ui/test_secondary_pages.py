@@ -152,6 +152,47 @@ def test_logging_is_rotating_utf8_idempotent_and_redacts_secrets(
     assert content.count("[REDACTED]") >= 4
 
 
+def test_logging_redacts_quoted_mapping_json_headers_and_exception_chains(
+    app_context,
+) -> None:
+    logging_module = importlib.import_module("core.platform.logging")
+    logger = logging_module.configure_logging(app_context.paths)
+    handler = next(
+        handler
+        for handler in logger.handlers
+        if getattr(handler, "_bamboo_workbench_handler", False)
+    )
+
+    logger.info({"api_key": "message-secret"})
+    logger.info("tuple api_key=%s", "tuple-secret")
+    logger.info(
+        "mapping authorization=%(credential)s",
+        {"credential": "Basic mapping-secret"},
+    )
+    logger.info('json {"api_key":"json-secret"}')
+    logger.warning('headers={"Authorization":"Basic header-secret"}')
+    try:
+        try:
+            raise ValueError("{'api_key': 'inner-exception-secret'}")
+        except ValueError as error:
+            raise RuntimeError('{"Authorization":"Basic outer-exception-secret"}') from error
+    except RuntimeError:
+        logger.exception("exception chain")
+    handler.flush()
+
+    content = Path(handler.baseFilename).read_text(encoding="utf-8")
+    for secret in (
+        "message-secret",
+        "tuple-secret",
+        "mapping-secret",
+        "json-secret",
+        "header-secret",
+        "inner-exception-secret",
+        "outer-exception-secret",
+    ):
+        assert secret not in content
+
+
 def test_diagnostics_contains_only_allowlisted_nonsecret_fields(
     app_context,
     monkeypatch: pytest.MonkeyPatch,

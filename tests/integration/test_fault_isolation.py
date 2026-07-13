@@ -23,8 +23,9 @@ class ControlledRunner(QObject):
     def start(self, _module: object, _job_path: Path) -> None:
         pass
 
-    def cancel(self) -> None:
+    def cancel(self) -> bool:
         self.cancel_calls += 1
+        return True
 
     def confirm_cancelled(self) -> None:
         self.cancelled.emit()
@@ -38,6 +39,19 @@ class CrashingStartRunner(QObject):
 
     def start(self, _module: object, _job_path: Path) -> None:
         raise RuntimeError("simulated start crash")
+
+
+class RejectingCancelRunner(ControlledRunner):
+    def cancel(self) -> bool:
+        self.cancel_calls += 1
+        return False
+
+
+class SynchronousCancelRunner(ControlledRunner):
+    def cancel(self) -> bool:
+        self.cancel_calls += 1
+        self.cancelled.emit()
+        return True
 
 
 def _service(app_services: dict[str, object], **kwargs: object) -> TaskService:
@@ -66,7 +80,7 @@ def test_cancel_requests_active_runner_and_persists_only_after_confirmation(
     service = _service(app_services, runner_factory=runner_factory)
     repository = app_services["task_repository"]
     assert isinstance(repository, TaskRepository)
-    observed_statuses: list[TaskLifecycleState] = []
+    observed_statuses: list[str] = []
     persisted_during_signal: list[str] = []
     service.status_changed.connect(
         lambda job_id, status: (
@@ -89,7 +103,7 @@ def test_cancel_requests_active_runner_and_persists_only_after_confirmation(
     runners[0].confirm_cancelled()
 
     assert repository.get(job_id)["status"] == TaskLifecycleState.CANCELLED.value
-    assert observed_statuses[-1] is TaskLifecycleState.CANCELLED
+    assert observed_statuses[-1] == TaskLifecycleState.CANCELLED.value
     assert persisted_during_signal[-1] == TaskLifecycleState.CANCELLED.value
     assert job_id not in service.runners
 
@@ -113,6 +127,62 @@ def test_inactive_cancel_is_safe_and_does_not_rewrite_terminal_task(
     assert repository.get("terminal-job-001")["status"] == TaskLifecycleState.SUCCESS.value
 
 
+def test_rejected_cancel_does_not_leave_service_pending(
+    app_services: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "timeout.xlsx"
+    source.write_bytes(b"mock")
+    service = _service(app_services, runner_factory=RejectingCancelRunner)
+    job_id = service.create_and_start(ModuleId.MOISTURE, [source])
+
+    with pytest.raises(InvalidTaskTransition, match="not accepted"):
+        service.cancel(job_id)
+
+    assert job_id not in service._cancellation_pending
+    assert job_id in service.runners
+
+
+def test_synchronous_cancel_confirmation_clears_pending_and_runner(
+    app_services: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "timeout.xlsx"
+    source.write_bytes(b"mock")
+    service = _service(app_services, runner_factory=SynchronousCancelRunner)
+    repository = app_services["task_repository"]
+    assert isinstance(repository, TaskRepository)
+    job_id = service.create_and_start(ModuleId.MOISTURE, [source])
+
+    service.cancel(job_id)
+
+    assert repository.get(job_id)["status"] == TaskLifecycleState.CANCELLED.value
+    assert job_id not in service._cancellation_pending
+    assert job_id not in service.runners
+
+
+def test_rejected_cancel_restores_ui_button_and_shows_nonmodal_error(
+    qtbot,
+    app_context,
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "timeout.xlsx"
+    source.write_bytes(b"mock")
+    app_context.task_service.runner_factory = RejectingCancelRunner
+    window = MainWindow(app_context)
+    qtbot.addWidget(window)
+    job_id = app_context.task_service.create_and_start(ModuleId.MOISTURE, [source])
+    window.task_progress_page.bind(job_id)
+    window.stack.setCurrentWidget(window.task_progress_page)
+
+    qtbot.mouseClick(window.task_progress_page.cancel_button, Qt.MouseButton.LeftButton)
+
+    assert window.task_progress_page.cancel_button.isEnabled()
+    assert job_id not in app_context.task_service._cancellation_pending
+    assert window.failure_messages
+    assert not window.failure_messages[-1].isModal()
+
+
 def test_failure_persistence_and_status_notification_precede_failed_signal(
     app_services: dict[str, object],
     tmp_path: Path,
@@ -125,7 +195,7 @@ def test_failure_persistence_and_status_notification_precede_failed_signal(
     events: list[tuple[str, str]] = []
     service.status_changed.connect(
         lambda job_id, status: events.append(
-            (f"status:{status.value}", str(repository.get(job_id)["status"]))
+            (f"status:{status}", str(repository.get(job_id)["status"]))
         )
     )
     service.failed.connect(
@@ -139,6 +209,100 @@ def test_failure_persistence_and_status_notification_precede_failed_signal(
         ("status:failed", TaskLifecycleState.FAILED.value),
         ("failed", TaskLifecycleState.FAILED.value),
     ]
+
+
+def test_failed_status_persistence_error_uses_non_lifecycle_signal_and_keeps_context(
+    app_services: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "normal.xlsx"
+    source.write_bytes(b"mock")
+    service = _service(app_services, runner_factory=CrashingStartRunner)
+    repository = app_services["task_repository"]
+    assert isinstance(repository, TaskRepository)
+    update_status = repository.update_status
+
+    def fail_failed_transition(job_id: str, status: str, **kwargs: object) -> None:
+        if status == TaskLifecycleState.FAILED.value:
+            raise OSError("database unavailable")
+        update_status(job_id, status, **kwargs)
+
+    monkeypatch.setattr(repository, "update_status", fail_failed_transition)
+    statuses: list[str] = []
+    failures: list[tuple[str, str]] = []
+    orchestration_errors: list[tuple[str, str]] = []
+    service.status_changed.connect(lambda _job_id, status: statuses.append(status))
+    service.failed.connect(lambda job_id, message: failures.append((job_id, message)))
+    service.orchestration_error.connect(
+        lambda job_id, message: orchestration_errors.append((job_id, message))
+    )
+
+    job_id = service.create_and_start(ModuleId.MOISTURE, [source])
+
+    assert repository.get(job_id)["status"] == TaskLifecycleState.RUNNING_DRAFT.value
+    assert statuses == [TaskLifecycleState.RUNNING_DRAFT.value]
+    assert failures == []
+    assert orchestration_errors and orchestration_errors[0][0] == job_id
+    assert "database unavailable" in orchestration_errors[0][1]
+    assert job_id not in service.runners
+    assert job_id in service._states
+    assert job_id in service._jobs
+
+
+def test_status_changed_payload_is_lifecycle_value_string(
+    app_services: dict[str, object],
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "normal.xlsx"
+    source.write_bytes(b"mock")
+    service = _service(app_services, runner_factory=ControlledRunner)
+    payloads: list[tuple[str, str]] = []
+    service.status_changed.connect(lambda job_id, status: payloads.append((job_id, status)))
+
+    job_id = service.create_and_start(ModuleId.MOISTURE, [source])
+
+    assert service.metaObject().indexOfSignal("status_changed(QString,QString)") >= 0
+    assert payloads == [(job_id, TaskLifecycleState.RUNNING_DRAFT.value)]
+    assert type(payloads[0][1]) is str
+
+
+def test_failed_status_persistence_error_restores_ui_with_nonmodal_error(
+    qtbot,
+    app_context,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = tmp_path / "normal.xlsx"
+    source.write_bytes(b"mock")
+    app_context.task_service.runner_factory = CrashingStartRunner
+    update_status = app_context.task_repository.update_status
+
+    def fail_failed_transition(job_id: str, status: str, **kwargs: object) -> None:
+        if status == TaskLifecycleState.FAILED.value:
+            raise OSError("database unavailable")
+        update_status(job_id, status, **kwargs)
+
+    monkeypatch.setattr(
+        app_context.task_repository,
+        "update_status",
+        fail_failed_transition,
+    )
+    window = MainWindow(app_context)
+    qtbot.addWidget(window)
+    window.workbench_page.module_selected.emit(ModuleId.MOISTURE)
+    window.module_task_page.add_files([source])
+
+    qtbot.mouseClick(window.module_task_page.run_button, Qt.MouseButton.LeftButton)
+
+    job_id = app_context.task_repository.list_recent(1)[0]["job_id"]
+    assert app_context.task_repository.get(job_id)["status"] == "running_draft"
+    assert window.stack.currentWidget() is window.module_task_page
+    assert window.task_progress_page.current_job_id == ""
+    assert window.failure_messages
+    assert not window.failure_messages[-1].isModal()
+    assert "任务协调错误" in window.failure_messages[-1].windowTitle()
+    assert window.isEnabled()
 
 
 def test_main_window_disables_repeated_cancellation_until_terminal(
