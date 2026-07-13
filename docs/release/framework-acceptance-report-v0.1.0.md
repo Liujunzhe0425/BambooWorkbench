@@ -17,7 +17,7 @@
 | 验收项 | 结果 | 证据 |
 |---|---|---|
 | Ruff 静态检查 | 通过 | `All checks passed!` |
-| 全量源码/合同/集成/UI/打包测试 | 通过 | `299 passed, 8 skipped in 442.99s` |
+| 全量源码/合同/集成/UI/打包测试 | 通过 | `302 passed, 8 skipped in 426.93s` |
 | 三个模块合同样板 | 通过 | `moisture`、`boiling`、`after_sales` 合同 CLI 全部返回 0 |
 | Git 差异格式 | 通过 | `git diff --check` 返回 0 |
 | 便携版重新构建 | 通过 | PyInstaller 双可执行文件构建完成 |
