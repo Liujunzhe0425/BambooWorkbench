@@ -1,5 +1,20 @@
 # Changelog
 
-## 0.1.0 - Unreleased
+## [0.1.0] - 2026-07-13
 
-- Establish BambooWorkbench project identity and module contract foundation.
+### Added
+
+- 统一的 BambooWorkbench / 竹简工作台 Windows 桌面外壳与竹绿色品牌界面；
+- 原竹丝水分、水煮实验、售后分析三个合同一致的模拟模块；
+- 模块清单、任务、进度、结果、人工确认和公共服务 JSON 合同及验证 CLI；
+- 独立模块进程、超时/取消、错误隔离、启动恢复和任务历史；
+- 本地 SQLite、输入快照、文件指纹、输出索引、诊断和脱敏日志；
+- 知识域、规则优先级、元数据导入和确定性模拟检索；
+- 密钥隔离、出站脱敏、AI 逐次授权审计、离线模拟与 OpenAI 兼容边界；
+- 可复现的便携版、每用户 Windows 安装包及本地数据保留验证；
+- GitHub Actions、模块开发/验收指南、客户演示和发布清单。
+
+### Limitations
+
+- 本版本为空框架，不包含三个业务模块的真实算法或客户质量标准；
+- macOS、生产级向量检索、账号系统、云端协作和安装包代码签名尚未实现。

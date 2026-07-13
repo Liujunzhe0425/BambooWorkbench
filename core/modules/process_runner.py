@@ -9,6 +9,7 @@ from core.contracts.job import JobRequest
 from core.contracts.result import ModuleResult
 from core.platform.path_safety import resolve_path
 
+from .host_runtime import add_packaged_host_environment, module_host_command
 from .process_control import terminate_process
 from .progress_parser import parse_progress
 from .registry import RegisteredModule
@@ -75,7 +76,15 @@ class ModuleProcessRunner(QObject):
 
         try:
             entrypoint = _resolve_path(module.path / module.manifest.entrypoint)
-            host = _resolve_path(Path(__file__).with_name("process_host.py"))
+            program, arguments = module_host_command(
+                [
+                    "--launcher",
+                    str(entrypoint),
+                    "run",
+                    "--job",
+                    str(resolved_job_path),
+                ]
+            )
         except (OSError, ValueError) as exc:
             self.failed.emit(str(exc))
             return
@@ -100,19 +109,10 @@ class ModuleProcessRunner(QObject):
         environment.insert("PATH", f"{runtime_dir};{environment.value('PATH')}")
         environment.insert("PYTHONPATH", str(Path(__file__).parents[2]))
         environment.insert("PYTHONUTF8", "1")
+        add_packaged_host_environment(environment)
         process.setProcessEnvironment(environment)
         process.setWorkingDirectory(str(module.path))
-        process.start(
-            sys.executable,
-            [
-                str(host),
-                "--launcher",
-                str(entrypoint),
-                "run",
-                "--job",
-                str(resolved_job_path),
-            ],
-        )
+        process.start(program, arguments)
         QTimer.singleShot(
             self.timeout_ms,
             lambda: self._timeout(generation, process),

@@ -1,5 +1,7 @@
+import sys
 from collections.abc import Sequence
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from PySide6.QtWidgets import QApplication
 
@@ -20,6 +22,9 @@ def main(
     *,
     use_mocks: bool = True,
 ) -> int:
+    command_arguments = list(sys.argv[1:] if argv is None else argv)
+    if command_arguments == ["--smoke-test"]:
+        return smoke_test()
     application = create_application(list(argv) if argv is not None else None)
     context = build_context(data_root, use_mocks=use_mocks)
     window: MainWindow | None = None
@@ -40,6 +45,24 @@ def main(
                     window.close()
             finally:
                 context.close()
+
+
+def smoke_test() -> int:
+    application = create_application(["BambooWorkbench", "--smoke-test"])
+    del application
+    with TemporaryDirectory(prefix="BambooWorkbench-smoke-") as directory:
+        context = build_context(Path(directory), use_mocks=True)
+        try:
+            modules = tuple(context.registry.all())
+            if len(modules) != 3 or any(module.health != "healthy" for module in modules):
+                return 2
+            if not context.stylesheet.strip():
+                return 3
+            if context.database.scalar("SELECT COUNT(*) FROM knowledge_records") < 4:
+                return 4
+        finally:
+            context.close()
+    return 0
 
 
 if __name__ == "__main__":

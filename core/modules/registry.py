@@ -64,6 +64,9 @@ class ModuleRegistry:
         except KeyError as exc:
             raise KeyError(f"module not registered: {module_id}") from exc
 
+    def all(self) -> tuple[RegisteredModule, ...]:
+        return tuple(self._modules[module_id] for module_id in sorted(self._modules))
+
     def check_health(self, module_id: ModuleId) -> tuple[bool, str]:
         module = self.get(module_id)
         try:

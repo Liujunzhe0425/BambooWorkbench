@@ -1,5 +1,7 @@
 # BambooWorkbench（竹简工作台）品质数据处理 Agent 模块交接说明
 
+> **历史草案，不再作为机器合同。** 当前项目请以 [`handoff/三个业务模块最终交接说明.md`](handoff/三个业务模块最终交接说明.md) 和 `contracts/schemas/` 为准。本文中早期 `healthcheck_command` 等字段不得用于正式交付。
+
 统一命名：产品英文名、项目总文件夹名和GitHub仓库名均为`BambooWorkbench`；中文产品名为“竹简工作台”。
 
 ## 1. 使用对象和目的

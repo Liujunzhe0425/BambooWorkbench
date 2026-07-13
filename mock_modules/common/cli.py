@@ -3,6 +3,7 @@ import hashlib
 import json
 import sys
 import time
+from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
 
@@ -195,14 +196,14 @@ def _run_validated_job(module_id: str, job: JobRequest, scenario: str) -> int:
     return 0
 
 
-def main() -> int:
+def main(arguments: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--module-id", required=True, choices=["moisture", "boiling", "after_sales"]
     )
     parser.add_argument("command", choices=["version", "self-check", "run"])
     parser.add_argument("--job", type=Path)
-    args = parser.parse_args()
+    args = parser.parse_args(arguments)
     if args.command == "version":
         print("0.1.0")
         return 0

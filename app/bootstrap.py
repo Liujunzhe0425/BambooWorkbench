@@ -12,7 +12,7 @@ from core.confirmations.service import ConfirmationService
 from core.knowledge.models import KnowledgeRecord, KnowledgeSourceKind
 from core.knowledge.repository import KnowledgeRepository
 from core.modules.registry import ModuleRegistry, RegisteredModule
-from core.platform.logging import configure_logging
+from core.platform.logging import close_logging, configure_logging
 from core.platform.paths import AppPaths
 from core.security.credentials import CredentialStore, KeyringCredentialStore
 from core.security.redaction import RedactionService
@@ -57,6 +57,7 @@ class AppContext:
                 self.logger.error("application task cleanup failure before database close")
         finally:
             self.database.close()
+            close_logging(self.logger, self.paths)
             self._closed = True
 
 

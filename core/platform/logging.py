@@ -64,6 +64,18 @@ def configure_logging(paths: AppPaths) -> logging.Logger:
     return logger
 
 
+def close_logging(logger: logging.Logger, paths: AppPaths) -> None:
+    log_path = (paths.logs / "bamboo-workbench.log").resolve()
+    for handler in tuple(logger.handlers):
+        if not getattr(handler, _HANDLER_MARKER, False):
+            continue
+        if isinstance(handler, RotatingFileHandler) and (
+            Path(handler.baseFilename).resolve() == log_path
+        ):
+            logger.removeHandler(handler)
+            handler.close()
+
+
 def _find_handler(
     logger: logging.Logger,
     log_path: Path,

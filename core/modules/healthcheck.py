@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QProcess, QProcessEnvironment
 
+from .host_runtime import add_packaged_host_environment, module_host_command
 from .launcher import launcher_validation_error
 from .process_control import ProcessCleanupResult, terminate_process
 
@@ -33,15 +34,18 @@ def run_healthcheck(
     process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
     process.setProcessEnvironment(_process_environment(module))
 
-    process.setProgram(sys.executable)
-    process.setArguments(
-        [
-            str(Path(__file__).with_name("process_host.py")),
+    try:
+        program, arguments = module_host_command(
+            [
             "--launcher",
             str(launcher),
             "self-check",
-        ]
-    )
+            ]
+        )
+    except OSError as exc:
+        return False, f"module host unavailable: {exc}"
+    process.setProgram(program)
+    process.setArguments(arguments)
 
     started_at = time.monotonic()
     process.start()
@@ -110,4 +114,5 @@ def _process_environment(module: "RegisteredModule") -> QProcessEnvironment:
         "PYTHONPATH",
         os.pathsep.join(python_paths),
     )
+    add_packaged_host_environment(environment)
     return environment
