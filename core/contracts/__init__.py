@@ -1,4 +1,13 @@
-from .enums import ModuleId, Severity, TaskStatus
+from .enums import JobPhase, ModuleId, RunMode, Severity, TaskStatus
+from .job import JobRequest
 from .manifest import ModuleManifest
 
-__all__ = ["ModuleId", "ModuleManifest", "Severity", "TaskStatus"]
+__all__ = [
+    "JobPhase",
+    "JobRequest",
+    "ModuleId",
+    "ModuleManifest",
+    "RunMode",
+    "Severity",
+    "TaskStatus",
+]

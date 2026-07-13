@@ -19,3 +19,14 @@ class Severity(StrEnum):
     INFO = "info"
     WARNING = "warning"
     CRITICAL = "critical"
+
+
+class JobPhase(StrEnum):
+    DRAFT = "draft"
+    FINALIZE = "finalize"
+
+
+class RunMode(StrEnum):
+    SINGLE = "single"
+    BATCH = "batch"
+    INCREMENTAL = "incremental"
