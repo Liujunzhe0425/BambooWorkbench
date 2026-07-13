@@ -1,3 +1,4 @@
+import hashlib
 import os
 import re
 import shutil
@@ -190,11 +191,16 @@ class TaskService(QObject):
             reject_link=True,
         )
         draft = JobRequest.model_validate_json(draft_path.read_text(encoding="utf-8"))
-        if draft.job_id != job_id or draft.phase is not JobPhase.DRAFT:
+        trusted_draft = self._jobs.get(job_id)
+        if trusted_draft is None:
+            raise ValueError("trusted draft state is unavailable")
+        if draft.model_dump(mode="json") != trusted_draft.model_dump(mode="json"):
+            raise ValueError("job-draft file does not match trusted retained draft state")
+        if trusted_draft.job_id != job_id or trusted_draft.phase is not JobPhase.DRAFT:
             raise ValueError("job-draft identity or phase does not match task")
-        if draft.module_id.value != task["module_id"]:
+        if trusted_draft.module_id.value != task["module_id"]:
             raise ValueError("job-draft module_id does not match persisted task")
-        self._validate_draft_paths(job_id, task_dir, draft)
+        self._validate_draft_paths(job_id, task_dir, trusted_draft)
 
         final_output_dir = resolve_contained_target(
             task_dir / "output-final",
@@ -202,7 +208,9 @@ class TaskService(QObject):
             "final output",
             reject_link=True,
         )
-        final_payload = draft.model_dump(mode="python")
+        if final_output_dir.exists() and not final_output_dir.is_dir():
+            raise ValueError("final output must be a directory when it already exists")
+        final_payload = trusted_draft.model_dump(mode="python")
         final_payload.update(
             phase=JobPhase.FINALIZE,
             parent_job_id=job_id,
@@ -220,7 +228,7 @@ class TaskService(QObject):
             runner = self.runner_factory()
             self.runners[job_id] = runner
             self._connect_runner(job_id, runner)
-            runner.start(self.registry.get(draft.module_id), final_path)
+            runner.start(self.registry.get(trusted_draft.module_id), final_path)
         except Exception as exc:
             self._record_failure(job_id, self._error_message(exc), runner)
 
@@ -237,6 +245,11 @@ class TaskService(QObject):
             )
             for record in persisted_files
         ]
+        for record, snapshot in zip(
+            persisted_files, persisted_snapshots, strict=True
+        ):
+            if self._sha256(snapshot) != str(record["fingerprint"]):
+                raise ValueError("persisted input snapshot fingerprint does not match content")
         draft_inputs = [
             resolve_contained_file(
                 Path(path),
@@ -265,6 +278,14 @@ class TaskService(QObject):
         )
         if draft_output != expected_output:
             raise ValueError("job-draft output does not match task-local draft output")
+
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
 
     def _validate_stored_answers(
         self, job_id: str, bundle: ConfirmationBundle

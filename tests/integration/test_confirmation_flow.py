@@ -411,7 +411,18 @@ def test_finalize_job_file_is_atomic_and_valid_before_runner_start(
 
 @pytest.mark.parametrize(
     "tamper",
-    ["job-id", "module", "phase", "inputs", "draft-output"],
+    [
+        "job-id",
+        "module",
+        "phase",
+        "inputs",
+        "draft-output",
+        "run-mode",
+        "ai-enabled",
+        "knowledge-scopes",
+        "module-config",
+        "service-response",
+    ],
 )
 def test_finalize_binds_draft_to_persisted_task_metadata(
     qtbot, app_services: dict[str, object], tmp_path: Path, tamper: str
@@ -435,15 +446,74 @@ def test_finalize_binds_draft_to_persisted_task_metadata(
         draft["confirmation_file"] = str(bundle_path)
     elif tamper == "inputs":
         draft["input_files"] = [str(bundle_path)]
-    else:
+    elif tamper == "draft-output":
         draft["output_dir"] = str((bundle_path.parent / "other-output").resolve())
+    elif tamper == "run-mode":
+        draft["run_mode"] = "batch"
+    elif tamper == "ai-enabled":
+        draft["ai_enabled"] = True
+    elif tamper == "knowledge-scopes":
+        draft["allowed_knowledge_scopes"] = ["tampered"]
+    elif tamper == "module-config":
+        draft["module_config_file"] = str(bundle_path)
+    else:
+        draft["service_response_file"] = str(bundle_path)
     draft_path.write_text(json.dumps(draft), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="identity|phase|module|input|output"):
+    with pytest.raises(ValueError, match="trusted|identity|phase|module|input|output"):
         task_service.finalize(job_id, bundle_path)
 
     assert task_repository.get(job_id)["status"] == "waiting_confirmation"
     assert not (bundle_path.parent / "job-finalize.json").exists()
+
+
+def test_finalize_rejects_in_place_snapshot_content_tampering(
+    qtbot, app_services: dict[str, object], tmp_path: Path
+) -> None:
+    task_service, job_id = _start_waiting_job(qtbot, app_services, tmp_path)
+    bundle_path = _confirmation_service(app_services).submit(job_id, [_answer()])
+    task_repository = app_services["task_repository"]
+    assert isinstance(task_repository, TaskRepository)
+    snapshot_path = Path(str(task_repository.list_files(job_id)[0]["snapshot_path"]))
+    snapshot_path.write_bytes(b"tampered-after-draft")
+
+    with pytest.raises(ValueError, match="fingerprint"):
+        task_service.finalize(job_id, bundle_path)
+
+    assert task_repository.get(job_id)["status"] == "waiting_confirmation"
+    assert not (bundle_path.parent / "job-finalize.json").exists()
+
+
+def test_finalize_rejects_preexisting_output_final_file(
+    qtbot, app_services: dict[str, object], tmp_path: Path
+) -> None:
+    task_service, job_id = _start_waiting_job(qtbot, app_services, tmp_path)
+    bundle_path = _confirmation_service(app_services).submit(job_id, [_answer()])
+    final_output = bundle_path.parent / "output-final"
+    final_output.write_bytes(b"not-a-directory")
+
+    with pytest.raises(ValueError, match="final output.*directory"):
+        task_service.finalize(job_id, bundle_path)
+
+    task_repository = app_services["task_repository"]
+    assert isinstance(task_repository, TaskRepository)
+    assert task_repository.get(job_id)["status"] == "waiting_confirmation"
+    assert not (bundle_path.parent / "job-finalize.json").exists()
+
+
+def test_finalize_allows_preexisting_task_local_output_final_directory(
+    qtbot, app_services: dict[str, object], tmp_path: Path
+) -> None:
+    task_service, job_id = _start_waiting_job(qtbot, app_services, tmp_path)
+    bundle_path = _confirmation_service(app_services).submit(job_id, [_answer()])
+    final_output = bundle_path.parent / "output-final"
+    final_output.mkdir()
+
+    with qtbot.waitSignal(task_service.finished, timeout=15_000) as finished:
+        task_service.finalize(job_id, bundle_path)
+
+    assert finished.args[0].status.value == "success"
+    assert (final_output / "result.json").is_file()
 
 
 def test_finalize_rejects_simulated_draft_protocol_link(
