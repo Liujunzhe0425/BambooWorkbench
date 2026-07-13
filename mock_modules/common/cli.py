@@ -6,6 +6,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from core.contracts.job import JobRequest
 from core.contracts.result import ModuleResult
 
@@ -18,7 +20,17 @@ def now() -> str:
 
 
 def run(module_id: str, job_path: Path) -> int:
-    job = JobRequest.model_validate_json(job_path.read_text(encoding="utf-8"))
+    try:
+        job = JobRequest.model_validate_json(job_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValidationError) as error:
+        print(f"invalid job request: {type(error).__name__}", file=sys.stderr)
+        return 2
+    if job.module_id.value != module_id:
+        print(
+            f"module-id mismatch: command={module_id}, job={job.module_id.value}",
+            file=sys.stderr,
+        )
+        return 2
     output_dir = Path(job.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     scenario = scenario_for(job.input_files)
@@ -37,13 +49,6 @@ def run(module_id: str, job_path: Path) -> int:
         flush=True,
     )
     artifacts = create_artifacts(output_dir, module_id)
-    print(
-        json.dumps(
-            {"type": "progress", "percent": 100, "message": "模拟处理完成"},
-            ensure_ascii=False,
-        ),
-        flush=True,
-    )
 
     confirmations: list[dict[str, object]] = []
     status = "success"
@@ -107,6 +112,13 @@ def run(module_id: str, job_path: Path) -> int:
     validated = ModuleResult.model_validate(result)
     (output_dir / "result.json").write_text(
         validated.model_dump_json(indent=2), encoding="utf-8"
+    )
+    print(
+        json.dumps(
+            {"type": "progress", "percent": 100, "message": "模拟处理完成"},
+            ensure_ascii=False,
+        ),
+        flush=True,
     )
     return 0
 
