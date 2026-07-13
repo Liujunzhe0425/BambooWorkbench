@@ -1,0 +1,201 @@
+import argparse
+import ctypes
+import os
+import subprocess
+import sys
+from collections.abc import Callable, Sequence
+from ctypes import wintypes
+from pathlib import Path
+from typing import NoReturn
+
+if __package__:
+    from .launcher import launcher_validation_error
+else:
+    from launcher import launcher_validation_error
+
+HOST_SETUP_ERROR = 70
+HOST_CHILD_START_ERROR = 71
+HOST_UNSUPPORTED = 72
+JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+
+
+class JobSetupError(RuntimeError):
+    pass
+
+
+class _IOCounters(ctypes.Structure):
+    _fields_ = [
+        ("ReadOperationCount", ctypes.c_ulonglong),
+        ("WriteOperationCount", ctypes.c_ulonglong),
+        ("OtherOperationCount", ctypes.c_ulonglong),
+        ("ReadTransferCount", ctypes.c_ulonglong),
+        ("WriteTransferCount", ctypes.c_ulonglong),
+        ("OtherTransferCount", ctypes.c_ulonglong),
+    ]
+
+
+class _BasicLimitInformation(ctypes.Structure):
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_longlong),
+        ("PerJobUserTimeLimit", ctypes.c_longlong),
+        ("LimitFlags", wintypes.DWORD),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", wintypes.DWORD),
+        ("Affinity", ctypes.c_size_t),
+        ("PriorityClass", wintypes.DWORD),
+        ("SchedulingClass", wintypes.DWORD),
+    ]
+
+
+class _ExtendedLimitInformation(ctypes.Structure):
+    _fields_ = [
+        ("BasicLimitInformation", _BasicLimitInformation),
+        ("IoInfo", _IOCounters),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+class WindowsJob:
+    def __init__(self, handle: int, kernel32: object) -> None:
+        self.handle = handle
+        self.kernel32 = kernel32
+
+
+def create_contained_job() -> WindowsJob:
+    if sys.platform != "win32":
+        raise JobSetupError("Windows Job Objects are unavailable")
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.SetInformationJobObject.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+
+    handle = kernel32.CreateJobObjectW(None, None)
+    if not handle:
+        raise JobSetupError(_windows_error("CreateJobObjectW"))
+
+    assigned = False
+    try:
+        limits = _ExtendedLimitInformation()
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        configured = kernel32.SetInformationJobObject(
+            handle,
+            JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.byref(limits),
+            ctypes.sizeof(limits),
+        )
+        if not configured:
+            raise JobSetupError(_windows_error("SetInformationJobObject"))
+        if not kernel32.AssignProcessToJobObject(handle, kernel32.GetCurrentProcess()):
+            raise JobSetupError(_windows_error("AssignProcessToJobObject"))
+        assigned = True
+        return WindowsJob(int(handle), kernel32)
+    finally:
+        if not assigned:
+            kernel32.CloseHandle(handle)
+
+
+def run_host(
+    launcher: Path,
+    launcher_arguments: Sequence[str],
+    *,
+    job_factory: Callable[[], WindowsJob] = create_contained_job,
+    child_runner: Callable[..., subprocess.CompletedProcess[object]] = subprocess.run,
+    host_exit: Callable[[int], NoReturn] | None = None,
+) -> int:
+    if host_exit is None:
+        host_exit = terminate_current_process
+    launcher = launcher.resolve()
+    validation_error = launcher_validation_error(launcher)
+    if validation_error is not None:
+        print(f"module host rejected launcher: {validation_error}", file=sys.stderr, flush=True)
+        return HOST_CHILD_START_ERROR
+    if list(launcher_arguments) != ["self-check"]:
+        print("module host rejected command: expected self-check", file=sys.stderr, flush=True)
+        return HOST_CHILD_START_ERROR
+    if sys.platform != "win32":
+        print("module host requires Windows Job Object containment", file=sys.stderr, flush=True)
+        return HOST_UNSUPPORTED
+
+    try:
+        _job = job_factory()
+    except JobSetupError as exc:
+        print(f"module host job setup failed: {exc}", file=sys.stderr, flush=True)
+        return HOST_SETUP_ERROR
+
+    system_root = Path(os.environ.get("SYSTEMROOT", r"C:\Windows"))
+    command_processor = str(system_root / "System32" / "cmd.exe")
+    command = (
+        f'{subprocess.list2cmdline([command_processor])} /d /s /c '
+        f'""{launcher}" self-check"'
+    )
+    try:
+        completed = child_runner(
+            command,
+            cwd=launcher.parent,
+            capture_output=True,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except OSError as exc:
+        print(f"module host child start failed: {type(exc).__name__}", file=sys.stderr, flush=True)
+        host_exit(HOST_CHILD_START_ERROR)
+    _forward_child_output(completed)
+    host_exit(completed.returncode)
+
+
+def terminate_current_process(exit_code: int) -> NoReturn:
+    sys.stdout.flush()
+    sys.stderr.flush()
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    kernel32.TerminateProcess.restype = wintypes.BOOL
+    if not kernel32.TerminateProcess(kernel32.GetCurrentProcess(), exit_code):
+        raise JobSetupError(_windows_error("TerminateProcess"))
+    raise RuntimeError("TerminateProcess unexpectedly returned")
+
+
+def _forward_child_output(completed: subprocess.CompletedProcess[object]) -> None:
+    stdout = completed.stdout
+    stderr = completed.stderr
+    if stdout:
+        sys.stdout.buffer.write(stdout if isinstance(stdout, bytes) else stdout.encode())
+        sys.stdout.buffer.flush()
+    if stderr:
+        sys.stderr.buffer.write(stderr if isinstance(stderr, bytes) else stderr.encode())
+        sys.stderr.buffer.flush()
+
+
+def _windows_error(operation: str) -> str:
+    return f"{operation} failed with Windows error {ctypes.get_last_error()}"
+
+
+def main(arguments: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--launcher", required=True, type=Path)
+    parser.add_argument("command", choices=["self-check"])
+    parsed = parser.parse_args(arguments)
+    return run_host(parsed.launcher, [parsed.command])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

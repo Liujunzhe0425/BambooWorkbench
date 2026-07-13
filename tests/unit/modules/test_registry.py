@@ -10,6 +10,7 @@ from PySide6.QtCore import QProcess
 
 from core.contracts.enums import ModuleId
 from core.contracts.manifest import ModuleManifest
+from core.modules import healthcheck
 from core.modules.healthcheck import run_healthcheck
 from core.modules.process_control import ProcessCleanupResult
 from core.modules.registry import ModuleRegistry, RegisteredModule
@@ -245,7 +246,7 @@ def test_healthcheck_reports_process_start_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     module_dir = _write_module(tmp_path, ModuleId.BOILING)
-    monkeypatch.setenv("COMSPEC", str(tmp_path / "missing-cmd.exe"))
+    monkeypatch.setattr(healthcheck.sys, "executable", str(tmp_path / "missing-python.exe"))
 
     healthy, detail = run_healthcheck(_registered(module_dir))
 
@@ -264,8 +265,7 @@ def test_healthcheck_cleans_up_process_that_times_out_while_starting(tmp_path: P
     cleanup = Mock(
         return_value=ProcessCleanupResult(
             process_stopped=True,
-            tree_terminated=True,
-            detail="process tree terminated",
+            detail="module host stopped",
         )
     )
 
@@ -281,16 +281,15 @@ def test_healthcheck_cleans_up_process_that_times_out_while_starting(tmp_path: P
     assert process.state.call_count == 2
 
 
-def test_healthcheck_reports_unconfirmed_timeout_cleanup(tmp_path: Path) -> None:
+def test_healthcheck_reports_host_cleanup_failure(tmp_path: Path) -> None:
     module_dir = _write_module(tmp_path, ModuleId.BOILING)
     process = Mock()
     process.waitForStarted.return_value = True
     process.waitForFinished.return_value = False
     cleanup = Mock(
         return_value=ProcessCleanupResult(
-            process_stopped=True,
-            tree_terminated=False,
-            detail="forced taskkill timed out; direct process stopped",
+            process_stopped=False,
+            detail="module host did not stop",
         )
     )
 
@@ -304,5 +303,32 @@ def test_healthcheck_reports_unconfirmed_timeout_cleanup(tmp_path: Path) -> None
     assert healthy is False
     assert detail == (
         "health check timed out after 1 ms; cleanup failed: "
-        "forced taskkill timed out; direct process stopped"
+        "module host did not stop"
     )
+
+
+def test_healthcheck_launches_internal_host_with_current_interpreter(tmp_path: Path) -> None:
+    module_dir = _write_module(tmp_path / "模块 root", ModuleId.BOILING)
+    process = Mock()
+    process.waitForStarted.return_value = True
+    process.waitForFinished.return_value = True
+    process.readAll.return_value = b"ok"
+    process.exitStatus.return_value = QProcess.ExitStatus.NormalExit
+    process.exitCode.return_value = 0
+
+    healthy, detail = run_healthcheck(
+        _registered(module_dir), process_factory=lambda: process
+    )
+
+    assert healthy is True
+    assert detail == "ok"
+    process.setProgram.assert_called_once_with(sys.executable)
+    process.setArguments.assert_called_once_with(
+        [
+            str(Path(healthcheck.__file__).with_name("process_host.py")),
+            "--launcher",
+            str((module_dir / "run_module.cmd").resolve()),
+            "self-check",
+        ]
+    )
+    process.setNativeArguments.assert_not_called()

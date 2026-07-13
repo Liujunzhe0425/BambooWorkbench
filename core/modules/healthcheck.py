@@ -1,6 +1,5 @@
 import locale
 import os
-import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -9,7 +8,8 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QProcess, QProcessEnvironment
 
-from .process_control import ProcessCleanupResult, terminate_process_tree
+from .launcher import launcher_validation_error
+from .process_control import ProcessCleanupResult, terminate_process
 
 if TYPE_CHECKING:
     from .registry import RegisteredModule
@@ -20,22 +20,28 @@ def run_healthcheck(
     timeout_ms: int = 10_000,
     *,
     process_factory: Callable[[], QProcess] = QProcess,
-    process_terminator: Callable[[QProcess], ProcessCleanupResult] = terminate_process_tree,
+    process_terminator: Callable[[QProcess], ProcessCleanupResult] = terminate_process,
 ) -> tuple[bool, str]:
     """Run a synchronous bootstrap/background health check; never call from the UI thread."""
     launcher = (module.path / module.manifest.entrypoint).resolve()
-    unsafe_character = _unsafe_cmd_path_character(launcher)
-    if unsafe_character is not None:
-        return False, f"unsafe launcher path for cmd.exe: contains {unsafe_character!r}"
+    validation_error = launcher_validation_error(launcher)
+    if validation_error is not None:
+        return False, validation_error
 
     process = process_factory()
     process.setWorkingDirectory(str(module.path))
     process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
     process.setProcessEnvironment(_process_environment(module))
 
-    command = subprocess.list2cmdline([str(launcher), "self-check"])
-    process.setProgram(os.environ.get("COMSPEC") or "cmd.exe")
-    process.setNativeArguments(f'/d /s /c "{command}"')
+    process.setProgram(sys.executable)
+    process.setArguments(
+        [
+            str(Path(__file__).with_name("process_host.py")),
+            "--launcher",
+            str(launcher),
+            "self-check",
+        ]
+    )
 
     started_at = time.monotonic()
     process.start()
@@ -47,7 +53,7 @@ def run_healthcheck(
         }:
             cleanup = _cleanup(process, process_terminator)
             final_stopped = process.state() == QProcess.ProcessState.NotRunning
-            if not cleanup.tree_terminated or not cleanup.process_stopped or not final_stopped:
+            if not cleanup.process_stopped or not final_stopped:
                 detail = f"{detail}; cleanup failed: {cleanup.detail}"
         return False, detail
 
@@ -56,7 +62,7 @@ def run_healthcheck(
     if not process.waitForFinished(remaining_ms):
         cleanup = _cleanup(process, process_terminator)
         final_stopped = process.state() == QProcess.ProcessState.NotRunning
-        if not cleanup.tree_terminated or not cleanup.process_stopped or not final_stopped:
+        if not cleanup.process_stopped or not final_stopped:
             return False, (
                 f"health check timed out after {timeout_ms} ms; cleanup failed: "
                 f"{cleanup.detail}"
@@ -65,15 +71,10 @@ def run_healthcheck(
 
     output = bytes(process.readAll()).decode(locale.getencoding(), errors="replace").strip()
     exit_code = process.exitCode()
-    if process.exitStatus() != QProcess.ExitStatus.NormalExit or exit_code != 0:
+    if exit_code != 0:
         detail = f"health check exited with code {exit_code}"
         return False, f"{detail}: {output}" if output else detail
     return True, output or "ok"
-
-
-def _unsafe_cmd_path_character(path: Path) -> str | None:
-    unsafe = frozenset("&|<>^()%!\r\n")
-    return next((character for character in str(path) if character in unsafe), None)
 
 
 def _cleanup(
@@ -85,7 +86,6 @@ def _cleanup(
     except Exception as exc:
         return ProcessCleanupResult(
             process_stopped=process.state() == QProcess.ProcessState.NotRunning,
-            tree_terminated=False,
             detail=f"cleanup raised {type(exc).__name__}",
         )
 
@@ -100,12 +100,14 @@ def _process_environment(module: "RegisteredModule") -> QProcessEnvironment:
         if inherited_path
         else python_directory,
     )
+    application_root = str(Path(__file__).resolve().parents[2])
     package_root = str(module.path.parent.parent)
     inherited_pythonpath = environment.value("PYTHONPATH")
+    python_paths = [application_root, package_root]
+    if inherited_pythonpath:
+        python_paths.append(inherited_pythonpath)
     environment.insert(
         "PYTHONPATH",
-        os.pathsep.join((package_root, inherited_pythonpath))
-        if inherited_pythonpath
-        else package_root,
+        os.pathsep.join(python_paths),
     )
     return environment
