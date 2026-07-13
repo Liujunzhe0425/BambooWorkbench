@@ -5,6 +5,11 @@ from pathlib import Path
 
 from core.contracts.confirmation import ConfirmationAnswer, ConfirmationBundle
 from core.contracts.result import ConfirmationPrompt
+from core.platform.path_safety import (
+    resolve_contained_directory,
+    resolve_contained_target,
+    resolve_path,
+)
 from core.platform.paths import AppPaths
 from core.storage.repositories.confirmations import ConfirmationRepository
 
@@ -38,9 +43,15 @@ class ConfirmationService:
     def submit(self, job_id: str, answers: list[ConfirmationAnswer]) -> Path:
         if not _JOB_ID_PATTERN.fullmatch(job_id):
             raise ValueError("invalid job ID")
-        task_dir = self.paths.tasks / job_id
-        if not task_dir.is_dir():
-            raise ValueError(f"task directory does not exist for {job_id}")
+        tasks_root = resolve_path(self.paths.tasks, "tasks root", strict=True)
+        if not tasks_root.is_dir():
+            raise ValueError("tasks root is not a directory")
+        task_dir = resolve_contained_directory(
+            self.paths.tasks / job_id,
+            tasks_root,
+            "task directory",
+            reject_link=True,
+        )
 
         records = self.repository.list_for_job(job_id)
         if not records:
@@ -63,7 +74,12 @@ class ConfirmationService:
             raise ValueError(f"missing blocking confirmations: {sorted(missing)}")
 
         bundle = ConfirmationBundle(job_id=job_id, answers=answers)
-        path = task_dir / "confirmation.json"
+        path = resolve_contained_target(
+            task_dir / "confirmation.json",
+            task_dir,
+            "confirmation file",
+            reject_link=True,
+        )
         _atomic_write_text(path, bundle.model_dump_json(indent=2))
-        self.repository.save_answers(job_id, answers)
+        self.repository.replace_answers(job_id, answers)
         return path

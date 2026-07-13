@@ -60,6 +60,40 @@ class ConfirmationRepository:
                 values,
             )
 
+    def replace_answers(self, job_id: str, answers: list[ConfirmationAnswer]) -> None:
+        answer_ids = [answer.confirmation_id for answer in answers]
+        if len(answer_ids) != len(set(answer_ids)):
+            raise ValueError("duplicate confirmation answer IDs")
+        rows = self.database.connection.execute(
+            "SELECT confirmation_id FROM confirmations WHERE job_id = ?",
+            (job_id,),
+        ).fetchall()
+        stored_ids = {str(row["confirmation_id"]) for row in rows}
+        unknown_ids = set(answer_ids) - stored_ids
+        if unknown_ids:
+            raise KeyError(f"unknown confirmations for {job_id}: {sorted(unknown_ids)}")
+
+        answered_at = datetime.now().astimezone().isoformat()
+        values = [
+            (
+                json.dumps(answer.model_dump(mode="json"), ensure_ascii=False),
+                answered_at,
+                job_id,
+                answer.confirmation_id,
+            )
+            for answer in answers
+        ]
+        with self.database.connection:
+            self.database.connection.execute(
+                "UPDATE confirmations SET answer = NULL, answered_at = NULL WHERE job_id = ?",
+                (job_id,),
+            )
+            self.database.connection.executemany(
+                "UPDATE confirmations SET answer = ?, answered_at = ? "
+                "WHERE job_id = ? AND confirmation_id = ?",
+                values,
+            )
+
     def list_for_job(self, job_id: str) -> list[dict[str, object]]:
         rows = self.database.connection.execute(
             "SELECT * FROM confirmations WHERE job_id = ? ORDER BY confirmation_id", (job_id,)

@@ -15,6 +15,12 @@ from core.contracts.job import JobRequest
 from core.contracts.result import ConfirmationPrompt, ModuleResult
 from core.modules.process_runner import ModuleProcessRunner
 from core.modules.registry import ModuleRegistry
+from core.platform.path_safety import (
+    resolve_contained_directory,
+    resolve_contained_file,
+    resolve_contained_target,
+    resolve_path,
+)
 from core.platform.paths import AppPaths
 from core.storage.repositories.confirmations import ConfirmationRepository
 from core.storage.repositories.tasks import TaskRepository
@@ -152,10 +158,23 @@ class TaskService(QObject):
                 "persisted task state is not waiting_confirmation"
             )
 
-        task_dir = (self.paths.tasks / job_id).resolve(strict=True)
+        tasks_root = resolve_path(self.paths.tasks, "tasks root", strict=True)
+        if not tasks_root.is_dir():
+            raise ValueError("tasks root is not a directory")
+        task_dir = resolve_contained_directory(
+            self.paths.tasks / job_id,
+            tasks_root,
+            "task directory",
+            reject_link=True,
+        )
         expected_bundle_path = task_dir / "confirmation.json"
-        resolved_bundle_path = bundle_path.resolve(strict=True)
-        if resolved_bundle_path != expected_bundle_path or not resolved_bundle_path.is_file():
+        resolved_bundle_path = resolve_contained_file(
+            bundle_path,
+            task_dir,
+            "confirmation file",
+            reject_link=True,
+        )
+        if resolved_bundle_path != expected_bundle_path:
             raise ValueError("confirmation bundle is not the task-local confirmation.json")
         bundle = ConfirmationBundle.model_validate_json(
             resolved_bundle_path.read_text(encoding="utf-8")
@@ -164,16 +183,31 @@ class TaskService(QObject):
             raise ValueError("confirmation bundle job_id does not match task")
         self._validate_stored_answers(job_id, bundle)
 
-        draft_path = task_dir / "job-draft.json"
+        draft_path = resolve_contained_file(
+            task_dir / "job-draft.json",
+            task_dir,
+            "draft job file",
+            reject_link=True,
+        )
         draft = JobRequest.model_validate_json(draft_path.read_text(encoding="utf-8"))
         if draft.job_id != job_id or draft.phase is not JobPhase.DRAFT:
             raise ValueError("job-draft identity or phase does not match task")
+        if draft.module_id.value != task["module_id"]:
+            raise ValueError("job-draft module_id does not match persisted task")
+        self._validate_draft_paths(job_id, task_dir, draft)
+
+        final_output_dir = resolve_contained_target(
+            task_dir / "output-final",
+            task_dir,
+            "final output",
+            reject_link=True,
+        )
         final_payload = draft.model_dump(mode="python")
         final_payload.update(
             phase=JobPhase.FINALIZE,
             parent_job_id=job_id,
             confirmation_file=str(resolved_bundle_path),
-            output_dir=str((task_dir / "output-final").resolve()),
+            output_dir=str(final_output_dir),
         )
         final_job = JobRequest.model_validate(final_payload)
         final_path = task_dir / "job-finalize.json"
@@ -189,6 +223,48 @@ class TaskService(QObject):
             runner.start(self.registry.get(draft.module_id), final_path)
         except Exception as exc:
             self._record_failure(job_id, self._error_message(exc), runner)
+
+    def _validate_draft_paths(
+        self, job_id: str, task_dir: Path, draft: JobRequest
+    ) -> None:
+        persisted_files = self.task_repository.list_files(job_id)
+        persisted_snapshots = [
+            resolve_contained_file(
+                Path(str(record["snapshot_path"])),
+                task_dir,
+                "persisted input snapshot",
+                reject_link=True,
+            )
+            for record in persisted_files
+        ]
+        draft_inputs = [
+            resolve_contained_file(
+                Path(path),
+                task_dir,
+                "draft input file",
+                reject_link=True,
+            )
+            for path in draft.input_files
+        ]
+        if len(draft_inputs) != len(persisted_snapshots) or set(draft_inputs) != set(
+            persisted_snapshots
+        ):
+            raise ValueError("job-draft input files do not match persisted snapshots")
+
+        expected_output = resolve_contained_directory(
+            task_dir / "output-draft",
+            task_dir,
+            "expected draft output",
+            reject_link=True,
+        )
+        draft_output = resolve_contained_directory(
+            Path(draft.output_dir),
+            task_dir,
+            "draft output",
+            reject_link=True,
+        )
+        if draft_output != expected_output:
+            raise ValueError("job-draft output does not match task-local draft output")
 
     def _validate_stored_answers(
         self, job_id: str, bundle: ConfirmationBundle
@@ -225,7 +301,7 @@ class TaskService(QObject):
         supplied = {answer.confirmation_id: answer for answer in bundle.answers}
         if required - set(supplied):
             raise ValueError("confirmation bundle is missing blocking confirmations")
-        if any(stored_answers.get(answer_id) != answer for answer_id, answer in supplied.items()):
+        if stored_answers != supplied:
             raise ValueError("confirmation bundle does not match stored answered state")
 
     def _connect_runner(self, job_id: str, runner: ModuleProcessRunner) -> None:

@@ -7,16 +7,14 @@ from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signa
 
 from core.contracts.job import JobRequest
 from core.contracts.result import ModuleResult
+from core.platform.path_safety import resolve_path
 
 from .progress_parser import parse_progress
 from .registry import RegisteredModule
 
 
 def _resolve_path(path: Path, *, strict: bool = False) -> Path:
-    try:
-        return path.resolve(strict=strict)
-    except RuntimeError as exc:
-        raise ValueError(f"path resolution failed: {exc}") from exc
+    return resolve_path(path, "filesystem", strict=strict)
 
 
 def resolve_contained_file(path: Path, root: Path, label: str) -> Path:

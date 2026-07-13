@@ -205,3 +205,77 @@ def test_unknown_confirmation_answer_raises_without_implicit_or_partial_rows(
     assert database.scalar(
         "SELECT COUNT(*) FROM confirmations WHERE confirmation_id = ?", ("unknown",)
     ) == 0
+
+
+def test_confirmation_repository_replace_answers_clears_omitted_optional_answer(
+    database: Database,
+) -> None:
+    TaskRepository(database).create(
+        "job-001", "moisture", "created", "2026-07-13T10:00:00+08:00"
+    )
+    repository = ConfirmationRepository(database)
+    prompts = [
+        ConfirmationPrompt(
+            confirmation_id=confirmation_id,
+            field=confirmation_id,
+            reason="reason",
+            confidence=1,
+            blocking=blocking,
+            batch_applicable=True,
+            rememberable=True,
+            source=SourceRef(source_file="sample.xlsx"),
+        )
+        for confirmation_id, blocking in (("blocking", True), ("optional", False))
+    ]
+    blocking = ConfirmationAnswer(confirmation_id="blocking", value="required")
+    optional = ConfirmationAnswer(
+        confirmation_id="optional",
+        value={"choice": "optional"},
+        apply_to_batch=True,
+        remember_mapping=True,
+    )
+    repository.save_prompts("job-001", prompts)
+
+    repository.replace_answers("job-001", [blocking, optional])
+    repository.replace_answers("job-001", [blocking])
+
+    stored = repository.list_for_job("job-001")
+    assert stored[0]["answer"] == blocking.model_dump(mode="json")
+    assert stored[0]["answered_at"] is not None
+    assert stored[1]["answer"] is None
+    assert stored[1]["answered_at"] is None
+
+
+@pytest.mark.parametrize("invalid_kind", ["unknown", "duplicate"])
+def test_confirmation_repository_replace_answers_rejects_before_clearing_existing_answers(
+    database: Database, invalid_kind: str
+) -> None:
+    TaskRepository(database).create(
+        "job-001", "moisture", "created", "2026-07-13T10:00:00+08:00"
+    )
+    repository = ConfirmationRepository(database)
+    prompt = ConfirmationPrompt(
+        confirmation_id="known",
+        field="field",
+        reason="reason",
+        confidence=1,
+        blocking=True,
+        batch_applicable=False,
+        rememberable=False,
+        source=SourceRef(source_file="sample.xlsx"),
+    )
+    existing = ConfirmationAnswer(confirmation_id="known", value="existing")
+    repository.save_prompts("job-001", [prompt])
+    repository.save_answers("job-001", [existing])
+    invalid = (
+        [ConfirmationAnswer(confirmation_id="unknown", value="invalid")]
+        if invalid_kind == "unknown"
+        else [existing, existing]
+    )
+
+    with pytest.raises((KeyError, ValueError), match=invalid_kind):
+        repository.replace_answers("job-001", invalid)
+
+    assert repository.list_for_job("job-001")[0]["answer"] == existing.model_dump(
+        mode="json"
+    )

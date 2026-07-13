@@ -1,3 +1,5 @@
+import json
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 
@@ -9,6 +11,7 @@ from core.confirmations.service import ConfirmationService
 from core.contracts.confirmation import ConfirmationAnswer, ConfirmationBundle
 from core.contracts.enums import JobPhase, ModuleId
 from core.contracts.job import JobRequest
+from core.contracts.result import ConfirmationPrompt, SourceRef
 from core.storage.repositories.confirmations import ConfirmationRepository
 from core.storage.repositories.tasks import TaskRepository
 from core.tasks.models import InvalidTaskTransition
@@ -44,6 +47,30 @@ def _start_waiting_job(
 
 def _answer() -> ConfirmationAnswer:
     return ConfirmationAnswer(confirmation_id="mock-confirm-1", value="人工值")
+
+
+def _optional_prompt(source_file: Path) -> ConfirmationPrompt:
+    return ConfirmationPrompt(
+        confirmation_id="mock-optional-1",
+        field="optional_field",
+        reason="可选人工确认",
+        suggested_value="可选值",
+        options=["可选值"],
+        confidence=0.8,
+        blocking=False,
+        batch_applicable=True,
+        rememberable=True,
+        source=SourceRef(source_file=str(source_file)),
+    )
+
+
+def _optional_answer() -> ConfirmationAnswer:
+    return ConfirmationAnswer(
+        confirmation_id="mock-optional-1",
+        value={"choice": "可选值"},
+        apply_to_batch=True,
+        remember_mapping=True,
+    )
 
 
 def test_confirmation_resubmits_and_finishes_at_final_result_path(
@@ -116,7 +143,7 @@ def test_confirmation_file_is_atomically_replaced_before_answers_are_saved(
         observations.append((target.is_file(), temporary_files))
         raise RuntimeError("simulated answer persistence failure")
 
-    monkeypatch.setattr(repository, "save_answers", fail_after_file_write)
+    monkeypatch.setattr(repository, "replace_answers", fail_after_file_write)
 
     with pytest.raises(RuntimeError, match="simulated answer persistence failure"):
         _confirmation_service(app_services).submit(job_id, [_answer()])
@@ -126,6 +153,64 @@ def test_confirmation_file_is_atomically_replaced_before_answers_are_saved(
         target.read_text(encoding="utf-8")
     )
     assert stored_bundle.job_id == job_id
+
+
+def test_confirmation_resubmit_replaces_exact_answer_set(
+    qtbot, app_services: dict[str, object], tmp_path: Path
+) -> None:
+    task_service, job_id = _start_waiting_job(qtbot, app_services, tmp_path)
+    repository = app_services["confirmation_repository"]
+    assert isinstance(repository, ConfirmationRepository)
+    repository.save_prompts(job_id, [_optional_prompt(tmp_path / "confirm.xlsx")])
+    confirmation_service = _confirmation_service(app_services)
+
+    confirmation_service.submit(job_id, [_answer(), _optional_answer()])
+    bundle_path = confirmation_service.submit(job_id, [_answer()])
+
+    stored = {record["confirmation_id"]: record for record in repository.list_for_job(job_id)}
+    assert stored["mock-confirm-1"]["answer"] == _answer().model_dump(mode="json")
+    assert stored["mock-optional-1"]["answer"] is None
+    bundle = ConfirmationBundle.model_validate_json(bundle_path.read_text(encoding="utf-8"))
+    assert bundle.answers == [_answer()]
+    assert task_service._states[job_id].state.value == "waiting_confirmation"
+
+
+@pytest.mark.parametrize(
+    "mismatch",
+    ["db-omission", "bundle-omission", "value", "flags", "duplicate", "unknown"],
+)
+def test_finalize_rejects_any_bundle_database_answer_map_mismatch(
+    qtbot, app_services: dict[str, object], tmp_path: Path, mismatch: str
+) -> None:
+    task_service, job_id = _start_waiting_job(qtbot, app_services, tmp_path)
+    repository = app_services["confirmation_repository"]
+    assert isinstance(repository, ConfirmationRepository)
+    repository.save_prompts(job_id, [_optional_prompt(tmp_path / "confirm.xlsx")])
+    bundle_path = _confirmation_service(app_services).submit(
+        job_id, [_answer(), _optional_answer()]
+    )
+    bundle = ConfirmationBundle.model_validate_json(bundle_path.read_text(encoding="utf-8"))
+    if mismatch == "db-omission":
+        repository.replace_answers(job_id, [_answer()])
+    elif mismatch == "bundle-omission":
+        bundle.answers = [_answer()]
+    elif mismatch == "value":
+        bundle.answers[1].value = "tampered"
+    elif mismatch == "flags":
+        bundle.answers[1].remember_mapping = False
+    elif mismatch == "duplicate":
+        bundle.answers.append(_answer())
+    else:
+        bundle.answers.append(ConfirmationAnswer(confirmation_id="unknown", value="x"))
+    if mismatch != "db-omission":
+        bundle_path.write_text(bundle.model_dump_json(indent=2), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="answer|duplicate|unknown"):
+        task_service.finalize(job_id, bundle_path)
+
+    task_repository = app_services["task_repository"]
+    assert isinstance(task_repository, TaskRepository)
+    assert task_repository.get(job_id)["status"] == "waiting_confirmation"
 
 
 def test_finalize_rejects_bundle_for_a_different_job(
@@ -322,3 +407,94 @@ def test_finalize_job_file_is_atomic_and_valid_before_runner_start(
     final_job = JobRequest.model_validate_json(final_path.read_text(encoding="utf-8"))
     assert final_job.phase is JobPhase.FINALIZE
     assert list(final_path.parent.glob(".job-finalize.json.*.tmp")) == []
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    ["job-id", "module", "phase", "inputs", "draft-output"],
+)
+def test_finalize_binds_draft_to_persisted_task_metadata(
+    qtbot, app_services: dict[str, object], tmp_path: Path, tamper: str
+) -> None:
+    task_service, job_id = _start_waiting_job(qtbot, app_services, tmp_path)
+    bundle_path = _confirmation_service(app_services).submit(job_id, [_answer()])
+    draft_path = bundle_path.parent / "job-draft.json"
+    draft = json.loads(draft_path.read_text(encoding="utf-8"))
+    task_repository = app_services["task_repository"]
+    assert isinstance(task_repository, TaskRepository)
+    if tamper == "job-id":
+        draft["job_id"] = "different-job-id"
+    elif tamper == "module":
+        task_repository.database.execute(
+            "UPDATE tasks SET module_id = ? WHERE job_id = ?",
+            (ModuleId.BOILING.value, job_id),
+        )
+    elif tamper == "phase":
+        draft["phase"] = "finalize"
+        draft["parent_job_id"] = job_id
+        draft["confirmation_file"] = str(bundle_path)
+    elif tamper == "inputs":
+        draft["input_files"] = [str(bundle_path)]
+    else:
+        draft["output_dir"] = str((bundle_path.parent / "other-output").resolve())
+    draft_path.write_text(json.dumps(draft), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="identity|phase|module|input|output"):
+        task_service.finalize(job_id, bundle_path)
+
+    assert task_repository.get(job_id)["status"] == "waiting_confirmation"
+    assert not (bundle_path.parent / "job-finalize.json").exists()
+
+
+def test_finalize_rejects_simulated_draft_protocol_link(
+    qtbot,
+    app_services: dict[str, object],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task_service, job_id = _start_waiting_job(qtbot, app_services, tmp_path)
+    bundle_path = _confirmation_service(app_services).submit(job_id, [_answer()])
+    draft_path = bundle_path.parent / "job-draft.json"
+    original_is_symlink = Path.is_symlink
+
+    def simulated_link(path: Path) -> bool:
+        return path == draft_path or original_is_symlink(path)
+
+    monkeypatch.setattr(Path, "is_symlink", simulated_link)
+
+    with pytest.raises(ValueError, match="draft.*link"):
+        task_service.finalize(job_id, bundle_path)
+
+
+@pytest.mark.parametrize("escape", ["task-dir", "draft", "confirmation", "output-final"])
+def test_finalize_rejects_real_symlink_escapes(
+    qtbot, app_services: dict[str, object], tmp_path: Path, escape: str
+) -> None:
+    task_service, job_id = _start_waiting_job(qtbot, app_services, tmp_path)
+    bundle_path = _confirmation_service(app_services).submit(job_id, [_answer()])
+    task_dir = bundle_path.parent
+    if escape == "task-dir":
+        outside = tmp_path / "external-task"
+        shutil.move(str(task_dir), str(outside))
+        link = task_dir
+        target = outside
+        is_directory = True
+    elif escape == "output-final":
+        outside = tmp_path / "external-output"
+        outside.mkdir()
+        link = task_dir / "output-final"
+        target = outside
+        is_directory = True
+    else:
+        link = task_dir / ("job-draft.json" if escape == "draft" else "confirmation.json")
+        target = tmp_path / f"external-{link.name}"
+        link.replace(target)
+        is_directory = False
+    try:
+        link.symlink_to(target, target_is_directory=is_directory)
+    except OSError as exc:
+        pytest.skip(f"Windows symlink privilege unavailable: {exc}")
+
+    active_bundle_path = task_dir / "confirmation.json"
+    with pytest.raises(ValueError, match="link|outside|task"):
+        task_service.finalize(job_id, active_bundle_path)
