@@ -1,5 +1,8 @@
-from PySide6.QtCore import QEvent, QRectF, Qt
-from PySide6.QtGui import QIcon, QPainterPath, QRegion, QResizeEvent
+import ctypes
+import sys
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
@@ -28,15 +31,12 @@ from ui.widgets.window_title_bar import WindowTitleBar
 
 
 class MainWindow(QMainWindow):
-    _CORNER_RADIUS = 14.0
-
     def __init__(self, context: object) -> None:
         super().__init__()
         self.context = context
         self.setWindowTitle("竹简工作台")
         self.setWindowIcon(QIcon(str(context.resource_root / "logo" / "team-logo.png")))
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMinimumSize(980, 660)
         self.resize(1180, 760)
 
@@ -131,7 +131,6 @@ class MainWindow(QMainWindow):
             self._confirmation_job_ids.add(job_id)
             self.confirmations_page.load(job_id, result.confirmations)
         self.navigate(PageId.WORKBENCH)
-        self._apply_window_shape()
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -144,26 +143,26 @@ class MainWindow(QMainWindow):
         self.size_grip.setVisible(not self.isMaximized())
         self.size_grip.raise_()
         self.title_bar.update_window_state()
-        self._apply_window_shape()
 
-    def changeEvent(self, event: QEvent) -> None:
-        super().changeEvent(event)
-        if event.type() is QEvent.Type.WindowStateChange:
-            self._apply_window_shape()
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        self._enable_native_rounded_corners()
 
-    def _apply_window_shape(self) -> None:
-        if self.isMaximized():
-            self.clearMask()
-            return
-        if self.width() <= 0 or self.height() <= 0:
-            return
-        path = QPainterPath()
-        path.addRoundedRect(
-            QRectF(self.rect()),
-            self._CORNER_RADIUS,
-            self._CORNER_RADIUS,
-        )
-        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
+    def _enable_native_rounded_corners(self) -> bool:
+        """Ask Windows DWM for antialiased corners without a jagged bitmap mask."""
+        if sys.platform != "win32":
+            return False
+        try:
+            preference = ctypes.c_int(2)  # DWMWCP_ROUND
+            result = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                int(self.winId()),
+                33,  # DWMWA_WINDOW_CORNER_PREFERENCE
+                ctypes.byref(preference),
+                ctypes.sizeof(preference),
+            )
+        except (AttributeError, OSError):
+            return False
+        return result == 0
 
     @staticmethod
     def _placeholder(page_id: PageId) -> QWidget:

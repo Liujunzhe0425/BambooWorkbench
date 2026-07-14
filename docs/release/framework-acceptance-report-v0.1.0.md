@@ -23,9 +23,9 @@
 | 便携版重新构建 | 通过 | PyInstaller 双可执行文件构建完成 |
 | 便携版嵌入合同/品牌/主题/三模块 | 通过 | `verify_portable.ps1` |
 | Windows 原生界面截图复核 | 通过 | 首页、历史、知识库、设置页中文字体与颜色对比正常 |
-| 真实圆角窗口回归 | 通过 | 顶层透明、四角窗口裁切、最大化恢复；UI/打包相关 `58 passed` |
+| 原生圆角与标题栏回归 | 通过 | Windows DWM 抗锯齿圆角、标题/主体实色衔接、等尺寸矢量窗口按钮；UI/打包相关 `58 passed` |
 | 主程序无控制台窗口 | 通过 | PyInstaller `console=False`，PE Subsystem=`2`（Windows GUI） |
-| 用户指定 Logo 与快捷方式图标 | 通过 | PNG、ICO、EXE、安装器和快捷方式图标链路完整 |
+| 用户指定 Logo 与快捷方式图标 | 通过 | 快捷方式显式指向安装目录 ICO；临时 `.lnk` 的 `IconLocation` 已复核 |
 | 便携 ZIP 解压与启动 | 通过 | 隔离临时目录 `--smoke-test` 返回 0 |
 | 安装包构建 | 通过 | Inno Setup 编译返回 0 |
 | 安装 → 启动 → 卸载 | 通过 | 静默安装和静默卸载均返回 0 |
@@ -39,7 +39,8 @@
 
 - [x] 统一 PySide6 Windows 桌面入口，中文竹绿品牌视觉；
 - [x] 深竹绿侧栏、浅色工作区、统一卡片与高对比文字，视觉基线与确认稿一致；
-- [x] 无深色系统标题栏的自定义窗口栏，支持拖动、最小化、最大化和关闭；顶层四角真实透明裁切，无方形外框；
+- [x] 无深色系统标题栏的自定义窗口栏，支持拖动、最小化、最大化和关闭；采用 Windows 原生抗锯齿圆角，无像素蒙版锯齿；
+- [x] 标题栏与主体间为连续实色边界，三个窗口按钮使用统一尺寸、间距和矢量笔画；
 - [x] 使用 `logo/team-logo.png` 作为界面品牌，并生成多尺寸 Windows 快捷方式图标；
 - [x] 竹丝水分、水煮实验、售后分析三种模式入口；
 - [x] 单文件/批量选择、输入副本与指纹，不修改原文件；
@@ -57,10 +58,10 @@
 
 | 产物 | 大小 | SHA-256 |
 |---|---:|---|
-| `installer-output/BambooWorkbench-Setup-0.1.0.exe` | 40.60 MiB | `B8ACAD612B878B781E57C04608B4450D38DA92E8C5CCFAB5A7010EA7F143236E` |
-| `release-output/BambooWorkbench-Portable-0.1.0.zip` | 60.59 MiB | `2D276F81F74AFBB3CC1B11BD14613DD2DD485DFEA46767114C6F72BA72A648A4` |
-| `dist/BambooWorkbench/BambooWorkbench.exe` | 7.37 MiB | `963896B1AD860C332197E8D3F18D08FEB35F1097EBA1382A864CA5A693B2606E` |
-| `dist/BambooWorkbench/BambooModuleHost.exe` | 5.30 MiB | `2C9300D347D0AE4860485D3743489A58244BEA32FFCEA2C035292CC842D9D14C` |
+| `installer-output/BambooWorkbench-Setup-0.1.0.exe` | 40.60 MiB | `D1939B9590218A63DE11868A5001ABCD5705D8238B21F7DC3D01A9607F7924D2` |
+| `release-output/BambooWorkbench-Portable-0.1.0.zip` | 60.59 MiB | `F324024588B435DCD31A29B293DB8E8E401932C2D70B361691E351D27A9B5F0F` |
+| `dist/BambooWorkbench/BambooWorkbench.exe` | 7.37 MiB | `8C95AF4AEE8A6F0A19C65FADA758BA86850F1A7C602660586F47813229A7EBD2` |
+| `dist/BambooWorkbench/BambooModuleHost.exe` | 5.30 MiB | `C2F763CCE7B4DE3F3341780C16A6A73DC9AC0DBD999E6A787B581AA355C42CA6` |
 
 安装包和便携 ZIP 为本地构建产物，已被 `.gitignore` 排除，不会随源码仓库误上传。
 

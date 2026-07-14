@@ -11,7 +11,9 @@ def test_installer_has_stable_app_id_and_never_deletes_local_data() -> None:
     assert "{localappdata}\\BambooWorkbench" not in source
     assert "{localappdata}\\Programs\\BambooWorkbench" in source
     assert "SetupIconFile=..\\logo\\BambooWorkbench.ico" in source
-    assert 'IconFilename: "{app}\\BambooWorkbench.exe"' in source
+    assert 'IconFilename: "{app}\\logo\\BambooWorkbench.ico"' in source
+    assert "UninstallDisplayIcon={app}\\logo\\BambooWorkbench.ico" in source
+    assert "ChangesAssociations=yes" in source
 
 
 def test_installer_verifier_uses_an_isolated_localappdata_and_sentinel() -> None:

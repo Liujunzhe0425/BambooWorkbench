@@ -7,13 +7,13 @@ QWidget {
 }
 
 QMainWindow, #appRoot {
-    background: transparent;
+    background: #F7F8F3;
 }
 
 #windowTitleBar {
     background: #F5F7F2;
     border: 1px solid #D9E2D7;
-    border-bottom: 0;
+    border-bottom: 1px solid #D9E2D7;
     border-top-left-radius: 14px;
     border-top-right-radius: 14px;
 }
@@ -34,7 +34,11 @@ QMainWindow, #appRoot {
     background: transparent;
     border: 0;
     border-radius: 7px;
-    font-size: 16px;
+    min-width: 40px;
+    max-width: 40px;
+    min-height: 40px;
+    max-height: 40px;
+    padding: 0;
 }
 
 #windowMinimize:hover, #windowMaximize:hover {
