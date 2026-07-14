@@ -7,7 +7,7 @@ QWidget {
 }
 
 QMainWindow, #appRoot {
-    background: #E6EEE6;
+    background: transparent;
 }
 
 #windowTitleBar {

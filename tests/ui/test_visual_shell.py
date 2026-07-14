@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QPoint, Qt
 
 from ui.main_window import MainWindow
 from ui.page_ids import PageId
@@ -15,6 +15,11 @@ def test_visual_shell_uses_distinct_sidebar_and_light_content(qtbot, app_context
     assert window.stack.testAttribute(Qt.WidgetAttribute.WA_StyledBackground)
     assert window.navigation.width() == 210
     assert window.stack.width() > window.navigation.width()
+    assert window.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    assert window.centralWidget().layout().contentsMargins().left() == 0
+    assert window.mask().isEmpty() is False
+    assert window.mask().contains(QPoint(0, 0)) is False
+    assert window.mask().contains(QPoint(20, 20)) is True
 
 
 def test_all_primary_pages_share_the_designed_page_shell(qtbot, app_context) -> None:
