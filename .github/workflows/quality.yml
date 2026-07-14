@@ -12,14 +12,21 @@ jobs:
   quality:
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      PYTHONUTF8: "1"
+
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           cache: pip
+
       - run: python -m pip install --upgrade pip
+
       - run: python -m pip install -e ".[dev]"
+
       - name: Run repository quality gate
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File scripts/verify_repo.ps1
