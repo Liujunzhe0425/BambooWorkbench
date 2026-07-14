@@ -8,7 +8,7 @@
 
 ## 1. 验收结论
 
-**通过。** 当前产物已达到“可安装、可演示、可测试、可接收后续独立业务模块”的空框架目标，可进入人工创建 GitHub 私有仓库和三人并行模块开发阶段。
+**通过。** 当前产物已达到“可安装、可演示、可测试、可接收后续独立业务模块”的空框架目标，GitHub 私有仓库已经建立，可进入三人并行模块开发阶段。
 
 本结论只证明框架完整性与安全边界通过，不代表三类真实业务模块或客户质量判定已经验收。
 
@@ -17,7 +17,8 @@
 | 验收项 | 结果 | 证据 |
 |---|---|---|
 | Ruff 静态检查 | 通过 | `All checks passed!` |
-| 全量源码/合同/集成/UI/打包测试 | 通过 | `305 passed, 8 skipped in 415.44s` |
+| 本地全量源码/合同/集成/UI/打包测试 | 通过 | `307 passed, 8 skipped` |
+| GitHub Windows 质量门禁 | 通过 | `315 passed`，`PYTHONUTF8=1` |
 | 三个模块合同样板 | 通过 | `moisture`、`boiling`、`after_sales` 合同 CLI 全部返回 0 |
 | Git 差异格式 | 通过 | `git diff --check` 返回 0 |
 | 便携版重新构建 | 通过 | PyInstaller 双可执行文件构建完成 |
@@ -58,10 +59,10 @@
 
 | 产物 | 大小 | SHA-256 |
 |---|---:|---|
-| `installer-output/BambooWorkbench-Setup-0.1.0.exe` | 40.60 MiB | `D1939B9590218A63DE11868A5001ABCD5705D8238B21F7DC3D01A9607F7924D2` |
-| `release-output/BambooWorkbench-Portable-0.1.0.zip` | 60.59 MiB | `F324024588B435DCD31A29B293DB8E8E401932C2D70B361691E351D27A9B5F0F` |
-| `dist/BambooWorkbench/BambooWorkbench.exe` | 7.37 MiB | `8C95AF4AEE8A6F0A19C65FADA758BA86850F1A7C602660586F47813229A7EBD2` |
-| `dist/BambooWorkbench/BambooModuleHost.exe` | 5.30 MiB | `C2F763CCE7B4DE3F3341780C16A6A73DC9AC0DBD999E6A787B581AA355C42CA6` |
+| `installer-output/BambooWorkbench-Setup-0.1.0.exe` | 40.59 MiB | `30317F34EA98F1A17EE2DDBFB060889D9AE74FC3DB47C9760EB7A2B10A75ABB6` |
+| `release-output/BambooWorkbench-Portable-0.1.0.zip` | 59.06 MiB | `A83E584701088AA1A7DC92592E288EE0A163EB3E41C9B3ABA26B0926AF358602` |
+| `dist/BambooWorkbench/BambooWorkbench.exe` | 7.37 MiB | `B8755ECB475B12C0ABD2C91F63D480D703C4269A691AA7EFBF033215838BA2E2` |
+| `dist/BambooWorkbench/BambooModuleHost.exe` | 5.30 MiB | `D8BAFCEC247792E9B2910BD565B1A973DF1A6F02972DE288CC3E485D211AB16B` |
 
 安装包和便携 ZIP 为本地构建产物，已被 `.gitignore` 排除，不会随源码仓库误上传。
 
@@ -73,7 +74,7 @@
 - 当前知识检索不是生产级向量检索；
 - 真实 API 默认关闭，提供商配置变更后当前版本需重启生效；
 - 安装包未进行商业代码签名，Windows 可能显示“未知发布者”；
-- GitHub 私有仓库尚未人工创建，本验收没有进行任何远程推送。
+- GitHub 私有仓库已经建立；当前账户方案不支持私有仓库分支保护，协作期间必须遵守 PR 与 CODEOWNERS 约定。
 
 ## 6. 后续入口
 

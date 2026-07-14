@@ -32,11 +32,12 @@ def test_framework_acceptance_report_records_scope_and_verification() -> None:
         ROOT / "docs/release/framework-acceptance-report-v0.1.0.md"
     ).read_text(encoding="utf-8")
     for phrase in (
-        "302 passed, 8 skipped",
+        "307 passed, 8 skipped",
+        "315 passed",
         "安装包",
         "SHA-256",
         "空框架",
         "不代表三类真实业务模块",
-        "没有进行任何远程推送",
+        "GitHub 私有仓库",
     ):
         assert phrase in report

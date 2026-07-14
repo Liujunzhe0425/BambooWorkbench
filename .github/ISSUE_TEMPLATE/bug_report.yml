@@ -1,0 +1,42 @@
+name: 框架缺陷
+description: 报告竹简工作台框架、界面、安装或公共能力问题
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: 请勿上传企业真实数据、客户信息、API 密钥、数据库或原始 Excel。
+  - type: dropdown
+    id: area
+    attributes:
+      label: 问题区域
+      options:
+        - 桌面界面
+        - 安装或卸载
+        - 模块公共接口
+        - 历史与本地存储
+        - 知识库与 AI 边界
+        - GitHub Actions
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      description: 使用脱敏或模拟数据说明最小复现过程。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本与系统
+      placeholder: BambooWorkbench v0.1.0 / Windows 11 x64
+    validations:
+      required: true

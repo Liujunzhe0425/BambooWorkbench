@@ -1,0 +1,36 @@
+name: 模块接入问题
+description: 记录水分、水煮或售后模块的合同、测试与接入问题
+title: "[Module] "
+labels:
+  - enhancement
+body:
+  - type: dropdown
+    id: module
+    attributes:
+      label: 模块
+      options:
+        - moisture（竹丝水分）
+        - boiling（水煮实验）
+        - after_sales（售后分析）
+    validations:
+      required: true
+  - type: textarea
+    id: contract
+    attributes:
+      label: 合同或验收问题
+      description: 说明输入、输出、异常或人工确认边界；不得粘贴企业真实数据。
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 脱敏验证证据
+      description: 提供测试命令、模拟样本结果或截图。
+    validations:
+      required: true
+  - type: textarea
+    id: impact
+    attributes:
+      label: 对框架和其他模块的影响
+    validations:
+      required: true

@@ -18,6 +18,12 @@
 - 可复现的便携版、每用户 Windows 安装包及本地数据保留验证；
 - GitHub Actions、模块开发/验收指南、客户演示和发布清单。
 
+### Changed
+
+- 固定 GitHub 官方 Action 版本并强制 Windows CI 使用 UTF-8；
+- GitHub 发布工作流同时构建、验证并上传便携包、安装包与 SHA-256 清单；
+- 补充真实 CODEOWNERS、Dependabot、安全报告、贡献说明和模块 Issue 模板。
+
 ### Limitations
 
 - 本版本为空框架，不包含三个业务模块的真实算法或客户质量标准；
