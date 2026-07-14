@@ -62,6 +62,10 @@ def test_dependabot_and_private_project_policy_files_exist() -> None:
         "github-actions",
     }
     assert all(update["target-branch"] == "integration" for update in dependabot["updates"])
+    assert all(
+        update["ignore"][0]["update-types"] == ["version-update:semver-major"]
+        for update in dependabot["updates"]
+    )
     for path in (
         "SECURITY.md",
         "CONTRIBUTING.md",
