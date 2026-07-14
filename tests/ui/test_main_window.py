@@ -11,6 +11,9 @@ def test_main_window_has_canonical_navigation(qtbot, app_context) -> None:
     qtbot.addWidget(window)
 
     assert window.windowTitle() == "竹简工作台"
+    assert window.windowFlags() & Qt.WindowType.FramelessWindowHint
+    assert window.windowIcon().isNull() is False
+    assert window.title_bar.objectName() == "windowTitleBar"
     assert window.navigation.logo.objectName() == "teamLogo"
     assert window.navigation.logo.pixmap().isNull() is False
     assert list(window.pages) == [
@@ -34,9 +37,10 @@ def test_navigation_buttons_select_their_canonical_pages(qtbot, app_context) -> 
 
 
 def test_main_window_uses_the_packaged_logo(app_context) -> None:
-    logo_path = app_context.resource_root / "assets" / "brand" / "team-logo.svg"
+    logo_path = app_context.resource_root / "logo" / "team-logo.png"
 
-    assert logo_path == Path(__file__).parents[2] / "assets" / "brand" / "team-logo.svg"
+    assert logo_path == Path(__file__).parents[2] / "logo" / "team-logo.png"
+    assert logo_path.is_file()
 
 
 def test_navigation_exposes_accessible_names_and_descriptions(qtbot, app_context) -> None:
@@ -46,6 +50,6 @@ def test_navigation_exposes_accessible_names_and_descriptions(qtbot, app_context
     assert window.navigation.accessibleName() == "主导航"
     assert "竹简工作台" in window.navigation.accessibleDescription()
     assert window.navigation.logo.accessibleName() == "湖大智竹实践团队标志"
-    assert "竹叶" in window.navigation.logo.accessibleDescription()
+    assert "湖大智竹实践团队" in window.navigation.logo.accessibleDescription()
     for button in window.navigation.buttons.values():
-        assert button.accessibleName() == button.text()
+        assert button.text().endswith(button.accessibleName())

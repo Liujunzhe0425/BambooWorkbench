@@ -30,6 +30,8 @@ outputs/
 dist/
 build/
 installer-output/
+release-output/
+/ui-preview*/
 *.db
 *.log
 *.bak

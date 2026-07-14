@@ -4,6 +4,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -20,14 +21,18 @@ class ModuleTaskPage(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setObjectName("workflow-module-task")
+        self.setObjectName("page-module-task")
         self.module_id: object | None = None
         self.files: list[Path] = []
         self.supported_extensions: set[str] = set()
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(30, 24, 30, 28)
+        layout.setSpacing(16)
         self.title = QLabel("创建任务")
-        self.title.setProperty("heading", True)
+        self.title.setProperty("pageTitle", True)
+        self.subtitle = QLabel("导入原始文件后，由对应模块按既定规则生成表格、图表与分析结果。")
+        self.subtitle.setProperty("subtle", True)
         self.file_drop_zone = FileDropZone()
         self.file_drop_zone.files_dropped.connect(self.add_files)
         self.file_list = QListWidget()
@@ -56,18 +61,27 @@ class ModuleTaskPage(QWidget):
             self.remove_button,
             self.clear_button,
         ):
+            button.setProperty("secondary", True)
             picker_row.addWidget(button)
+        picker_row.addStretch()
 
         self.run_button = QPushButton("创建任务")
         self.run_button.setProperty("primary", True)
         self.run_button.setAccessibleName("创建并运行任务")
         self.run_button.clicked.connect(self._run)
+        card = QFrame()
+        card.setProperty("card", True)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(20, 18, 20, 20)
+        card_layout.setSpacing(12)
+        card_layout.addWidget(self.file_drop_zone)
+        card_layout.addLayout(picker_row)
+        card_layout.addWidget(self.file_list, 1)
+        card_layout.addWidget(self.intake_feedback)
+        card_layout.addWidget(self.run_button)
         layout.addWidget(self.title)
-        layout.addWidget(self.file_drop_zone)
-        layout.addLayout(picker_row)
-        layout.addWidget(self.file_list)
-        layout.addWidget(self.intake_feedback)
-        layout.addWidget(self.run_button)
+        layout.addWidget(self.subtitle)
+        layout.addWidget(card, 1)
         self._update_buttons()
 
     def set_module(

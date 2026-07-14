@@ -18,6 +18,8 @@ def test_create_application_reuses_the_qt_application(qapp) -> None:
 
     assert application is qapp
     assert application.applicationName() == "竹简工作台"
+    assert application.style().objectName().lower() == "fusion"
+    assert application.windowIcon().isNull() is False
 
 
 def test_build_context_composes_services_and_scans_modules_once(
@@ -141,6 +143,10 @@ def test_theme_applies_approved_visual_identity(qapp, app_context) -> None:
     for color in ("#FBFAF4", "#294D3C", "#2FA47D", "#24386F", "#F1B232"):
         assert color in stylesheet
     assert "#navigation" in stylesheet
+    assert "#windowTitleBar" in stylesheet
+    assert "QTableWidget" in stylesheet
+    assert "QListWidget" in stylesheet
+    assert "QLineEdit" in stylesheet
     assert "#navigation QPushButton:focus" in stylesheet
     assert "border: 2px solid #F1B232" in stylesheet
     checked_rule = stylesheet.split("#navigation QPushButton:checked", 1)[1].split("}", 1)[0]

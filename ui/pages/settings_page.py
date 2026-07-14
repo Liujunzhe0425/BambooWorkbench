@@ -4,6 +4,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
+    QFrame,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -39,9 +41,22 @@ class SettingsPage(QWidget):
         self.setAccessibleName("系统设置")
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(30, 24, 30, 28)
+        layout.setSpacing(16)
         title = QLabel("系统设置")
-        title.setProperty("heading", True)
+        title.setProperty("pageTitle", True)
+        subtitle = QLabel("管理本地输出、AI 接口与数据保护选项。设置只保存在当前电脑。")
+        subtitle.setProperty("subtle", True)
+        settings_card = QFrame()
+        settings_card.setProperty("card", True)
+        card_layout = QVBoxLayout(settings_card)
+        card_layout.setContentsMargins(22, 20, 22, 20)
+        card_layout.setSpacing(16)
+        section = QLabel("基础配置")
+        section.setProperty("section", True)
         form = QFormLayout()
+        form.setHorizontalSpacing(24)
+        form.setVerticalSpacing(13)
 
         self.output_dir_edit = QLineEdit(settings.get("output_dir", "") or "")
         self.output_dir_edit.setAccessibleName("输出目录")
@@ -94,15 +109,23 @@ class SettingsPage(QWidget):
         form.addRow("版本", self.version_label)
 
         self.save_button = QPushButton("保存设置")
+        self.save_button.setProperty("primary", True)
         self.save_button.setAccessibleName("保存系统设置")
         self.save_button.clicked.connect(self.save)
         self.open_logs_button = QPushButton("打开日志目录")
         self.open_logs_button.setAccessibleName("打开应用日志目录")
         self.open_logs_button.clicked.connect(self.open_log_directory)
+        self.open_logs_button.setProperty("secondary", True)
+        actions = QHBoxLayout()
+        actions.addStretch()
+        actions.addWidget(self.open_logs_button)
+        actions.addWidget(self.save_button)
+        card_layout.addWidget(section)
+        card_layout.addLayout(form)
+        card_layout.addLayout(actions)
         layout.addWidget(title)
-        layout.addLayout(form)
-        layout.addWidget(self.save_button)
-        layout.addWidget(self.open_logs_button)
+        layout.addWidget(subtitle)
+        layout.addWidget(settings_card)
         layout.addStretch()
 
     def save(self) -> None:

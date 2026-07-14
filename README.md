@@ -9,6 +9,8 @@
 ## 已实现
 
 - 一个 PySide6 桌面入口和三种模块模式；
+- 参考确认稿实现的深竹绿侧栏、浅色卡片工作区、统一历史/知识库/设置页与无黑色系统栏窗口；
+- 用户指定团队 Logo，以及用于主程序、安装器和快捷方式的多尺寸 Windows 图标；
 - 固定 JSON 合同、模块验证 CLI 和进程故障隔离；
 - 文件副本、指纹、任务进度、取消、人工确认、结果和历史；
 - 本地 SQLite、日志、诊断和平台目录；
@@ -52,6 +54,7 @@ powershell -ExecutionPolicy Bypass -File scripts/verify_installer.ps1
 ```
 
 便携版位于 `dist/BambooWorkbench/`，安装包位于 `installer-output/`。这些产物不会提交 Git。
+最终便携 ZIP 位于 `release-output/BambooWorkbench-Portable-0.1.0.zip`。
 
 ## 模块负责人入口
 

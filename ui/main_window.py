@@ -1,9 +1,12 @@
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon, QResizeEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
     QMessageBox,
+    QSizeGrip,
     QStackedWidget,
+    QVBoxLayout,
     QWidget,
 )
 
@@ -21,6 +24,7 @@ from ui.pages.result_center_page import ResultCenterPage
 from ui.pages.settings_page import SettingsPage
 from ui.pages.task_progress_page import TaskProgressPage
 from ui.pages.workbench_page import WorkbenchPage
+from ui.widgets.window_title_bar import WindowTitleBar
 
 
 class MainWindow(QMainWindow):
@@ -28,17 +32,31 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.context = context
         self.setWindowTitle("竹简工作台")
+        self.setWindowIcon(QIcon(str(context.resource_root / "logo" / "team-logo.png")))
+        self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
+        self.setMinimumSize(980, 660)
         self.resize(1180, 760)
 
         root = QWidget()
-        layout = QHBoxLayout(root)
+        root.setObjectName("appRoot")
+        shell_layout = QVBoxLayout(root)
+        shell_layout.setContentsMargins(8, 8, 8, 8)
+        shell_layout.setSpacing(0)
+        self.title_bar = WindowTitleBar(self)
+        shell_layout.addWidget(self.title_bar)
+
+        body = QWidget()
+        body.setObjectName("appBody")
+        body.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        layout = QHBoxLayout(body)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         resource_root = context.resource_root
-        self.navigation = Navigation(resource_root / "assets" / "brand" / "team-logo.svg")
+        self.navigation = Navigation(resource_root / "logo" / "team-logo.png")
         self.stack = QStackedWidget()
         self.stack.setObjectName("pageStack")
+        self.stack.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.workbench_page = WorkbenchPage(context.registry)
         self.history_page = HistoryPage(context.task_repository)
         self.confirmations_page = ConfirmationsPage()
@@ -80,7 +98,11 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self.navigation)
         layout.addWidget(self.stack, 1)
+        shell_layout.addWidget(body, 1)
         self.setCentralWidget(root)
+        self.size_grip = QSizeGrip(root)
+        self.size_grip.setObjectName("windowSizeGrip")
+        self.size_grip.resize(18, 18)
         self.navigation.page_selected.connect(self.navigate)
         self.workbench_page.module_selected.connect(self._open_module)
         self.module_task_page.task_requested.connect(self._start_task)
@@ -106,6 +128,18 @@ class MainWindow(QMainWindow):
             self._confirmation_job_ids.add(job_id)
             self.confirmations_page.load(job_id, result.confirmations)
         self.navigate(PageId.WORKBENCH)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        grip_size = self.size_grip.sizeHint()
+        self.size_grip.resize(grip_size)
+        self.size_grip.move(
+            self.centralWidget().width() - grip_size.width(),
+            self.centralWidget().height() - grip_size.height(),
+        )
+        self.size_grip.setVisible(not self.isMaximized())
+        self.size_grip.raise_()
+        self.title_bar.update_window_state()
 
     @staticmethod
     def _placeholder(page_id: PageId) -> QWidget:

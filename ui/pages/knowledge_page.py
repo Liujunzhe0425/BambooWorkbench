@@ -8,6 +8,9 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
+    QGridLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -47,12 +50,23 @@ class KnowledgePage(QWidget):
         self.setAccessibleName("知识库")
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(30, 24, 30, 28)
+        layout.setSpacing(16)
         title = QLabel("知识库")
-        title.setProperty("heading", True)
+        title.setProperty("pageTitle", True)
         self.message_label = QLabel(self.message)
+        self.message_label.setProperty("subtle", True)
         self.message_label.setAccessibleName("知识库接入状态")
 
+        search_card = QFrame()
+        search_card.setProperty("card", True)
+        search_layout = QVBoxLayout(search_card)
+        search_layout.setContentsMargins(20, 17, 20, 18)
+        search_layout.setSpacing(11)
+        search_title = QLabel("确定性知识检索")
+        search_title.setProperty("section", True)
         form = QFormLayout()
+        form.setHorizontalSpacing(18)
         self.namespace_combo = QComboBox()
         self.namespace_combo.setAccessibleName("知识库检索命名空间")
         for label, namespace in NAMESPACE_LABELS.items():
@@ -61,6 +75,7 @@ class KnowledgePage(QWidget):
         self.query_edit.setAccessibleName("知识检索关键词")
         self.query_edit.setPlaceholderText("输入规则、字段或案例关键词")
         self.search_button = QPushButton("检索")
+        self.search_button.setProperty("primary", True)
         self.search_button.setAccessibleName("检索本地知识")
         self.search_button.clicked.connect(self.search)
         form.addRow("知识域", self.namespace_combo)
@@ -69,6 +84,7 @@ class KnowledgePage(QWidget):
         self.results = QListWidget()
         self.results.setAccessibleName("知识检索结果")
         self.import_button = QPushButton("导入知识材料")
+        self.import_button.setProperty("secondary", True)
         self.import_button.setAccessibleName("导入本地知识材料")
         self.import_button.clicked.connect(self._choose_import)
         self.records_list = QListWidget()
@@ -83,17 +99,44 @@ class KnowledgePage(QWidget):
         self.namespace_list = QListWidget()
         self.namespace_list.setAccessibleName("知识库命名空间")
         self.namespace_list.addItems(self.namespaces)
+        self.namespace_list.hide()
 
         layout.addWidget(title)
         layout.addWidget(self.message_label)
-        layout.addLayout(form)
-        layout.addWidget(self.search_button)
-        layout.addWidget(QLabel("检索结果"))
-        layout.addWidget(self.results)
-        layout.addWidget(self.import_button)
-        layout.addWidget(QLabel("知识条目"))
-        layout.addWidget(self.records_list)
-        layout.addWidget(self.enabled_checkbox)
+        search_layout.addWidget(search_title)
+        search_layout.addLayout(form)
+        search_layout.addWidget(self.search_button)
+        layout.addWidget(search_card)
+
+        columns = QGridLayout()
+        columns.setHorizontalSpacing(14)
+        results_card = QFrame()
+        results_card.setProperty("card", True)
+        results_layout = QVBoxLayout(results_card)
+        results_layout.setContentsMargins(18, 16, 18, 18)
+        results_title = QLabel("检索结果")
+        results_title.setProperty("section", True)
+        results_layout.addWidget(results_title)
+        results_layout.addWidget(self.results, 1)
+
+        records_card = QFrame()
+        records_card.setProperty("card", True)
+        records_layout = QVBoxLayout(records_card)
+        records_layout.setContentsMargins(18, 16, 18, 18)
+        records_header = QHBoxLayout()
+        records_title = QLabel("知识条目")
+        records_title.setProperty("section", True)
+        records_header.addWidget(records_title)
+        records_header.addStretch()
+        records_header.addWidget(self.import_button)
+        records_layout.addLayout(records_header)
+        records_layout.addWidget(self.records_list, 1)
+        records_layout.addWidget(self.enabled_checkbox)
+        columns.addWidget(results_card, 0, 0)
+        columns.addWidget(records_card, 0, 1)
+        columns.setColumnStretch(0, 1)
+        columns.setColumnStretch(1, 1)
+        layout.addLayout(columns, 1)
         self.refresh_records()
 
     def lookup(self, namespace: str, query: str) -> list[KnowledgeRecord]:

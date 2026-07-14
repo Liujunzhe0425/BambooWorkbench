@@ -6,10 +6,12 @@ ROOT = Path(SPECPATH).resolve().parent
 DATAS = [
     (str(ROOT / "contracts"), "contracts"),
     (str(ROOT / "assets"), "assets"),
+    (str(ROOT / "logo"), "logo"),
     (str(ROOT / "resources"), "resources"),
     (str(ROOT / "mock_modules"), "mock_modules"),
 ]
 HIDDEN = collect_submodules("keyring.backends")
+APP_ICON = str(ROOT / "logo" / "BambooWorkbench.ico")
 
 main_analysis = Analysis(
     [str(ROOT / "app" / "__main__.py")],
@@ -27,6 +29,7 @@ main_exe = EXE(
     exclude_binaries=True,
     name="BambooWorkbench",
     console=False,
+    icon=APP_ICON,
     contents_directory=".",
 )
 
@@ -46,6 +49,7 @@ host_exe = EXE(
     exclude_binaries=True,
     name="BambooModuleHost",
     console=True,
+    icon=APP_ICON,
     contents_directory=".",
 )
 

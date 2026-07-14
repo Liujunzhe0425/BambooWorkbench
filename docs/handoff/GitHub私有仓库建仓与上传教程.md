@@ -1,6 +1,6 @@
 # BambooWorkbench GitHub 私有仓库建仓与上传教程
 
-> 适用时间：2026-07-13
+> 适用时间：2026-07-14
 > 本教程不会自动执行任何远程操作。按照下列步骤人工建立个人账号下的私有仓库。
 
 ## 0. 上传前准备
@@ -9,6 +9,9 @@
 2. 确认仓库本地路径为 `D:\Project\BambooWorkbench`；
 3. `.github\CODEOWNERS` 中的用户名占位符是预期状态，首次上传后按第 5 节通过 PR 统一替换；
 4. 不要把企业真实 Excel、日志、数据库、`.env` 或 API 密钥放入项目目录。
+5. 安装包、便携 ZIP、构建目录和界面验收截图已由 `.gitignore` 排除，不需要上传到源码仓库。
+
+上传前还应打开最终程序确认：左侧为深竹绿色导航、右侧为浅色卡片工作区，左上使用 `logo/team-logo.png`，启动时没有额外终端黑框。最终安装包位于 `installer-output`，便携 ZIP 位于 `release-output`。
 
 GitHub 官方特别建议：将已有本地仓库推送到新建远端仓库时，远端不要预先初始化 README、`.gitignore` 或 License，否则容易产生无关的首次历史冲突。参考 [Adding locally hosted code to GitHub](https://docs.github.com/en/migrations/importing-source-code/using-the-command-line-to-import-source-code/adding-locally-hosted-code-to-github)。
 
@@ -31,6 +34,7 @@ GitHub 官方特别建议：将已有本地仓库推送到新建远端仓库时�
 ```powershell
 Set-Location -LiteralPath 'D:\Project\BambooWorkbench'
 git status --short
+git log -1 --oneline
 git remote -v
 git remote add origin https://github.com/<你的账号>/BambooWorkbench.git
 git remote -v
@@ -46,6 +50,7 @@ git push -u origin module/after-sales
 - 请将 URL 里的 `<你的账号>` 替换为真实用户名；
 - 第一次推送时 Git Credential Manager 可能弹出浏览器登录，按提示授权即可；
 - `git status --short` 应无输出。如果出现不认识的数据文件，先停止并检查，不要执行 `git add .`；
+- `git log -1 --oneline` 应显示本次 v0.1.0 视觉修复与最终验收提交；
 - 如果已有名为 `origin` 的地址，不要再添加；先用 `git remote -v` 核对。地址错了可执行 `git remote set-url origin <正确URL>`。
 
 推送已有本地仓库的官方命令流程同样见 [GitHub 官方文档](https://docs.github.com/en/migrations/importing-source-code/using-the-command-line-to-import-source-code/adding-locally-hosted-code-to-github)。

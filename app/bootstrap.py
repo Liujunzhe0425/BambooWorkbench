@@ -3,6 +3,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from PySide6.QtGui import QColor, QFont, QIcon, QPalette
 from PySide6.QtWidgets import QApplication
 
 from core.ai.audit import ConsentAuditRepository
@@ -186,4 +187,22 @@ def create_application(argv: list[str] | None = None) -> QApplication:
     application = existing if isinstance(existing, QApplication) else QApplication(arguments)
     application.setApplicationName("竹简工作台")
     application.setOrganizationName("湖大智竹实践团队")
+    application.setStyle("Fusion")
+    application.setFont(QFont("Microsoft YaHei UI", 10))
+    palette = QPalette()
+    palette.setColor(QPalette.ColorRole.Window, QColor("#E8EFE7"))
+    palette.setColor(QPalette.ColorRole.WindowText, QColor("#294D3C"))
+    palette.setColor(QPalette.ColorRole.Base, QColor("#FFFDF8"))
+    palette.setColor(QPalette.ColorRole.AlternateBase, QColor("#F4F7F1"))
+    palette.setColor(QPalette.ColorRole.ToolTipBase, QColor("#FFFDF8"))
+    palette.setColor(QPalette.ColorRole.ToolTipText, QColor("#294D3C"))
+    palette.setColor(QPalette.ColorRole.Text, QColor("#294D3C"))
+    palette.setColor(QPalette.ColorRole.Button, QColor("#F4F1E2"))
+    palette.setColor(QPalette.ColorRole.ButtonText, QColor("#294D3C"))
+    palette.setColor(QPalette.ColorRole.Highlight, QColor("#2F7D62"))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#FFFDF8"))
+    application.setPalette(palette)
+    application.setWindowIcon(
+        QIcon(str(resolve_resource_root() / "logo" / "team-logo.png"))
+    )
     return application

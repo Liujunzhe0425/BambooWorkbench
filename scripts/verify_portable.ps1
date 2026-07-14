@@ -10,6 +10,8 @@ $Required = @(
     'BambooModuleHost.exe',
     'contracts\schemas\module-manifest.schema.json',
     'assets\brand\team-logo.svg',
+    'logo\team-logo.png',
+    'logo\BambooWorkbench.ico',
     'resources\themes\bamboo.qss',
     'mock_modules\moisture\module.json',
     'mock_modules\boiling\module.json',

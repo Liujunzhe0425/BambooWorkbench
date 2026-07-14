@@ -1,5 +1,5 @@
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QLabel, QProgressBar, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QLabel, QProgressBar, QPushButton, QVBoxLayout, QWidget
 
 from core.contracts.progress import ProgressEvent
 
@@ -9,11 +9,15 @@ class TaskProgressPage(QWidget):
 
     def __init__(self) -> None:
         super().__init__()
-        self.setObjectName("workflow-task-progress")
+        self.setObjectName("page-task-progress")
         self.current_job_id = ""
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(30, 24, 30, 28)
+        layout.setSpacing(16)
         title = QLabel("任务进度")
-        title.setProperty("heading", True)
+        title.setProperty("pageTitle", True)
+        subtitle = QLabel("处理过程保留状态与日志，可随时回到任务历史查看。")
+        subtitle.setProperty("subtle", True)
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setAccessibleName("任务完成进度")
@@ -23,10 +27,20 @@ class TaskProgressPage(QWidget):
         self.cancel_button.setAccessibleName("取消当前任务")
         self.cancel_button.setEnabled(False)
         self.cancel_button.clicked.connect(self._request_cancel)
+        card = QFrame()
+        card.setProperty("card", True)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(24, 24, 24, 24)
+        card_layout.setSpacing(16)
+        status = QLabel("正在处理")
+        status.setProperty("section", True)
+        card_layout.addWidget(status)
+        card_layout.addWidget(self.progress_bar)
+        card_layout.addWidget(self.message_label)
+        card_layout.addWidget(self.cancel_button)
         layout.addWidget(title)
-        layout.addWidget(self.progress_bar)
-        layout.addWidget(self.message_label)
-        layout.addWidget(self.cancel_button)
+        layout.addWidget(subtitle)
+        layout.addWidget(card)
         layout.addStretch()
 
     def bind(self, job_id: str) -> None:

@@ -1,24 +1,47 @@
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QFrame, QLabel, QPushButton, QVBoxLayout
 
 
-class ModuleCard(QWidget):
+class ModuleCard(QFrame):
     activated = Signal(object)
 
-    def __init__(self, module_id: object, title: str, registry: object) -> None:
+    def __init__(
+        self,
+        module_id: object,
+        title: str,
+        registry: object,
+        badge: str = "竹",
+        description: str = "模块接口已预留，可接入后生成统一成果。",
+    ) -> None:
         super().__init__()
         self.module_id = module_id
+        self.setProperty("card", True)
+        self.setProperty("moduleCard", True)
         self.setAccessibleName(f"{title}模块")
         self.setAccessibleDescription(f"打开{title}任务创建页面")
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 18, 20, 18)
+        layout.setSpacing(8)
+        self.badge_label = QLabel(badge)
+        self.badge_label.setObjectName("moduleBadge")
+        self.badge_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.badge_label.setFixedSize(38, 38)
         self.title_label = QLabel(title)
-        self.title_label.setProperty("heading", True)
+        self.title_label.setProperty("section", True)
+        self.description_label = QLabel(description)
+        self.description_label.setProperty("subtle", True)
+        self.description_label.setWordWrap(True)
         self.state_label = QLabel(self._state_text(registry, module_id))
-        self.open_button = QPushButton("开始使用")
+        self.state_label.setProperty("pill", True)
+        self.open_button = QPushButton("打开模块")
+        self.open_button.setProperty("secondary", True)
         self.open_button.setAccessibleName(f"打开{title}")
         self.open_button.clicked.connect(lambda checked=False: self.activated.emit(self.module_id))
+        layout.addWidget(self.badge_label)
         layout.addWidget(self.title_label)
+        layout.addWidget(self.description_label)
+        layout.addStretch()
         layout.addWidget(self.state_label)
         layout.addWidget(self.open_button)
 

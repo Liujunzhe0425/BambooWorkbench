@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
+    QFrame,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -30,24 +31,37 @@ class ConfirmationsPage(QWidget):
         self.remember_checks: dict[str, QCheckBox] = {}
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(30, 24, 30, 28)
+        layout.setSpacing(16)
         title = QLabel("待确认事项")
-        title.setProperty("heading", True)
+        title.setProperty("pageTitle", True)
+        subtitle = QLabel("只在规则边界、字段歧义或高风险判断出现时请求人工决定。")
+        subtitle.setProperty("subtle", True)
         self.status_label = QLabel("当前没有待确认事项")
+        self.status_label.setProperty("section", True)
         self.job_selector = QComboBox()
         self.job_selector.setAccessibleName("选择待确认任务")
         self.job_selector.currentIndexChanged.connect(self._selector_changed)
         self.form_host = QWidget()
         self.form_layout = QFormLayout(self.form_host)
+        self.form_layout.setVerticalSpacing(14)
         self.submit_button = QPushButton("提交确认")
         self.submit_button.setProperty("primary", True)
         self.submit_button.setAccessibleName("提交确认答案")
         self.submit_button.setEnabled(False)
         self.submit_button.clicked.connect(self._submit)
+        card = QFrame()
+        card.setProperty("card", True)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(22, 20, 22, 20)
+        card_layout.setSpacing(14)
+        card_layout.addWidget(self.status_label)
+        card_layout.addWidget(self.job_selector)
+        card_layout.addWidget(self.form_host)
+        card_layout.addWidget(self.submit_button, 0)
         layout.addWidget(title)
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.job_selector)
-        layout.addWidget(self.form_host)
-        layout.addWidget(self.submit_button)
+        layout.addWidget(subtitle)
+        layout.addWidget(card)
         layout.addStretch()
 
     def load(self, job_id: str, prompts: list[ConfirmationPrompt]) -> None:

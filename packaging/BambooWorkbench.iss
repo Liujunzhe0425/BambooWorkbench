@@ -17,6 +17,7 @@ SolidCompression=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 WizardStyle=modern
+SetupIconFile=..\logo\BambooWorkbench.ico
 UninstallDisplayIcon={app}\BambooWorkbench.exe
 
 [Files]
@@ -26,8 +27,8 @@ Source: "..\dist\BambooWorkbench\*"; DestDir: "{app}"; Flags: ignoreversion recu
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "附加快捷方式："; Flags: unchecked
 
 [Icons]
-Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\BambooWorkbench.exe"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\BambooWorkbench.exe"; Tasks: desktopicon
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\BambooWorkbench.exe"; IconFilename: "{app}\BambooWorkbench.exe"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\BambooWorkbench.exe"; IconFilename: "{app}\BambooWorkbench.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\BambooWorkbench.exe"; Description: "启动{#MyAppName}"; Flags: nowait postinstall skipifsilent

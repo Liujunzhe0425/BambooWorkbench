@@ -21,7 +21,13 @@ foreach ($Target in @($Build, $Dist)) {
 }
 
 $VenvPython = Join-Path $Root '.venv\Scripts\python.exe'
-$Python = if (Test-Path -LiteralPath $VenvPython -PathType Leaf) { $VenvPython } else { 'python' }
+$Python = if ($env:BAMBOO_PYTHON -and (Test-Path -LiteralPath $env:BAMBOO_PYTHON -PathType Leaf)) {
+    $env:BAMBOO_PYTHON
+} elseif (Test-Path -LiteralPath $VenvPython -PathType Leaf) {
+    $VenvPython
+} else {
+    'python'
+}
 & $Python -c 'import PyInstaller'
 if ($LASTEXITCODE -ne 0) {
     & $Python -m pip install -e '.[packaging]'

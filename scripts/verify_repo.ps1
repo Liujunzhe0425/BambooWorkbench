@@ -3,7 +3,9 @@ $Root = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 Set-Location -LiteralPath $Root
 
 $VenvPython = Join-Path $Root '.venv\Scripts\python.exe'
-$Python = if (Test-Path -LiteralPath $VenvPython -PathType Leaf) {
+$Python = if ($env:BAMBOO_PYTHON -and (Test-Path -LiteralPath $env:BAMBOO_PYTHON -PathType Leaf)) {
+    $env:BAMBOO_PYTHON
+} elseif (Test-Path -LiteralPath $VenvPython -PathType Leaf) {
     $VenvPython
 } else {
     'python'
@@ -20,7 +22,7 @@ function Invoke-Checked {
     }
 }
 
-Invoke-Checked $Python -m ruff check app core ui mock_modules tests
+Invoke-Checked $Python -m ruff check app core ui mock_modules scripts tests
 Invoke-Checked $Python -m pytest -q
 Invoke-Checked $Python -m app.tools.module_contract_cli validate mock_modules/moisture
 Invoke-Checked $Python -m app.tools.module_contract_cli validate mock_modules/boiling
