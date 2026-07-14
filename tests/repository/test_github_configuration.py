@@ -58,7 +58,6 @@ def test_dependabot_and_private_project_policy_files_exist() -> None:
         (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
     )
     assert {update["package-ecosystem"] for update in dependabot["updates"]} == {
-        "pip",
         "github-actions",
     }
     assert all(update["target-branch"] == "integration" for update in dependabot["updates"])
