@@ -22,7 +22,7 @@ jobs:
       - name: Build and verify portable bundle
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File scripts/build_portable.ps1
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: BambooWorkbench-windows-portable
           path: dist/BambooWorkbench
