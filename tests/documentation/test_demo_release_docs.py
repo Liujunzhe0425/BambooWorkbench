@@ -32,7 +32,7 @@ def test_framework_acceptance_report_records_scope_and_verification() -> None:
         ROOT / "docs/release/framework-acceptance-report-v0.1.0.md"
     ).read_text(encoding="utf-8")
     for phrase in (
-        "302 passed, 8 skipped",
+        "305 passed, 8 skipped",
         "安装包",
         "SHA-256",
         "空框架",
