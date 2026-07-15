@@ -59,13 +59,61 @@ def test_command_help_returns_cli_error_without_stdout() -> None:
     assert completed.stderr
 
 
-def test_missing_python_runtime_returns_environment_error() -> None:
+def test_explicit_python_without_schema_dependency_is_not_launched(tmp_path: Path) -> None:
+    fake_python = tmp_path / "python-without-jsonschema.cmd"
+    fake_python.write_text(
+        "@echo off\n"
+        'if "%~1"=="-c" exit /b 90\n'
+        'if "%~1"=="-m" exit /b 91\n'
+        "exit /b 92\n",
+        encoding="utf-8",
+    )
     env = os.environ.copy()
-    env.pop("BAMBOO_MODULE_PYTHON", None)
-    env["PATH"] = ""
+    env["BAMBOO_MODULE_PYTHON"] = str(fake_python)
+
+    completed = run_cli("self-check", env=env)
+
+    assert completed.returncode == 4
+    assert completed.stdout == ""
+    assert "jsonschema" in completed.stderr
+
+
+def test_explicit_missing_python_runtime_returns_environment_error(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["BAMBOO_MODULE_PYTHON"] = str(tmp_path / "missing-python.exe")
 
     completed = run_cli("self-check", env=env)
 
     assert completed.returncode == 4
     assert completed.stdout == ""
     assert "Python" in completed.stderr
+
+
+def test_launcher_probes_declared_schema_dependency() -> None:
+    launcher_text = LAUNCHER.read_text(encoding="utf-8")
+
+    assert "import jsonschema" in launcher_text
+
+
+def test_isolated_launcher_without_dependency_ready_python_returns_4(
+    tmp_path: Path,
+) -> None:
+    isolated_launcher = tmp_path / LAUNCHER.name
+    isolated_launcher.write_bytes(LAUNCHER.read_bytes())
+    env = os.environ.copy()
+    env.pop("BAMBOO_MODULE_PYTHON", None)
+    env["PATH"] = ""
+
+    completed = subprocess.run(
+        [str(isolated_launcher), "version"],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+    assert completed.returncode == 4
+    assert completed.stdout == ""
+    assert "jsonschema" in completed.stderr

@@ -17,8 +17,9 @@ python -m pip install -r requirements.txt
 ```
 
 启动脚本只把模块自身的 `src` 目录加入 `PYTHONPATH`。宿主可用
-`BAMBOO_MODULE_PYTHON` 指定 Python 可执行文件；否则脚本依次尝试 `py -3` 和
-PATH 中的 `python`，不会访问网络。
+`BAMBOO_MODULE_PYTHON` 指定 Python 可执行文件；未显式指定时，脚本依次尝试模块
+本地虚拟环境、仓库开发虚拟环境、PATH 中的 `python`、`py -3.12` 和 `py -3`。
+启动器只会选择能导入已声明 `jsonschema` 依赖的解释器，探测过程不会访问网络。
 
 ## 当前命令
 
