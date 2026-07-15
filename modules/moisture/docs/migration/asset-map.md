@@ -114,15 +114,15 @@
 | `moisture/tests/fixtures/__init__.py` | 按需重建 fixture 包，不复制 | `modules/moisture/tests/fixtures/__init__.py` | T09；无业务断言。 |
 | `moisture/tests/fixtures/workbook_factory.py` | 仅测试；保留合成 workbook、公式缓存/格式操控能力 | `modules/moisture/tests/fixtures/workbook_factory.py` | T09/T11；不得包含客户原始表。 |
 | `moisture/tests/contract/llm/conftest.py` | 仅提取 bounded candidate/experience fixture | `modules/moisture/tests/fixtures/service_requests.py` | T17/T19；去 Provider profile。 |
-| `moisture/tests/contract/llm/test_gateway.py` | 仅提取最小 payload、预算、规则/证据/方向/字段/数值绑定、禁止责任结论 | `modules/moisture/tests/unit/test_ai_request_builder.py`、`test_service_response_validator.py` | T17/T19；gateway retry、HTTP 4xx/5xx、Provider confidence 配置不迁。 |
+| `moisture/tests/contract/llm/test_gateway.py` | 仅提取最小 payload、预算、规则/证据/方向/字段/数值绑定、禁止责任结论 | `modules/moisture/tests/unit/test_ai_request_builder.py`、`modules/moisture/tests/unit/test_service_response_validator.py` | T17/T19；gateway retry、HTTP 4xx/5xx、Provider confidence 配置不迁。 |
 | `moisture/tests/contract/llm/test_openai_compatible.py` | 不迁移 | 无 | T20；HTTPX、Azure/OpenAI 格式、API Key、Retry-After、日志 filter 整组禁止。 |
 | `moisture/tests/contract/llm/test_provider_factory.py` | 不迁移 | 无 | T20；Provider factory/env API Key 整组禁止。 |
-| `moisture/tests/integration/ai/test_ai_review.py` | 仅提取 deterministic request、隔离降级、精确证据绑定、橙绿→红蓝业务状态 | `modules/moisture/tests/integration/test_finalize_service_responses.py`、unit request tests | T17/T19；每候选 Provider call、UUID/time audit、进程内 gateway 不迁。 |
+| `moisture/tests/integration/ai/test_ai_review.py` | 仅提取 deterministic request、隔离降级、精确证据绑定、橙绿→红蓝业务状态 | `modules/moisture/tests/integration/test_finalize_service_responses.py`、`modules/moisture/tests/unit/test_ai_request_builder.py` | T17/T19；每候选 Provider call、UUID/time audit、进程内 gateway 不迁。 |
 | `moisture/tests/integration/excel/test_source_parser.py` | 保留并适配 1/2/6/10、11 失败、sheet/header、公式、metadata、hash、源文件不变 | `modules/moisture/tests/integration/excel/test_source_parser.py` | T08/T09；去旧路径/JobConfig。 |
 | `moisture/tests/integration/experience/test_local_markdown.py` | 仅提取 published/approved、Schema、scope、冲突、path/symlink、安全读取、排序 | `modules/moisture/tests/unit/experience/test_local_approved_repository.py` | T12；在线写入/用户治理不增加。 |
 | `moisture/tests/integration/output/conftest.py` | 仅测试；按新内部模型重建 run result fixture | `modules/moisture/tests/fixtures/run_results.py` | T05/T11/T13；旧 Result DTO 不迁。 |
 | `moisture/tests/integration/output/test_markdown_writer.py` | 保留并适配章节、引用、降级和空经验 | `modules/moisture/tests/integration/output/test_markdown_writer.py` | T13；去旧责任/Provider 文案。 |
-| `moisture/tests/integration/output/test_result_writer.py` | 仅提取原子替换、temp 清理、计数一致性和 Schema-before-write 意图 | `modules/moisture/tests/contract/test_atomic_result.py`、`test_result_mapper.py` | T05；旧 result schema/字段断言不迁。 |
+| `moisture/tests/integration/output/test_result_writer.py` | 仅提取原子替换、temp 清理、计数一致性和 Schema-before-write 意图 | `modules/moisture/tests/contract/test_atomic_result.py`、`modules/moisture/tests/contract/test_result_mapper.py` | T05；旧 result schema/字段断言不迁。 |
 | `moisture/tests/integration/output/test_summary_writer.py` | 保留并适配五表、图表、确定性、公式注入防护、颜色/格式、temp 清理 | `modules/moisture/tests/integration/output/test_xlsx_writer.py` | T11；颜色 severity 按正式计划。 |
 | `moisture/tests/integration/rules/test_local_repository.py` | 仅提取 read/Schema/hash、安全路径、生产 parser 联动 | `modules/moisture/tests/unit/rules/test_package_loader.py` | T10；publish、active pointer、audit、simulation lifecycle 不进 runtime。 |
 | `moisture/tests/unit/domain/test_formula_verification.py` | 保留并适配全部 Decimal 公式边界 | `modules/moisture/tests/unit/domain/test_formula_verification.py` | T07；旧期望是迁移基线，不是业务批准。 |
