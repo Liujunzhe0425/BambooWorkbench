@@ -133,9 +133,38 @@ def _load_job(job_path: Path) -> dict[str, Any]:
     return payload
 
 
+def _resolve_bootstrap_path(path: Path, field: str) -> Path:
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError) as exc:
+        raise JobValidationError(f"{field} cannot be resolved") from exc
+
+
+def _validate_bootstrap_paths(job_path: Path, job: dict[str, Any]) -> None:
+    resolved_job = _resolve_bootstrap_path(job_path, "job path")
+    resolved_inputs = [
+        _resolve_bootstrap_path(Path(path), "input path") for path in job["input_files"]
+    ]
+    if any(path.suffix.lower() != ".xlsx" for path in resolved_inputs):
+        raise JobValidationError("input_files must contain only .xlsx files")
+
+    resolved_output_dir = _resolve_bootstrap_path(Path(job["output_dir"]), "output_dir")
+    result_target = _resolve_bootstrap_path(
+        resolved_output_dir / "result.json", "result target"
+    )
+    if result_target == resolved_job or result_target in resolved_inputs:
+        raise JobValidationError("result target must not overwrite job or input files")
+    if resolved_output_dir == resolved_job.parent:
+        raise JobValidationError("output_dir must not overlap the job directory")
+    if any(resolved_output_dir == path.parent for path in resolved_inputs):
+        raise JobValidationError("output_dir must not overlap an input directory")
+
+
 def _run(job_path: Path) -> int:
     try:
-        job = _load_job(job_path)
+        resolved_job_path = _resolve_bootstrap_path(job_path, "job path")
+        job = _load_job(resolved_job_path)
+        _validate_bootstrap_paths(resolved_job_path, job)
     except JobValidationError as exc:
         sys.stderr.write(f"moisture run: invalid job: {exc}\n")
         return 2
