@@ -43,6 +43,22 @@ def test_unknown_command_returns_cli_error() -> None:
     assert completed.stderr
 
 
+def test_top_level_help_returns_cli_error_without_stdout() -> None:
+    completed = run_cli("--help")
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert completed.stderr
+
+
+def test_command_help_returns_cli_error_without_stdout() -> None:
+    completed = run_cli("version", "--help")
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert completed.stderr
+
+
 def test_missing_python_runtime_returns_environment_error() -> None:
     env = os.environ.copy()
     env.pop("BAMBOO_MODULE_PYTHON", None)

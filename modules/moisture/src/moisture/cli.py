@@ -9,7 +9,7 @@ from moisture.infrastructure.diagnostics import collect_runtime_issues
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="moisture")
+    parser = argparse.ArgumentParser(prog="moisture", add_help=False)
     parser.add_argument("command", choices=("version", "self-check"))
     return parser
 
