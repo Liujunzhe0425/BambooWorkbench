@@ -1,4 +1,5 @@
 import json
+import tomllib
 from pathlib import Path
 
 import jsonschema
@@ -40,3 +41,18 @@ def test_manifest_entrypoint_and_minimum_package_exist() -> None:
         "src/moisture/infrastructure/diagnostics.py",
     ):
         assert (MODULE_ROOT / relative_path).is_file(), relative_path
+
+
+def test_schema_validation_dependency_is_declared_consistently() -> None:
+    expected = ["jsonschema>=4.23,<5"]
+    requirements = [
+        line.strip()
+        for line in (MODULE_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    pyproject = tomllib.loads(
+        (MODULE_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    )
+
+    assert requirements == expected
+    assert pyproject["project"]["dependencies"] == expected

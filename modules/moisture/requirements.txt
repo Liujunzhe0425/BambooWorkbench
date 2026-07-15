@@ -1,1 +1,1 @@
-# T02 has no third-party runtime dependencies.
+jsonschema>=4.23,<5
