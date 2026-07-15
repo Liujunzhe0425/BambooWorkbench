@@ -19,6 +19,23 @@ def run_cli(*arguments: str, env: dict[str, str] | None = None) -> subprocess.Co
     )
 
 
+def run_isolated_cli(
+    launcher: Path,
+    *arguments: str,
+    env: dict[str, str],
+) -> subprocess.CompletedProcess[str]:
+    command_processor = Path(env["SYSTEMROOT"]) / "System32" / "cmd.exe"
+    return subprocess.run(
+        [str(command_processor), "/d", "/c", str(launcher), *arguments],
+        cwd=launcher.parent,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+
+
 def test_version_writes_only_semver_to_stdout() -> None:
     completed = run_cli("version")
 
@@ -117,3 +134,71 @@ def test_isolated_launcher_without_dependency_ready_python_returns_4(
     assert completed.returncode == 4
     assert completed.stdout == ""
     assert "jsonschema" in completed.stderr
+
+
+def test_path_python_cmd_probe_failure_does_not_launch_module(tmp_path: Path) -> None:
+    isolated_root = tmp_path / "isolated"
+    isolated_root.mkdir()
+    isolated_launcher = isolated_root / LAUNCHER.name
+    isolated_launcher.write_bytes(LAUNCHER.read_bytes())
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    marker = tmp_path / "python-module-launched.txt"
+    (shims / "python.cmd").write_text(
+        "@echo off\n"
+        'if "%~1"=="-c" exit /b 90\n'
+        'if "%~1"=="-m" (\n'
+        '  >"%SHIM_LAUNCH_MARKER%" echo launched\n'
+        "  exit /b 91\n"
+        ")\n"
+        "exit /b 92\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env.pop("BAMBOO_MODULE_PYTHON", None)
+    env["PATH"] = str(shims)
+    env["SHIM_LAUNCH_MARKER"] = str(marker)
+
+    completed = run_isolated_cli(isolated_launcher, "version", env=env)
+
+    assert completed.returncode == 4
+    assert completed.stdout == ""
+    assert "jsonschema" in completed.stderr
+    assert not marker.exists()
+
+
+def test_path_python_cmd_probe_failure_falls_back_to_py_cmd(tmp_path: Path) -> None:
+    isolated_root = tmp_path / "isolated"
+    isolated_root.mkdir()
+    isolated_launcher = isolated_root / LAUNCHER.name
+    isolated_launcher.write_bytes(LAUNCHER.read_bytes())
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    (shims / "python.cmd").write_text(
+        "@echo off\n"
+        'if "%~1"=="-c" exit /b 90\n'
+        'if "%~1"=="-m" exit /b 91\n'
+        "exit /b 92\n",
+        encoding="utf-8",
+    )
+    (shims / "py.cmd").write_text(
+        "@echo off\n"
+        'if "%~1"=="-3.12" if "%~2"=="-c" exit /b 0\n'
+        'if "%~1"=="-3.12" if "%~2"=="-m" (\n'
+        '  if "%~3"=="moisture.cli" if "%~4"=="version" (\n'
+        "    echo 0.1.0\n"
+        "    exit /b 0\n"
+        "  )\n"
+        ")\n"
+        "exit /b 92\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env.pop("BAMBOO_MODULE_PYTHON", None)
+    env["PATH"] = str(shims)
+
+    completed = run_isolated_cli(isolated_launcher, "version", env=env)
+
+    assert completed.returncode == 0
+    assert re.fullmatch(r"\d+\.\d+\.\d+\n", completed.stdout)
+    assert completed.stderr == ""

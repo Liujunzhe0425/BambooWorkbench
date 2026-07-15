@@ -22,15 +22,15 @@ if exist "%~dp0..\..\.venv\Scripts\python.exe" (
 
 "%SystemRoot%\System32\where.exe" python >nul 2>nul
 if not errorlevel 1 (
-  python -c "import jsonschema" >nul 2>nul
+  call python -c "import jsonschema" >nul 2>nul
   if not errorlevel 1 goto path_python
 )
 
 "%SystemRoot%\System32\where.exe" py >nul 2>nul
 if not errorlevel 1 (
-  py -3.12 -c "import jsonschema" >nul 2>nul
+  call py -3.12 -c "import jsonschema" >nul 2>nul
   if not errorlevel 1 goto py_312
-  py -3 -c "import jsonschema" >nul 2>nul
+  call py -3 -c "import jsonschema" >nul 2>nul
   if not errorlevel 1 goto py_3
 )
 
@@ -47,7 +47,7 @@ if errorlevel 1 (
   >&2 echo BAMBOO_MODULE_PYTHON cannot import required dependency jsonschema.
   exit /b 4
 )
-call "%BAMBOO_MODULE_PYTHON%" -m moisture.cli %*
+"%BAMBOO_MODULE_PYTHON%" -m moisture.cli %*
 exit /b %ERRORLEVEL%
 
 :module_venv
