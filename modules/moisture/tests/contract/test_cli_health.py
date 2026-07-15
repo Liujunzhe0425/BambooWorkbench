@@ -1,6 +1,7 @@
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 MODULE_ROOT = Path(__file__).resolve().parents[2]
@@ -34,6 +35,49 @@ def run_isolated_cli(
         text=True,
         encoding="utf-8",
     )
+
+
+def write_fake_python_runtime(
+    directory: Path,
+    name: str,
+    *,
+    supported: bool,
+) -> Path:
+    driver = directory / f"{name}-driver.py"
+    driver.write_text(
+        "import os\n"
+        "import pathlib\n"
+        "import sys\n"
+        "\n"
+        "arguments = sys.argv[1:]\n"
+        "if arguments and arguments[0] in {'-3.12', '-3'}:\n"
+        "    arguments = arguments[1:]\n"
+        "if arguments and arguments[0] == '-c':\n"
+        "    probe = arguments[1]\n"
+        "    if 'sys.version_info' in probe and 'import jsonschema' in probe:\n"
+        f"        raise SystemExit({0 if supported else 90})\n"
+        "    if probe.strip() == 'import jsonschema':\n"
+        "        raise SystemExit(0)\n"
+        "    raise SystemExit(92)\n"
+        "if arguments and arguments[0] == '-m':\n"
+        "    marker = os.environ.get('SHIM_LAUNCH_MARKER')\n"
+        "    if marker:\n"
+        "        pathlib.Path(marker).write_text('launched', encoding='utf-8')\n"
+        f"    if {supported!r} and arguments[1:] == ['moisture.cli', 'version']:\n"
+        "        print('0.1.0')\n"
+        "        raise SystemExit(0)\n"
+        "    raise SystemExit(91)\n"
+        "raise SystemExit(93)\n",
+        encoding="utf-8",
+    )
+    shim = directory / name
+    shim.write_text(
+        "@echo off\n"
+        f'"%FAKE_PYTHON_DRIVER%" "{driver}" %*\n'
+        "exit /b %ERRORLEVEL%\n",
+        encoding="utf-8",
+    )
+    return shim
 
 
 def test_version_writes_only_semver_to_stdout() -> None:
@@ -95,6 +139,27 @@ def test_explicit_python_without_schema_dependency_is_not_launched(tmp_path: Pat
     assert "jsonschema" in completed.stderr
 
 
+def test_explicit_python_below_3_11_is_not_launched(tmp_path: Path) -> None:
+    marker = tmp_path / "explicit-module-launched.txt"
+    fake_python = write_fake_python_runtime(
+        tmp_path,
+        "python-3.10.cmd",
+        supported=False,
+    )
+    env = os.environ.copy()
+    env["BAMBOO_MODULE_PYTHON"] = str(fake_python)
+    env["FAKE_PYTHON_DRIVER"] = sys.executable
+    env["SHIM_LAUNCH_MARKER"] = str(marker)
+
+    completed = run_cli("version", env=env)
+
+    assert completed.returncode == 4
+    assert completed.stdout == ""
+    assert "Python" in completed.stderr
+    assert "3.11" in completed.stderr
+    assert not marker.exists()
+
+
 def test_explicit_missing_python_runtime_returns_environment_error(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["BAMBOO_MODULE_PYTHON"] = str(tmp_path / "missing-python.exe")
@@ -110,6 +175,8 @@ def test_launcher_probes_declared_schema_dependency() -> None:
     launcher_text = LAUNCHER.read_text(encoding="utf-8")
 
     assert "import jsonschema" in launcher_text
+    assert "sys.version_info" in launcher_text
+    assert "(3, 11)" in launcher_text
 
 
 def test_isolated_launcher_without_dependency_ready_python_returns_4(
@@ -202,3 +269,27 @@ def test_path_python_cmd_probe_failure_falls_back_to_py_cmd(tmp_path: Path) -> N
     assert completed.returncode == 0
     assert re.fullmatch(r"\d+\.\d+\.\d+\n", completed.stdout)
     assert completed.stderr == ""
+
+
+def test_path_python_below_3_11_falls_back_to_supported_py_cmd(tmp_path: Path) -> None:
+    isolated_root = tmp_path / "isolated"
+    isolated_root.mkdir()
+    isolated_launcher = isolated_root / LAUNCHER.name
+    isolated_launcher.write_bytes(LAUNCHER.read_bytes())
+    shims = tmp_path / "shims"
+    shims.mkdir()
+    marker = tmp_path / "selected-runtime.txt"
+    write_fake_python_runtime(shims, "python.cmd", supported=False)
+    write_fake_python_runtime(shims, "py.cmd", supported=True)
+    env = os.environ.copy()
+    env.pop("BAMBOO_MODULE_PYTHON", None)
+    env["PATH"] = str(shims)
+    env["FAKE_PYTHON_DRIVER"] = sys.executable
+    env["SHIM_LAUNCH_MARKER"] = str(marker)
+
+    completed = run_isolated_cli(isolated_launcher, "version", env=env)
+
+    assert completed.returncode == 0
+    assert completed.stdout == "0.1.0\n"
+    assert completed.stderr == ""
+    assert marker.read_text(encoding="utf-8") == "launched"
