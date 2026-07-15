@@ -48,6 +48,19 @@ def test_invalid_cli_returns_2() -> None:
         assert completed.stderr
 
 
+def test_existing_relative_job_path_returns_2_before_progress_or_output(
+    tmp_path: Path,
+) -> None:
+    _, output_dir, _ = valid_job(tmp_path)
+
+    completed = run_cli("run", "--job", "job.json", cwd=tmp_path)
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert completed.stderr
+    assert not (output_dir / "result.json").exists()
+
+
 @pytest.mark.parametrize(
     ("replacement", "diagnostic"),
     [

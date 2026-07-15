@@ -162,6 +162,8 @@ def _validate_bootstrap_paths(job_path: Path, job: dict[str, Any]) -> None:
 
 def _run(job_path: Path) -> int:
     try:
+        if not job_path.is_absolute():
+            raise JobValidationError("--job must be an absolute path")
         resolved_job_path = _resolve_bootstrap_path(job_path, "job path")
         job = _load_job(resolved_job_path)
         _validate_bootstrap_paths(resolved_job_path, job)
