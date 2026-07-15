@@ -9,7 +9,8 @@ T03 的 `run --job` 进程合同。
 - Windows
 - Python 3.11 或更高版本
 
-模块当前没有第三方运行时依赖。可在模块目录中执行：
+`jsonschema` 是模块的 Schema 校验依赖；紧随其后的 `requirements.txt` 安装命令会安装该依赖。
+可在模块目录中执行：
 
 ```powershell
 python -m pip install -r requirements.txt

@@ -56,3 +56,13 @@ def test_schema_validation_dependency_is_declared_consistently() -> None:
 
     assert requirements == expected
     assert pyproject["project"]["dependencies"] == expected
+
+
+def test_readme_documents_schema_validation_dependency() -> None:
+    readme = (MODULE_ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "没有第三方运行时依赖" not in readme
+    assert (
+        "`jsonschema` 是模块的 Schema 校验依赖；紧随其后的 "
+        "`requirements.txt` 安装命令会安装该依赖。"
+    ) in readme
