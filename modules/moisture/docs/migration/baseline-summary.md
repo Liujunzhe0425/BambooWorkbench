@@ -21,11 +21,12 @@
 
 T00 开始时工作树已有以下未跟踪内容，均由其他任务产生并保持不动：
 
-- 根目录实施计划 Markdown；
+- 根目录 `竹丝水分模块重构实施计划.md`；
+- 根目录 `迁移架构.md`；
 - `modules/moisture/docs/migration/asset-map.md`；
 - `modules/moisture/docs/migration/behavior-invariants.md`。
 
-这些文件与 T00 的两个目标文件不冲突。本 Task 未执行清理、reset、checkout、stash 或历史改写。
+以上四个路径与 T00 的两个目标文件不冲突，均未清理、未修改、未暂存或纳入 T00 提交。本 Task 未执行 reset、checkout、stash 或历史改写。
 
 ## 3. 权威机器 Schema 指纹
 
@@ -86,7 +87,95 @@ mock 的 `module.json` 声明：
 - mock 登记 3 个 artifacts；
 - 第一条 progress 为 25%，最后一条为 100%。
 
-### 4.4 mock 源码中的代表性故障行为
+### 4.4 可复现 PowerShell 采样模板
+
+以下模板从仓库根运行，不包含开发机或客户绝对路径。它只在系统临时目录创建空的合成 `.xlsx`、合法 draft job、非法 JSON 和输出目录；仓库 `.venv\Scripts` 仅临时加入当前进程 PATH。`PYTHONUTF8`、`PYTHONIOENCODING` 和显式 UTF-8 读写避免 PowerShell 默认代码页造成误判；每次调用分别保留 stdout、stderr 和退出码，并在 `finally` 中恢复环境和清理临时目录。
+
+```powershell
+$repo = (Resolve-Path .).Path
+$runner = Join-Path $repo "mock_modules\moisture\run_module.bat"
+$venvScripts = Join-Path $repo ".venv\Scripts"
+$tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("bamboo-moisture-mock-" + [guid]::NewGuid().ToString("N"))
+$utf8 = New-Object Text.UTF8Encoding($false)
+$oldPath = [Environment]::GetEnvironmentVariable("PATH", "Process")
+$oldPythonUtf8 = [Environment]::GetEnvironmentVariable("PYTHONUTF8", "Process")
+$oldPythonIoEncoding = [Environment]::GetEnvironmentVariable("PYTHONIOENCODING", "Process")
+
+function Invoke-MockSample {
+    param([Parameter(Mandatory = $true)][string[]]$CommandArgs)
+
+    $sampleId = [guid]::NewGuid().ToString("N")
+    $stdoutPath = Join-Path $tempRoot ("stdout-" + $sampleId + ".txt")
+    $stderrPath = Join-Path $tempRoot ("stderr-" + $sampleId + ".txt")
+    $argumentLine = ($CommandArgs | ForEach-Object { '"' + $_ + '"' }) -join " "
+    $process = Start-Process -FilePath $runner -ArgumentList $argumentLine `
+        -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    [pscustomobject]@{
+        ExitCode = $process.ExitCode
+        Stdout = [IO.File]::ReadAllText($stdoutPath, $utf8)
+        Stderr = [IO.File]::ReadAllText($stderrPath, $utf8)
+    }
+}
+
+try {
+    if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { throw "mock runner not found" }
+    if (-not (Test-Path -LiteralPath (Join-Path $venvScripts "python.exe") -PathType Leaf)) { throw "repository venv not found" }
+    New-Item -ItemType Directory -Path $tempRoot | Out-Null
+    [Environment]::SetEnvironmentVariable("PATH", $venvScripts + [IO.Path]::PathSeparator + $oldPath, "Process")
+    [Environment]::SetEnvironmentVariable("PYTHONUTF8", "1", "Process")
+    [Environment]::SetEnvironmentVariable("PYTHONIOENCODING", "utf-8", "Process")
+
+    $inputPath = Join-Path $tempRoot "synthetic.xlsx"
+    $outputDir = Join-Path $tempRoot "output"
+    $jobPath = Join-Path $tempRoot "job.json"
+    $invalidJobPath = Join-Path $tempRoot "invalid-job.json"
+    [IO.File]::WriteAllBytes($inputPath, [byte[]]@())
+    $job = [ordered]@{
+        schema_version = "1.0"
+        job_id = "mock-baseline-001"
+        module_id = "moisture"
+        phase = "draft"
+        run_mode = "single"
+        input_files = @($inputPath)
+        output_dir = $outputDir
+    }
+    [IO.File]::WriteAllText($jobPath, ($job | ConvertTo-Json -Depth 5), $utf8)
+    [IO.File]::WriteAllText($invalidJobPath, "{not-json", $utf8)
+
+    $version = Invoke-MockSample -CommandArgs @("version")
+    $selfCheck = Invoke-MockSample -CommandArgs @("self-check")
+    $missingJob = Invoke-MockSample -CommandArgs @("run")
+    $validJob = Invoke-MockSample -CommandArgs @("run", "--job", $jobPath)
+    $invalidJob = Invoke-MockSample -CommandArgs @("run", "--job", $invalidJobPath)
+
+    $progress = @($validJob.Stdout -split "`r?`n" | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+    $result = [IO.File]::ReadAllText((Join-Path $outputDir "result.json"), $utf8) | ConvertFrom-Json
+    if ($version.ExitCode -ne 0 -or $version.Stdout.Trim() -ne "0.1.0" -or $version.Stderr) { throw "version sample mismatch" }
+    if ($selfCheck.ExitCode -ne 0 -or $selfCheck.Stdout.Trim() -ne "ok" -or $selfCheck.Stderr) { throw "self-check sample mismatch" }
+    if ($missingJob.ExitCode -ne 2 -or $missingJob.Stdout -or -not $missingJob.Stderr) { throw "missing-job sample mismatch" }
+    if ($validJob.ExitCode -ne 0 -or $validJob.Stderr -or $progress.Count -ne 2 -or $progress[0].percent -ne 25 -or $progress[-1].percent -ne 100) { throw "valid-job sample mismatch" }
+    if ($result.status -ne "success" -or $result.outputs.Count -ne 3) { throw "result.json sample mismatch" }
+    if ($invalidJob.ExitCode -ne 2 -or $invalidJob.Stdout -or -not $invalidJob.Stderr) { throw "invalid-json sample mismatch" }
+
+    @(
+        [pscustomobject]@{ Sample = "version"; ExitCode = $version.ExitCode; Stdout = $version.Stdout; Stderr = $version.Stderr }
+        [pscustomobject]@{ Sample = "self-check"; ExitCode = $selfCheck.ExitCode; Stdout = $selfCheck.Stdout; Stderr = $selfCheck.Stderr }
+        [pscustomobject]@{ Sample = "run missing --job"; ExitCode = $missingJob.ExitCode; Stdout = $missingJob.Stdout; Stderr = $missingJob.Stderr }
+        [pscustomobject]@{ Sample = "run valid job"; ExitCode = $validJob.ExitCode; Stdout = $validJob.Stdout; Stderr = $validJob.Stderr }
+        [pscustomobject]@{ Sample = "run invalid JSON"; ExitCode = $invalidJob.ExitCode; Stdout = $invalidJob.Stdout; Stderr = $invalidJob.Stderr }
+    ) | Format-List
+    [pscustomobject]@{ ResultStatus = $result.status; ArtifactCount = $result.outputs.Count } | Format-List
+}
+finally {
+    [Environment]::SetEnvironmentVariable("PATH", $oldPath, "Process")
+    [Environment]::SetEnvironmentVariable("PYTHONUTF8", $oldPythonUtf8, "Process")
+    [Environment]::SetEnvironmentVariable("PYTHONIOENCODING", $oldPythonIoEncoding, "Process")
+    if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+}
+```
+
+### 4.5 mock 源码中的代表性故障行为
 
 只读检查 `mock_modules/common/cli.py` 和 `scenarios.py` 得到：
 

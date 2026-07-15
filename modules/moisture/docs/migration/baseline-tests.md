@@ -16,7 +16,7 @@
 | 检查 | 命令 | 结果 |
 |---|---|---|
 | 分支 | `git branch --show-current` | `module/moisture` |
-| 工作树 | `git status --short` | 存在预先已有且不冲突的未跟踪计划/T01 文档；未清理 |
+| 工作树 | `git status --short` | 四个预先已有的未跟踪路径：根 `竹丝水分模块重构实施计划.md`、根 `迁移架构.md`、`modules/moisture/docs/migration/asset-map.md`、`modules/moisture/docs/migration/behavior-invariants.md`；均未清理、未修改、未暂存或纳入 T00 |
 | HEAD | `git rev-parse HEAD` | `1b961a1bf9c2966b568282828de3eb5b4c66cd2b` |
 | Python 路径 | `.\.venv\Scripts\python.exe -c "import sys; print(sys.executable)"` | 来自仓库 `.venv` |
 | Python 版本 | `.\.venv\Scripts\python.exe --version` | 3.12.7 |
@@ -115,6 +115,94 @@ powershell -ExecutionPolicy Bypass -File scripts\verify_repo.ps1
 | 非法 JSON job | exit 2，stdout 空，stderr 为 ValidationError 摘要 |
 
 一次用于合并采样的 PowerShell 包装命令在启动 mock 前被本机防病毒策略拦截；拆分为简单命令后逐项复核均得到表中结果。另一次用 UTF-8 强制解码 Windows 重定向的 stdout 时遇到本地代码页不匹配；直接检查通道内容仍确认两条合法 JSON Lines。两项均属于采样工具/环境关注项，不是 mock 断言失败、mock 进程错误或外部超时。
+
+### 6.1 可复现 PowerShell 模板
+
+以下模板从仓库根运行，不含开发机或客户绝对路径。它将仓库 `.venv\Scripts` 临时加入当前进程 PATH，在系统临时目录生成空的合成 `.xlsx`、合法 draft job 和非法 JSON，分别捕获五次调用的 stdout、stderr 和退出码，以显式 UTF-8 解析 progress JSON Lines 与 `result.json`，最后恢复环境并清理临时目录。
+
+```powershell
+$repo = (Resolve-Path .).Path
+$runner = Join-Path $repo "mock_modules\moisture\run_module.bat"
+$venvScripts = Join-Path $repo ".venv\Scripts"
+$tempRoot = Join-Path ([IO.Path]::GetTempPath()) ("bamboo-moisture-mock-" + [guid]::NewGuid().ToString("N"))
+$utf8 = New-Object Text.UTF8Encoding($false)
+$oldPath = [Environment]::GetEnvironmentVariable("PATH", "Process")
+$oldPythonUtf8 = [Environment]::GetEnvironmentVariable("PYTHONUTF8", "Process")
+$oldPythonIoEncoding = [Environment]::GetEnvironmentVariable("PYTHONIOENCODING", "Process")
+
+function Invoke-MockSample {
+    param([Parameter(Mandatory = $true)][string[]]$CommandArgs)
+
+    $sampleId = [guid]::NewGuid().ToString("N")
+    $stdoutPath = Join-Path $tempRoot ("stdout-" + $sampleId + ".txt")
+    $stderrPath = Join-Path $tempRoot ("stderr-" + $sampleId + ".txt")
+    $argumentLine = ($CommandArgs | ForEach-Object { '"' + $_ + '"' }) -join " "
+    $process = Start-Process -FilePath $runner -ArgumentList $argumentLine `
+        -NoNewWindow -Wait -PassThru `
+        -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+    [pscustomobject]@{
+        ExitCode = $process.ExitCode
+        Stdout = [IO.File]::ReadAllText($stdoutPath, $utf8)
+        Stderr = [IO.File]::ReadAllText($stderrPath, $utf8)
+    }
+}
+
+try {
+    if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) { throw "mock runner not found" }
+    if (-not (Test-Path -LiteralPath (Join-Path $venvScripts "python.exe") -PathType Leaf)) { throw "repository venv not found" }
+    New-Item -ItemType Directory -Path $tempRoot | Out-Null
+    [Environment]::SetEnvironmentVariable("PATH", $venvScripts + [IO.Path]::PathSeparator + $oldPath, "Process")
+    [Environment]::SetEnvironmentVariable("PYTHONUTF8", "1", "Process")
+    [Environment]::SetEnvironmentVariable("PYTHONIOENCODING", "utf-8", "Process")
+
+    $inputPath = Join-Path $tempRoot "synthetic.xlsx"
+    $outputDir = Join-Path $tempRoot "output"
+    $jobPath = Join-Path $tempRoot "job.json"
+    $invalidJobPath = Join-Path $tempRoot "invalid-job.json"
+    [IO.File]::WriteAllBytes($inputPath, [byte[]]@())
+    $job = [ordered]@{
+        schema_version = "1.0"
+        job_id = "mock-baseline-001"
+        module_id = "moisture"
+        phase = "draft"
+        run_mode = "single"
+        input_files = @($inputPath)
+        output_dir = $outputDir
+    }
+    [IO.File]::WriteAllText($jobPath, ($job | ConvertTo-Json -Depth 5), $utf8)
+    [IO.File]::WriteAllText($invalidJobPath, "{not-json", $utf8)
+
+    $version = Invoke-MockSample -CommandArgs @("version")
+    $selfCheck = Invoke-MockSample -CommandArgs @("self-check")
+    $missingJob = Invoke-MockSample -CommandArgs @("run")
+    $validJob = Invoke-MockSample -CommandArgs @("run", "--job", $jobPath)
+    $invalidJob = Invoke-MockSample -CommandArgs @("run", "--job", $invalidJobPath)
+
+    $progress = @($validJob.Stdout -split "`r?`n" | Where-Object { $_ } | ForEach-Object { $_ | ConvertFrom-Json })
+    $result = [IO.File]::ReadAllText((Join-Path $outputDir "result.json"), $utf8) | ConvertFrom-Json
+    if ($version.ExitCode -ne 0 -or $version.Stdout.Trim() -ne "0.1.0" -or $version.Stderr) { throw "version sample mismatch" }
+    if ($selfCheck.ExitCode -ne 0 -or $selfCheck.Stdout.Trim() -ne "ok" -or $selfCheck.Stderr) { throw "self-check sample mismatch" }
+    if ($missingJob.ExitCode -ne 2 -or $missingJob.Stdout -or -not $missingJob.Stderr) { throw "missing-job sample mismatch" }
+    if ($validJob.ExitCode -ne 0 -or $validJob.Stderr -or $progress.Count -ne 2 -or $progress[0].percent -ne 25 -or $progress[-1].percent -ne 100) { throw "valid-job sample mismatch" }
+    if ($result.status -ne "success" -or $result.outputs.Count -ne 3) { throw "result.json sample mismatch" }
+    if ($invalidJob.ExitCode -ne 2 -or $invalidJob.Stdout -or -not $invalidJob.Stderr) { throw "invalid-json sample mismatch" }
+
+    @(
+        [pscustomobject]@{ Sample = "version"; ExitCode = $version.ExitCode; Stdout = $version.Stdout; Stderr = $version.Stderr }
+        [pscustomobject]@{ Sample = "self-check"; ExitCode = $selfCheck.ExitCode; Stdout = $selfCheck.Stdout; Stderr = $selfCheck.Stderr }
+        [pscustomobject]@{ Sample = "run missing --job"; ExitCode = $missingJob.ExitCode; Stdout = $missingJob.Stdout; Stderr = $missingJob.Stderr }
+        [pscustomobject]@{ Sample = "run valid job"; ExitCode = $validJob.ExitCode; Stdout = $validJob.Stdout; Stderr = $validJob.Stderr }
+        [pscustomobject]@{ Sample = "run invalid JSON"; ExitCode = $invalidJob.ExitCode; Stdout = $invalidJob.Stdout; Stderr = $invalidJob.Stderr }
+    ) | Format-List
+    [pscustomobject]@{ ResultStatus = $result.status; ArtifactCount = $result.outputs.Count } | Format-List
+}
+finally {
+    [Environment]::SetEnvironmentVariable("PATH", $oldPath, "Process")
+    [Environment]::SetEnvironmentVariable("PYTHONUTF8", $oldPythonUtf8, "Process")
+    [Environment]::SetEnvironmentVariable("PYTHONIOENCODING", $oldPythonIoEncoding, "Process")
+    if (Test-Path -LiteralPath $tempRoot) { Remove-Item -LiteralPath $tempRoot -Recurse -Force }
+}
+```
 
 ## 7. 可复现结论
 
