@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AfterSalesCase",
+  "type": "object",
+  "required": [
+    "case_id", "source_file", "brand", "primary_issue_type", "fee_amount",
+    "fee_status", "case_status", "warnings", "source_cells"
+  ],
+  "properties": {
+    "case_id": {"type": "string", "minLength": 1},
+    "source_file": {"type": "string", "minLength": 1},
+    "brand": {"type": "string", "minLength": 1},
+    "complaint_date": {"type": ["string", "null"]},
+    "year": {"type": ["integer", "null"], "minimum": 1900, "maximum": 2200},
+    "month": {"type": ["integer", "null"], "minimum": 1, "maximum": 12},
+    "primary_issue_type": {"enum": ["性能", "外观", "加工", "其他", "待确认"]},
+    "fee_amount": {"type": ["number", "null"], "minimum": 0},
+    "fee_currency": {"type": "string", "default": "CNY"},
+    "fee_status": {"enum": ["exact", "calculated", "estimated", "transferred", "not_found", "needs_review"]},
+    "case_status": {"enum": ["已关闭", "处理中", "待确认"]},
+    "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "source_cells": {"type": "object", "additionalProperties": {"type": "string"}},
+    "reviewed": {"type": "boolean"},
+    "reviewed_by": {"type": ["string", "null"]},
+    "reviewed_at": {"type": ["string", "null"]}
+  },
+  "additionalProperties": true
+}
