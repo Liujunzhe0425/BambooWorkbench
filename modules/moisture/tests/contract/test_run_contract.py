@@ -75,7 +75,8 @@ def test_minimal_draft_writes_schema_valid_result_last(tmp_path: Path) -> None:
         "confirmation_count": 0,
     }
     assert result["file_results"][0]["extracted_records"] == 0
-    assert "not implemented" in result["analysis_summary"].lower()
+    assert "not implemented" not in result["analysis_summary"].lower()
+    assert result["analysis_summary"] == "已处理 0 个工作簿，跳过 0 个，失败 1 个。"
 
 
 def test_valid_finalize_identity_boundary_writes_current_job_result(tmp_path: Path) -> None:
