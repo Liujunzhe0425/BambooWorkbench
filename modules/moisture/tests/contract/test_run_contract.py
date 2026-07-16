@@ -120,9 +120,29 @@ def test_atomic_json_uses_same_directory_temporary_file_and_replace(
 
     monkeypatch.setattr(atomic_write.os, "replace", replace)
 
-    atomic_write.write_json_atomic(destination, {"ok": True})
+    payload = {
+        "schema_version": "1.0",
+        "job_id": "atomic-write-job",
+        "module_id": "moisture",
+        "module_version": "0.1.0",
+        "status": "success",
+        "summary": {
+            "input_count": 0,
+            "processed_count": 0,
+            "skipped_count": 0,
+            "failed_count": 0,
+            "anomaly_count": 0,
+            "confirmation_count": 0,
+        },
+        "started_at": "2026-07-16T08:00:00+00:00",
+        "finished_at": "2026-07-16T08:00:00+00:00",
+    }
 
-    assert json.loads(destination.read_text(encoding="utf-8")) == {"ok": True}
+    atomic_write.write_json_atomic(destination, payload)
+
+    written = json.loads(destination.read_text(encoding="utf-8"))
+    assert written["job_id"] == payload["job_id"]
+    assert written["status"] == payload["status"]
     assert len(calls) == 1
     temporary, target = calls[0]
     assert temporary.parent == destination.parent
