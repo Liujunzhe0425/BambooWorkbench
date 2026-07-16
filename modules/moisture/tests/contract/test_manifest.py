@@ -43,8 +43,8 @@ def test_manifest_entrypoint_and_minimum_package_exist() -> None:
         assert (MODULE_ROOT / relative_path).is_file(), relative_path
 
 
-def test_schema_validation_dependency_is_declared_consistently() -> None:
-    expected = ["jsonschema>=4.23,<5"]
+def test_runtime_dependencies_are_declared_consistently() -> None:
+    expected = ["jsonschema>=4.23,<5", "PyYAML>=6,<7"]
     requirements = [
         line.strip()
         for line in (MODULE_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
