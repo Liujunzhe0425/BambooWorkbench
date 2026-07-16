@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from moisture.application.deterministic_pipeline import DeterministicPipeline
 from moisture.application.run_result import InternalMoistureRunResult, InternalOutput
@@ -13,6 +15,44 @@ from moisture.infrastructure.atomic_write import AtomicResultWriter
 from moisture.ports.writers import WorkbookReport
 from moisture.reporting.markdown_writer import AnalysisReportView, write_analysis_markdown
 from moisture.reporting.xlsx_writer import write_summary_xlsx
+
+
+class ModuleConfigError(ValueError):
+    """The optional, module-owned deterministic configuration is invalid."""
+
+
+def _reject_duplicate_config_keys(
+    pairs: list[tuple[str, Any]],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ModuleConfigError("duplicate configuration key")
+        result[key] = value
+    return result
+
+
+def _load_default_year(path: Path | None) -> int | None:
+    if path is None:
+        return None
+    try:
+        payload = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=_reject_duplicate_config_keys,
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise ModuleConfigError("configuration must be readable UTF-8 JSON") from error
+    if not isinstance(payload, dict):
+        raise ModuleConfigError("configuration must be a JSON object")
+    unknown = set(payload) - {"default_year"}
+    if unknown:
+        raise ModuleConfigError("configuration contains unknown fields")
+    default_year = payload.get("default_year")
+    if default_year is None:
+        return None
+    if type(default_year) is not int or not 1900 <= default_year <= 2100:
+        raise ModuleConfigError("default_year must be an integer from 1900 to 2100")
+    return default_year
 
 
 def _status(processed: int, failed: int) -> str:
@@ -41,7 +81,30 @@ def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) ->
 
     started_at = datetime.now(UTC)
     try:
-        outcome = (pipeline or DeterministicPipeline()).run(job.input_files)
+        default_year = _load_default_year(job.module_config_file)
+        outcome = (pipeline or DeterministicPipeline()).run(
+            job.input_files, default_year=default_year
+        )
+    except ModuleConfigError:
+        message = "MODULE_CONFIG_INVALID"
+        internal = InternalMoistureRunResult(
+            job_id=job.job_id,
+            root_job_id=job.root_job_id,
+            phase="draft",
+            input_count=len(job.input_files),
+            processed_count=0,
+            skipped_count=0,
+            failed_count=len(job.input_files),
+            file_results=_global_failure_file_results(job, message),
+            analysis_summary="模块配置无效，未处理输入工作簿。",
+            errors=(message,),
+            business_failed=True,
+            started_at=started_at,
+            finished_at=datetime.now(UTC),
+        )
+        mapped = map_run_result(internal)
+        AtomicResultWriter(job.output_dir).write(mapped.result)
+        return mapped.exit_code
     except Exception as error:
         message = f"PIPELINE_INITIALIZATION_FAILED: {type(error).__name__}"
         internal = InternalMoistureRunResult(

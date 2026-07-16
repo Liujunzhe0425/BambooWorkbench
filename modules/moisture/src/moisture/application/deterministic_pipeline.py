@@ -74,7 +74,9 @@ class DeterministicPipeline:
         self._parser = ExcelSourceParser()
         self._integrity = FileIntegrityGuard()
 
-    def run(self, input_files: tuple[Path, ...]) -> DeterministicPipelineResult:
+    def run(
+        self, input_files: tuple[Path, ...], *, default_year: int | None = None
+    ) -> DeterministicPipelineResult:
         snapshot = RulePackageLoader().load(self.module_root / "rules" / "active")
         batches: list[WorkbookBatch] = []
         file_results: list[dict[str, object]] = []
@@ -87,11 +89,24 @@ class DeterministicPipeline:
         for input_order, source in enumerate(input_files):
             if source.name.startswith("~$") and source.suffix.casefold() == ".xlsx":
                 skipped += 1
+                identity = hashlib.sha256(
+                    f"office_temporary_file:{input_order}".encode()
+                ).hexdigest()[:24]
+                anomalies.append(
+                    InternalAnomaly(
+                        anomaly_id=f"msr-anomaly-{identity}",
+                        review_state=ReviewState.SUSPECT_HIGH,
+                        field="input_file",
+                        message="Office temporary workbook skipped",
+                        source_file=source,
+                    )
+                )
                 file_results.append(
                     _file_result(
                         source,
                         "",
                         "success",
+                        anomaly_count=1,
                         error="OFFICE_TEMPORARY_FILE: skipped",
                     )
                 )
@@ -101,18 +116,33 @@ class DeterministicPipeline:
                 canonical_order = seen.get(fingerprint)
                 if canonical_order is not None:
                     skipped += 1
+                    identity = hashlib.sha256(
+                        f"duplicate_content:{fingerprint}:{canonical_order}".encode()
+                    ).hexdigest()[:24]
+                    anomalies.append(
+                        InternalAnomaly(
+                            anomaly_id=f"msr-anomaly-{identity}",
+                            review_state=ReviewState.SUSPECT_HIGH,
+                            field="input_file",
+                            message="Duplicate workbook content skipped",
+                            source_file=source,
+                        )
+                    )
                     file_results.append(
                         _file_result(
                             source,
                             fingerprint,
                             "success",
+                            anomaly_count=1,
                             error=f"DUPLICATE_CONTENT: canonical input order {canonical_order}",
                         )
                     )
                     continue
                 seen[fingerprint] = input_order
                 checked = self._integrity.read_checked(
-                    source, input_order, self._parser.parse
+                    source,
+                    input_order,
+                    lambda path: self._parser.parse(path, default_year=default_year),
                 )
                 record = checked.value
                 statistics = compute_batch_statistics(record)
