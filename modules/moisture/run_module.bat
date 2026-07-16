@@ -2,7 +2,7 @@
 setlocal
 set "PYTHONUTF8=1"
 set "PYTHON_RUNTIME_SENTINEL=BAMBOO_MOISTURE_RUNTIME_OK_42C91E7D"
-set "PYTHON_RUNTIME_PROBE=import jsonschema, sys; assert (3, 11).__le__(sys.version_info[:2]); print('%PYTHON_RUNTIME_SENTINEL%')"
+set "PYTHON_RUNTIME_PROBE=import jsonschema, sys; sys.version_info >= (3, 11) or sys.exit(1); print('%PYTHON_RUNTIME_SENTINEL%')"
 
 if defined PYTHONPATH (
   set "PYTHONPATH=%~dp0src;%PYTHONPATH%"

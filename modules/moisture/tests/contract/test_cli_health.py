@@ -192,10 +192,57 @@ def test_launcher_probes_declared_schema_dependency() -> None:
     assert "import jsonschema" in launcher_text
     assert "sys.version_info" in launcher_text
     assert "(3, 11)" in launcher_text
+    assert "assert" not in launcher_text
+    assert "sys.exit(1)" in launcher_text
     assert launcher_text.count("BAMBOO_MOISTURE_RUNTIME_OK_42C91E7D") == 1
     assert "print('%PYTHON_RUNTIME_SENTINEL%')" in launcher_text
     assert "echo %PYTHON_RUNTIME_SENTINEL%" in launcher_text
     assert re.search(r'fc\.exe"? /b', launcher_text)
+
+
+def test_python_optimize_cannot_bypass_explicit_runtime_version_probe(
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "optimized-old-python-launched.txt"
+    driver = tmp_path / "optimized-old-python-driver.py"
+    driver.write_text(
+        "import os\n"
+        "import pathlib\n"
+        "import sys\n"
+        "\n"
+        "arguments = sys.argv[1:]\n"
+        "if arguments and arguments[0] == '-c':\n"
+        "    probe = arguments[1]\n"
+        "    if os.environ.get('PYTHONOPTIMIZE') == '1' and 'assert' in probe:\n"
+        "        print('BAMBOO_MOISTURE_RUNTIME_OK_42C91E7D')\n"
+        "        raise SystemExit(0)\n"
+        "    raise SystemExit(1)\n"
+        "if arguments and arguments[0] == '-m':\n"
+        "    pathlib.Path(os.environ['SHIM_LAUNCH_MARKER']).write_text(\n"
+        "        'launched', encoding='utf-8'\n"
+        "    )\n"
+        "    raise SystemExit(0)\n"
+        "raise SystemExit(2)\n",
+        encoding="utf-8",
+    )
+    fake_python = tmp_path / "python-3.10.cmd"
+    fake_python.write_text(
+        '@echo off\n"%FAKE_PYTHON_DRIVER%" "%FAKE_PYTHON_SCRIPT%" %*\nexit /b %ERRORLEVEL%\n',
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["BAMBOO_MODULE_PYTHON"] = str(fake_python)
+    env["FAKE_PYTHON_DRIVER"] = str(REPOSITORY_PYTHON)
+    env["FAKE_PYTHON_SCRIPT"] = str(driver)
+    env["PYTHONOPTIMIZE"] = "1"
+    env["SHIM_LAUNCH_MARKER"] = str(marker)
+
+    completed = run_cli("version", env=env)
+
+    assert completed.returncode == 4
+    assert completed.stdout == ""
+    assert "3.11" in completed.stderr
+    assert not marker.exists()
 
 
 def test_active_environment_that_only_exits_zero_is_not_launched(tmp_path: Path) -> None:
