@@ -44,6 +44,39 @@ JSON Lines 写入 stdout，普通诊断写入 stderr。任务输出目录中包�
 
 损坏文件只影响自身；批次可以返回 `partial_success`。重复内容按文件内容指纹跳过。
 
+## 通过主框架 GUI 测试正式模块
+
+普通启动命令 `.\.venv\Scripts\python.exe -m app` 默认使用 `mock_modules`，
+不会调用本目录中的正式水分模块。开发测试时，请从 BambooWorkbench 仓库根目录运行：
+
+```powershell
+.\.venv\Scripts\python.exe -c "from pathlib import Path; from app.__main__ import main; raise SystemExit(main(data_root=Path.cwd(), use_mocks=False))"
+```
+
+该命令让主框架以仓库根目录作为本地测试数据根目录，并按真实调用链执行：
+
+```text
+Registry 扫描 modules/moisture
+→ Runner 启动 modules/moisture/run_module.bat
+→ 模块读取主框架生成的 job.json
+→ 主框架读取 result.json 和 artifacts
+```
+
+手工验收步骤：
+
+1. 在主框架中选择 `moisture` 模块；
+2. 选择一个或多个正式 `.xlsx` 文件并创建任务；
+3. 历史文件若只写月日，应放在严格形如 `2026年4月份` 的目录中；
+4. 等待任务完成并打开 `moisture_summary.xlsx` 和 `analysis_report.md`；
+5. 检查原始 Excel 未被修改。
+
+使用仓库根目录作为测试数据根目录时，任务文件位于
+`tasks/<job_id>/output-draft/`；数据库、日志和缓存位于仓库本地的忽略目录，
+不属于源码提交。成功批次应生成五张工作表，以及来料平均含水率和区间值趋势图。
+
+当前 `0.55/0.47` 阈值仍待业务批准，因此即使统计值超过该范围，测试结果也不会
+自动着色。普通启动与正式模块启动的区别是主框架配置责任，不应通过修改模块绕过。
+
 ## draft、finalize 与辅助证据
 
 draft 可声明确定性的业务 confirmations，以及至多一个 knowledge request 和一个
