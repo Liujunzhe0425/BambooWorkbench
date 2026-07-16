@@ -103,6 +103,9 @@ finalize 使用 `parent_job_id` 重建 draft 根身份，重新运行完整确�
 至 `docs/06-验收与故障处理.md`。验收 Excel 在测试运行时由脱敏参数生成，不提交客户
 原始工作簿。
 
+- 完整技术架构：`docs/07-模块完整架构.md`；
+- 负责人交接、责任边界和剩余阻塞：`docs/08-负责人交接要点.md`。
+
 ```powershell
 .\.venv\Scripts\python.exe -m app.tools.module_contract_cli validate modules/moisture
 .\.venv\Scripts\python.exe -m pytest modules\moisture\tests -q
