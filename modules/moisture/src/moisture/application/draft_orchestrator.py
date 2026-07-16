@@ -8,11 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from moisture.application.deterministic_pipeline import DeterministicPipeline
+from moisture.application.confirmation_builder import build_confirmations
 from moisture.application.run_result import InternalMoistureRunResult, InternalOutput
 from moisture.contract.job_models import JobRequest
 from moisture.contract.mapper import map_run_result
 from moisture.infrastructure.atomic_write import AtomicResultWriter
 from moisture.ports.writers import WorkbookReport
+from moisture.domain.models import BusinessConfirmationIssue
 from moisture.reporting.markdown_writer import AnalysisReportView, write_analysis_markdown
 from moisture.reporting.xlsx_writer import write_summary_xlsx
 
@@ -74,6 +76,50 @@ def _global_failure_file_results(job: JobRequest, message: str) -> tuple[dict[st
         }
         for source in job.input_files
     )
+
+
+def _confirmation_issues(outcome: object) -> tuple[BusinessConfirmationIssue, ...]:
+    issues = list(getattr(outcome, "confirmation_issues", ()))
+    batches = tuple(getattr(outcome, "batches", ()))
+    if batches:
+        record = batches[0].record
+        if record.source_file_hash and record.source_file is not None:
+            for match in getattr(outcome, "pending_rule_matches", ()):
+                issues.append(
+                    BusinessConfirmationIssue(
+                        kind="rule_scope",
+                        fingerprint=record.source_file_hash,
+                        field=match.target_field or "rule_scope",
+                        candidates=("适用", "不适用"),
+                        source_file=record.source_file,
+                        sheet=record.source_sheet,
+                        rule_hash=match.rules_sha256,
+                    )
+                )
+    for batch in batches:
+        record = batch.record
+        fingerprint = record.source_file_hash
+        source_file = record.source_file
+        if not fingerprint or source_file is None:
+            continue
+        for sample in record.samples:
+            source_value = sample.source_moisture_value
+            verified_value = sample.verified_moisture_value
+            if source_value is None or verified_value is None or source_value == verified_value:
+                continue
+            issues.append(
+                BusinessConfirmationIssue(
+                    kind="formula_conflict",
+                    fingerprint=fingerprint,
+                    field=f"sample_{sample.sample_index}",
+                    candidates=(str(source_value), str(verified_value)),
+                    suggested_value=str(source_value),
+                    source_file=source_file,
+                    sheet=record.source_sheet,
+                    cell_or_range=f"row:{sample.source_row}",
+                )
+            )
+    return tuple(issues)
 
 
 def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) -> int:
@@ -188,7 +234,7 @@ def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) ->
         anomalies=outcome.anomalies,
         outputs=outputs,
         file_results=outcome.file_results,
-        confirmations=(),
+        confirmations=build_confirmations(job.root_job_id, _confirmation_issues(outcome)),
         service_requests=(),
         analysis_summary=(
             f"已处理 {outcome.processed_count} 个工作簿，"

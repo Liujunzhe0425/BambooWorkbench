@@ -41,6 +41,38 @@ DecisionTargetField = Literal[
     "sample_10",
 ]
 
+ConfirmationKind = Literal[
+    "sheet_ambiguity",
+    "supplier_mapping",
+    "department_mapping",
+    "formula_conflict",
+    "rule_scope",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class BusinessConfirmationIssue:
+    """Structured, module-owned ambiguity that requires a business choice."""
+
+    kind: ConfirmationKind
+    fingerprint: str
+    field: str
+    candidates: tuple[str, ...]
+    source_file: Path
+    sheet: str | None = None
+    cell_or_range: str | None = None
+    suggested_value: str | None = None
+    rule_hash: str = ""
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "candidates", tuple(self.candidates))
+        if not self.fingerprint:
+            raise ValueError("fingerprint must not be empty")
+        if not self.field:
+            raise ValueError("field must not be empty")
+        if not self.candidates:
+            raise ValueError("candidates must contain at least one item")
+
 
 @dataclass(frozen=True, slots=True)
 class InputFileIdentity:
