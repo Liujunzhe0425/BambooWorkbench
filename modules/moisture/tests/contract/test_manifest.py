@@ -49,6 +49,7 @@ def test_runtime_dependencies_are_declared_consistently() -> None:
         "PyYAML>=6,<7",
         "openpyxl>=3.1,<4",
         "XlsxWriter>=3.2,<4",
+        "Jinja2>=3.1,<4",
     ]
     requirements = [
         line.strip()
