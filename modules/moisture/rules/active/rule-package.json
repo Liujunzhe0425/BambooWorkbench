@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "package_id": "moisture-default-pending",
+  "rule_version": "default-v1",
+  "rules_file": "rules.yaml",
+  "rules_sha256": "da4fa062aef735bdb6f6e423de1c58bb5c0d8df1fbbccb85ae507e57534ffed9",
+  "source": "legacy d98433b defaults; customer approval not yet recorded",
+  "applicable_scope": "竹丝; all seasons",
+  "customer_confirmation_status": "pending_confirmation",
+  "released_at": "2026-07-16T00:00:00+08:00",
+  "module_version": "0.1.0"
+}
