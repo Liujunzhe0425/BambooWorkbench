@@ -166,6 +166,15 @@ def read_service_responses(
                 seen_ids.add(response.request_id)
             responses.append(response)
 
+    for missing_id in sorted(set(expected_requests) - seen_ids):
+        errors.append(
+            _error(
+                "SERVICE_RESPONSE_ID_MISSING",
+                f"responses.{missing_id}",
+                "expected service response is missing",
+            )
+        )
+
     if errors:
         return ServiceResponseReadResult(envelope=None, errors=tuple(errors))
     return ServiceResponseReadResult(

@@ -207,6 +207,15 @@ def read_confirmation_bundle(
                 )
             )
 
+    for missing_id in sorted(expected_ids - seen_ids):
+        errors.append(
+            _error(
+                "CONFIRMATION_ID_MISSING",
+                f"answers.{missing_id}",
+                "expected confirmation answer is missing",
+            )
+        )
+
     if errors:
         return ConfirmationReadResult(bundle=None, errors=tuple(errors))
     return ConfirmationReadResult(

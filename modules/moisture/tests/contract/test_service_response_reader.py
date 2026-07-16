@@ -179,3 +179,56 @@ def test_unexpected_service_file_is_ignored_when_no_requests_were_made(
 
     assert result.envelope is None
     assert result.errors == ()
+
+
+def test_service_reader_rejects_each_missing_expected_response(tmp_path: Path) -> None:
+    present = {
+        "request_id": "request-present",
+        "service": "ai",
+        "status": "ok",
+        "text": "result",
+    }
+    path = _write_envelope(tmp_path / "service-response.json", [present])
+
+    result = read_service_responses(
+        path,
+        root_job_id="draft-job-001",
+        expected_requests={
+            "request-missing-z": "knowledge",
+            "request-present": "ai",
+            "request-missing-a": "ai",
+        },
+    )
+
+    assert result.envelope is None
+    assert [
+        (error.code, error.field, error.message) for error in result.errors
+    ] == [
+        (
+            "SERVICE_RESPONSE_ID_MISSING",
+            "responses.request-missing-a",
+            "expected service response is missing",
+        ),
+        (
+            "SERVICE_RESPONSE_ID_MISSING",
+            "responses.request-missing-z",
+            "expected service response is missing",
+        ),
+    ]
+
+
+def test_service_reader_rejects_empty_responses_when_one_is_expected(
+    tmp_path: Path,
+) -> None:
+    path = _write_envelope(tmp_path / "service-response.json", [])
+
+    result = read_service_responses(
+        path,
+        root_job_id="draft-job-001",
+        expected_requests={"request-001": "ai"},
+    )
+
+    assert result.envelope is None
+    assert [(error.code, error.field) for error in result.errors] == [
+        ("SERVICE_RESPONSE_ID_MISSING", "responses.request-001")
+    ]

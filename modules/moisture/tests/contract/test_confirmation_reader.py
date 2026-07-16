@@ -125,3 +125,58 @@ def test_empty_confirmation_bundle_is_valid_when_no_answers_are_expected(
     assert result.errors == ()
     assert result.bundle is not None
     assert result.bundle.answers == ()
+
+
+def test_confirmation_reader_rejects_each_missing_expected_answer(
+    tmp_path: Path,
+) -> None:
+    present = {
+        "confirmation_id": "confirm-present",
+        "value": "Sheet1",
+        "apply_to_batch": False,
+        "remember_mapping": False,
+    }
+    path = _write_bundle(tmp_path / "confirmation.json", answers=[present])
+
+    result = read_confirmation_bundle(
+        path,
+        root_job_id="draft-job-001",
+        expected_confirmation_ids={
+            "confirm-missing-z",
+            "confirm-present",
+            "confirm-missing-a",
+        },
+    )
+
+    assert result.bundle is None
+    assert [
+        (error.code, error.field, error.message) for error in result.errors
+    ] == [
+        (
+            "CONFIRMATION_ID_MISSING",
+            "answers.confirm-missing-a",
+            "expected confirmation answer is missing",
+        ),
+        (
+            "CONFIRMATION_ID_MISSING",
+            "answers.confirm-missing-z",
+            "expected confirmation answer is missing",
+        ),
+    ]
+
+
+def test_confirmation_reader_rejects_empty_answers_when_one_is_expected(
+    tmp_path: Path,
+) -> None:
+    path = _write_bundle(tmp_path / "confirmation.json", answers=[])
+
+    result = read_confirmation_bundle(
+        path,
+        root_job_id="draft-job-001",
+        expected_confirmation_ids={"confirm-001"},
+    )
+
+    assert result.bundle is None
+    assert [(error.code, error.field) for error in result.errors] == [
+        ("CONFIRMATION_ID_MISSING", "answers.confirm-001")
+    ]
