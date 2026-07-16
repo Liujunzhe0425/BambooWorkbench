@@ -158,4 +158,5 @@
 - 84/84 个 Task 1—9 运行/测试/fixture/package 资产均有逐文件处置；46/46 个运行文件记录了符号或职责、输入/输出、异常、依赖、目标、测试和 Task。
 - 所有可迁条目均是“先旧测试意图、后未来失败测试、再最小实现”的路由；没有“复制整个目录”或整体 cherry-pick。
 - Provider/HTTP/身份/运行时发布明确不迁；LLM 只提取与正式 service request/response 相容的业务校验语义。
+- T20 对全部正式源码、依赖声明和运行入口传递闭包进行了复核：未发现 Web、身份、会话、数据库、Provider、HTTP、凭据、旧 `JobConfig` 或旧 result Schema。T12A 的经验库编辑端仅由离线 `tools/manage_experience.py` 使用，`run_module.bat`、`run --job`、draft 和 finalize 均不可达该管理端。
 - 后续若发现未列入本清单的旧运行文件或测试，默认禁止迁移；必须先补充目标、未来失败测试、处置理由和业务批准状态，再进入对应 Task。
