@@ -1,0 +1,64 @@
+# 竹丝含水率分析报告
+
+## 数据范围和处理概况
+
+- 开始时间：`{{ report.started_at.isoformat() }}`
+- 处理状态：`{{ report.status }}`
+- 批次记录数：{{ report.batches | length }}。
+
+## 确定性分析结果
+
+{% for batch in report.batches %}
+- `{{ batch.record.record_id }}`：均值 {{ batch.statistics.mean }}，样本数 {{ batch.statistics.sample_count }}，确定性初筛为 {{ batch.screening_decision.display_color.value }}；{{ batch.screening_decision.reason }}。
+{% else %}
+- 无可报告的确定性分析结果。
+{% endfor %}
+
+## 规则快照与适用状态
+
+- 版本：`{{ report.rule_version }}`
+- SHA-256：`{{ report.rule_hash }}`
+- 来源：`{{ report.rule_source }}`
+- 适用状态：{{ report.rule_confirmation_label }}
+
+{% for batch in report.batches %}
+- `{{ batch.record.record_id }}`：下限 {{ batch.lower_threshold if batch.lower_threshold is not none else "未配置" }}，上限 {{ batch.upper_threshold if batch.upper_threshold is not none else "未配置" }}。
+{% endfor %}
+
+## 已审核经验引用
+
+{% for record_id, citation in report.experience_citations %}
+- `{{ record_id }}`：{{ citation.entry_id }} v{{ citation.version }}《{{ citation.title }}》，来源 `{{ citation.source }}`。
+{% else %}
+- 无已审核经验引用。
+{% endfor %}
+
+## 辅助服务记录与降级
+
+- 候选总数：{{ report.candidate_total }}；发送数：{{ report.candidate_sent }}；省略数：{{ report.candidate_omitted }}。
+{% for batch in report.reviewed_batches %}
+- `{{ batch.record.record_id }}`：{{ batch.ai_review.rationale }}；辅助颜色 {{ batch.ai_review.display_color.value }}。
+{% else %}
+- 无辅助服务复判记录。
+{% endfor %}
+{% for batch in report.degraded_batches %}
+- `{{ batch.record.record_id }}`：{{ batch.ai_degradation_reason }}；确定性结果仍保留。
+{% else %}
+- 无服务降级记录。
+{% endfor %}
+
+## 数据质量与处理限制
+
+{% for error in report.errors %}
+- {{ error }}
+{% else %}
+- 未记录数据质量问题。
+{% endfor %}
+
+## 颜色语义与使用限制
+
+- 橙色：确定性规则发现偏高疑似。
+- 绿色：确定性规则发现偏低疑似。
+- 红色：有效辅助证据支持的高度偏高疑似。
+- 蓝色：有效辅助证据支持的高度偏低疑似。
+- 上述颜色均不表示正式错误、不合格或责任认定，异常记录仍需按业务流程核验。
