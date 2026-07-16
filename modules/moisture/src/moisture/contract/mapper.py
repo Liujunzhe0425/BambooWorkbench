@@ -44,12 +44,8 @@ _SEVERITY_BY_REVIEW_STATE = {
 
 
 def _status(run: InternalMoistureRunResult) -> TaskStatus:
-    all_processable_inputs_failed = (
-        run.failed_count > 0
-        and run.processed_count == 0
-        and run.failed_count + run.skipped_count >= run.input_count
-    )
-    if run.business_failed or all_processable_inputs_failed:
+    no_business_result = run.processed_count == 0 and not run.cancelled
+    if run.business_failed or no_business_result:
         return TaskStatus.FAILED
     if run.cancelled:
         return TaskStatus.CANCELLED
@@ -92,6 +88,10 @@ def _check_counts(run: InternalMoistureRunResult) -> None:
         raise ResultMappingError("run counts exceed the input count")
     if run.phase not in {"draft", "finalize"}:
         raise ResultMappingError("run phase must be draft or finalize")
+    if run.phase == "finalize" and run.confirmations:
+        raise ResultMappingError("finalize confirmations must be empty")
+    if run.phase == "finalize" and run.service_requests:
+        raise ResultMappingError("finalize service_requests must be empty")
     if any(
         timestamp.tzinfo is None or timestamp.utcoffset() is None
         for timestamp in (run.started_at, run.finished_at)

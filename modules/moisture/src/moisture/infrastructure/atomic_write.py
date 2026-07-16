@@ -63,12 +63,7 @@ class AtomicResultWriter:
 def write_json_atomic(destination: Path, payload: dict[str, Any]) -> None:
     """Compatibility entry point; contract-shaped results use the guarded writer."""
 
-    if destination.name == "result.json" and {
-        "schema_version",
-        "module_id",
-        "status",
-        "summary",
-    }.issubset(payload):
+    if destination.name == "result.json":
         AtomicResultWriter(destination.parent).write_payload(payload)
         return
     _write_json_atomic(destination, payload)

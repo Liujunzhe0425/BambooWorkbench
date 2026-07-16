@@ -15,7 +15,7 @@ from moisture.application.run_result import (
     InternalOutput,
     ReviewState,
 )
-from moisture.contract.mapper import map_run_result
+from moisture.contract.mapper import ResultMappingError, map_run_result
 
 
 STARTED = datetime(2026, 7, 16, 8, 0, tzinfo=UTC)
@@ -140,3 +140,53 @@ def test_summary_counts_and_outputs_are_mapped_once(tmp_path: Path) -> None:
         "confirmation_count": 0,
     }
     assert mapped.result.outputs[0].path == output
+
+
+@pytest.mark.parametrize(
+    ("input_count", "skipped_count"),
+    [(1, 1), (2, 1)],
+)
+def test_no_processed_business_result_is_failed(
+    input_count: int, skipped_count: int
+) -> None:
+    mapped = map_run_result(
+        run_result(
+            input_count=input_count,
+            processed_count=0,
+            skipped_count=skipped_count,
+        )
+    )
+
+    assert mapped.result.status.value == "failed"
+
+
+@pytest.mark.parametrize("field", ["confirmations", "service_requests"])
+def test_finalize_rejects_new_follow_up_work(field: str) -> None:
+    confirmation = {
+        "confirmation_id": "c-1",
+        "field": "year",
+        "reason": "ambiguous",
+        "confidence": 0.5,
+        "blocking": True,
+        "batch_applicable": False,
+        "rememberable": False,
+        "source": {"source_file": "C:/input/source.xlsx"},
+    }
+    service_request = {
+        "request_id": "r-1",
+        "service": "knowledge",
+        "purpose": "review candidate",
+        "payload": {},
+    }
+
+    with pytest.raises(ResultMappingError, match=field):
+        map_run_result(
+            run_result(
+                phase="finalize",
+                **{
+                    field: (
+                        confirmation if field == "confirmations" else service_request,
+                    )
+                },
+            )
+        )

@@ -12,7 +12,8 @@ sys.path.insert(0, str(MODULE_ROOT / "src"))
 
 from moisture.application.run_result import InternalMoistureRunResult, InternalOutput
 from moisture.contract.mapper import map_run_result
-from moisture.infrastructure.atomic_write import AtomicResultWriter
+from moisture.contract.validators import ContractValidationError
+from moisture.infrastructure.atomic_write import AtomicResultWriter, write_json_atomic
 from moisture.infrastructure.paths import OutputPathError
 
 
@@ -122,3 +123,14 @@ def test_atomic_failure_leaves_no_result_or_temporary_file(
 
     assert not (output_dir / "result.json").exists()
     assert not list(output_dir.glob("*.tmp"))
+
+
+def test_result_named_destination_always_uses_guarded_writer(tmp_path: Path) -> None:
+    destination = tmp_path / "result.json"
+    destination.write_text("old", encoding="utf-8")
+
+    with pytest.raises(ContractValidationError):
+        write_json_atomic(destination, {"schema_version": "1.0"})
+
+    assert destination.read_text(encoding="utf-8") == "old"
+    assert not list(tmp_path.glob("*.tmp"))
