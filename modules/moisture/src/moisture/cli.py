@@ -9,6 +9,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from moisture import __version__
+from moisture.application.draft_orchestrator import run_draft
 from moisture.contract.bootstrap_result import build_bootstrap_result
 from moisture.contract.job_models import JobRequest
 from moisture.contract.progress import emit_progress
@@ -89,15 +90,18 @@ def _run(job_path: Path) -> int:
         return 2
 
     started_at = datetime.now(UTC).isoformat()
-    emit_progress(0, "Moisture bootstrap started")
+    emit_progress(0, "Moisture processing started")
     try:
-        result = build_bootstrap_result(job.to_payload(), started_at=started_at)
-        validated_result = validate_result_payload(result).to_payload()
-        write_json_atomic(job.output_dir / "result.json", validated_result)
+        if job.phase.value == "draft":
+            run_draft(job)
+        else:
+            result = build_bootstrap_result(job.to_payload(), started_at=started_at)
+            validated_result = validate_result_payload(result).to_payload()
+            write_json_atomic(job.output_dir / "result.json", validated_result)
     except Exception:
         sys.stderr.write("moisture run: unable to write result.json\n")
         return 3
-    emit_progress(100, "Moisture bootstrap result written")
+    emit_progress(100, "Moisture result written")
     return 0
 
 
