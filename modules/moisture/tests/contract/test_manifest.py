@@ -44,7 +44,12 @@ def test_manifest_entrypoint_and_minimum_package_exist() -> None:
 
 
 def test_runtime_dependencies_are_declared_consistently() -> None:
-    expected = ["jsonschema>=4.23,<5", "PyYAML>=6,<7"]
+    expected = [
+        "jsonschema>=4.23,<5",
+        "PyYAML>=6,<7",
+        "openpyxl>=3.1,<4",
+        "XlsxWriter>=3.2,<4",
+    ]
     requirements = [
         line.strip()
         for line in (MODULE_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
