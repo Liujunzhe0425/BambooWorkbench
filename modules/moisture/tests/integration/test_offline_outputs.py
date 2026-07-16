@@ -64,8 +64,8 @@ def test_ai_disabled_still_produces_xlsx_markdown_and_result_last(
     assert exit_code == 0
     assert replacements[-1] == "result.json"
     payload = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
-    assert payload["status"] == "success"
-    assert payload["confirmations"] == []
+    assert payload["status"] == "needs_confirmation"
+    assert len(payload["confirmations"]) == 1
     assert payload["service_requests"] == []
     assert [item["path"] for item in payload["outputs"]] == [
         str((output_dir / "moisture_summary.xlsx").resolve()),

@@ -53,14 +53,14 @@ def test_batch_preserves_order_and_isolates_duplicate_temporary_and_corrupt(
     )
     assert run_draft(job) == 0
     result = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
-    assert result["status"] == "partial_success"
+    assert result["status"] == "needs_confirmation"
     assert result["summary"] == {
         "input_count": 4,
         "processed_count": 1,
         "skipped_count": 2,
         "failed_count": 1,
         "anomaly_count": 2,
-        "confirmation_count": 0,
+        "confirmation_count": 1,
     }
     anomalies = result["anomalies"]
     assert [item["severity"] for item in anomalies] == ["info", "info"]

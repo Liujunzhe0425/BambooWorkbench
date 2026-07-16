@@ -10,6 +10,7 @@ from typing import Any
 
 from moisture.application.deterministic_pipeline import DeterministicPipeline
 from moisture.application.confirmation_builder import build_confirmations
+from moisture.application.ai_request_builder import AIRequestBuildResult, build_ai_request
 from moisture.application.run_result import InternalMoistureRunResult, InternalOutput
 from moisture.application.service_request_builder import build_knowledge_request
 from moisture.contract.job_models import JobRequest
@@ -142,6 +143,14 @@ def _knowledge_requests(job: JobRequest, outcome: object) -> tuple[dict[str, obj
     return (request,) if request is not None else ()
 
 
+def _ai_request(job: JobRequest, outcome: object) -> AIRequestBuildResult:
+    return build_ai_request(
+        root_job_id=job.root_job_id,
+        candidates=tuple(getattr(outcome, "ai_review_candidates", ())),
+        rule_hash=outcome.rule_package.rules_sha256,
+    )
+
+
 def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) -> int:
     """Run one draft and publish ``result.json`` after completed artifacts."""
 
@@ -194,6 +203,9 @@ def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) ->
     outputs: tuple[InternalOutput, ...] = ()
     errors = outcome.errors
     business_failed = outcome.processed_count == 0
+    knowledge_requests = _knowledge_requests(job, outcome)
+    ai_request = _ai_request(job, outcome)
+    service_requests = knowledge_requests + ((ai_request.request,) if ai_request.request else ())
 
     if outcome.batches:
         completed_artifacts: list[Path] = []
@@ -213,9 +225,9 @@ def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) ->
                     rule_hash=package.rules_sha256,
                     rule_source=package.source,
                     rule_confirmation_status=package.customer_confirmation_status,
-                    candidate_total=0,
-                    candidate_sent=0,
-                    candidate_omitted=0,
+                    candidate_total=ai_request.candidate_total,
+                    candidate_sent=ai_request.candidate_sent,
+                    candidate_omitted=ai_request.candidate_omitted,
                     errors=errors,
                 ),
                 job.output_dir,
@@ -255,7 +267,7 @@ def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) ->
         outputs=outputs,
         file_results=outcome.file_results,
         confirmations=build_confirmations(job.root_job_id, _confirmation_issues(outcome)),
-        service_requests=_knowledge_requests(job, outcome),
+        service_requests=service_requests,
         analysis_summary=(
             f"已处理 {outcome.processed_count} 个工作簿，"
             f"跳过 {outcome.skipped_count} 个，失败 {outcome.failed_count} 个。"
