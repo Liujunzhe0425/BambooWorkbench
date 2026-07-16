@@ -116,6 +116,25 @@ def test_publish_runtime_visibility_new_version_and_retire_history(tmp_path: Pat
     assert any((tmp_path / "retired").glob("*.md"))
 
 
+def test_new_version_requires_retiring_active_version_then_replaces_runtime(
+    tmp_path: Path,
+) -> None:
+    repository = LocalEditableExperienceRepository(tmp_path)
+    first_draft = repository.create(_document())
+    first = repository.publish("EXP-001", "1.0.0", first_draft.sha256)
+    second_draft = repository.create(_document(version="2.0.0", body="新版指导"))
+
+    with pytest.raises(ExperienceAdminConflictError, match="retire"):
+        repository.publish("EXP-001", "2.0.0", second_draft.sha256)
+
+    repository.retire("EXP-001", "1.0.0", first.sha256)
+    second = repository.publish("EXP-001", "2.0.0", second_draft.sha256)
+    runtime = LocalApprovedExperienceRepository(tmp_path, as_of=NOW)
+    assert [item.version for item in runtime.search(_runtime_query())] == ["2.0.0"]
+    assert repository.show("EXP-001", "1.0.0").status == "retired"
+    assert repository.show("EXP-001", "2.0.0") == second
+
+
 def test_atomic_failure_preserves_old_file_and_manifest(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -138,6 +157,84 @@ def test_atomic_failure_preserves_old_file_and_manifest(
     manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["entries"] == []
     assert not list((tmp_path / "approved").glob("*.md"))
+
+
+def test_source_delete_failure_rolls_back_target_and_manifest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repository = LocalEditableExperienceRepository(tmp_path)
+    draft = repository.create(_document())
+    source = next((tmp_path / "draft").glob("*.md"))
+    original_unlink = Path.unlink
+
+    def fail_source(path: Path, *args: object, **kwargs: object) -> None:
+        if path == source:
+            raise OSError("simulated source delete failure")
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_source)
+    with pytest.raises(OSError, match="source delete"):
+        repository.publish("EXP-001", "1.0.0", draft.sha256)
+
+    assert source.read_text(encoding="utf-8") == _document()
+    assert not list((tmp_path / "approved").glob("*.md"))
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["entries"] == []
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"schema_version": "1.0", "entries": [], "extra": True},
+        {"schema_version": "1.0", "entries": [{"path": "../escape.md", "sha256": "0" * 64}]},
+        {"schema_version": "1.0", "entries": [{"path": "draft/a.md", "sha256": "0" * 64}]},
+        {"schema_version": "1.0", "entries": [{"path": "approved/a.txt", "sha256": "0" * 64}]},
+        {"schema_version": "1.0", "entries": [{"path": "approved/a.md", "sha256": "bad"}]},
+        {
+            "schema_version": "1.0",
+            "entries": [
+                {"path": "approved/a.md", "sha256": "0" * 64},
+                {"path": "approved/a.md", "sha256": "1" * 64},
+            ],
+        },
+    ],
+)
+def test_invalid_existing_manifest_is_rejected_at_initialization(
+    tmp_path: Path, payload: object
+) -> None:
+    (tmp_path / "manifest.json").write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises((ExperienceAdminValidationError, ExperienceAdminSecurityError)):
+        LocalEditableExperienceRepository(tmp_path)
+
+
+def test_linked_manifest_is_rejected_at_initialization(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outside = tmp_path.parent / f"{tmp_path.name}-manifest.json"
+    outside.write_text(json.dumps({"schema_version": "1.0", "entries": []}), encoding="utf-8")
+    manifest = tmp_path / "manifest.json"
+    try:
+        manifest.symlink_to(outside)
+    except OSError:
+        manifest.write_text(outside.read_text(encoding="utf-8"), encoding="utf-8")
+        original = Path.is_symlink
+        monkeypatch.setattr(
+            Path,
+            "is_symlink",
+            lambda path: path == manifest or original(path),
+        )
+    with pytest.raises(ExperienceAdminSecurityError):
+        LocalEditableExperienceRepository(tmp_path)
+
+
+def test_duplicate_manifest_json_key_is_rejected(tmp_path: Path) -> None:
+    (tmp_path / "manifest.json").write_text(
+        '{"schema_version":"1.0","entries":[],"entries":[]}',
+        encoding="utf-8",
+    )
+    with pytest.raises(ExperienceAdminValidationError, match="duplicate"):
+        LocalEditableExperienceRepository(tmp_path)
 
 
 def test_list_validate_and_content_hash(tmp_path: Path) -> None:

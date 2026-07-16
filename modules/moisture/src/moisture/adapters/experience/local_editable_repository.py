@@ -30,6 +30,15 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _STATES = ("draft", "approved", "retired")
 
 
+def _unique_json(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    payload: dict[str, object] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise ExperienceAdminValidationError(f"duplicate manifest key: {key}")
+        payload[key] = value
+    return payload
+
+
 class ExperienceAdminError(RuntimeError):
     pass
 
@@ -64,8 +73,13 @@ class LocalEditableExperienceRepository:
             if _is_reparse_point(directory):
                 raise ExperienceAdminSecurityError("experience state directory must not be a link")
         manifest = self._root / "manifest.json"
+        if manifest.is_symlink() or (manifest.exists() and _is_reparse_point(manifest)):
+            raise ExperienceAdminSecurityError(
+                "runtime manifest must not be a link or reparse point"
+            )
         if not manifest.exists():
             self._atomic_write(manifest, self._manifest_bytes([]))
+        self._load_manifest()
 
     def list(self) -> list[AdminExperience]:
         records: list[AdminExperience] = []
@@ -121,10 +135,20 @@ class LocalEditableExperienceRepository:
         self._check_hash(current, expected_hash)
         if current.status != "draft":
             raise ExperienceAdminConflictError("only draft experience can be published")
-        content = self._with_status(source.read_text(encoding="utf-8"), "approved")
+        entries = self._load_manifest()
+        if any(
+            self._decode((self._root / item["path"]).read_bytes(), Path(item["path"])).experience_id
+            == experience_id
+            for item in entries
+        ):
+            raise ExperienceAdminConflictError(
+                "retire the active approved version before publishing a new version"
+            )
+        content = self._with_status(
+            source.read_text(encoding="utf-8"), "approved", clear_supersedes=True
+        )
         target = self._path("approved", experience_id, version)
         approved = self._decode(content, target.relative_to(self._root))
-        entries = self._load_manifest()
         entry = {"path": approved.path, "sha256": approved.sha256}
         self._transition(source, target, content, [*entries, entry])
         return approved
@@ -147,13 +171,26 @@ class LocalEditableExperienceRepository:
     ) -> None:
         if target.exists():
             raise ExperienceAdminConflictError("target lifecycle version already exists")
+        source_content = source.read_bytes()
+        manifest = self._root / "manifest.json"
+        old_manifest = manifest.read_bytes()
         self._atomic_write(target, content)
         try:
-            self._atomic_write(self._root / "manifest.json", self._manifest_bytes(entries))
+            source.unlink()
         except BaseException:
             target.unlink(missing_ok=True)
             raise
-        source.unlink()
+        try:
+            self._atomic_write(manifest, self._manifest_bytes(entries))
+        except BaseException:
+            try:
+                if not source.exists():
+                    self._atomic_write(source, source_content)
+                if manifest.read_bytes() != old_manifest:
+                    self._atomic_write(manifest, old_manifest)
+            finally:
+                target.unlink(missing_ok=True)
+            raise
 
     def _validate_supersedes(self, record: AdminExperience, document: str) -> None:
         payload, _ = LocalApprovedExperienceRepository._parse_front_matter(document)
@@ -199,11 +236,7 @@ class LocalEditableExperienceRepository:
                 raise ValueError("unsupported lifecycle status")
         except Exception as error:
             raise ExperienceAdminValidationError("invalid experience document") from error
-        if (
-            relative.parts
-            and relative.parts[0] in _STATES
-            and metadata.status != relative.parts[0]
-        ):
+        if relative.parts and relative.parts[0] in _STATES and metadata.status != relative.parts[0]:
             raise ExperienceAdminValidationError(
                 "document status does not match lifecycle directory"
             )
@@ -223,9 +256,15 @@ class LocalEditableExperienceRepository:
         return document.encode("utf-8")
 
     @staticmethod
-    def _with_status(document: str, status: str) -> bytes:
+    def _with_status(document: str, status: str, *, clear_supersedes: bool = False) -> bytes:
         payload, body = LocalApprovedExperienceRepository._parse_front_matter(document)
         payload["status"] = status
+        if clear_supersedes:
+            # The T12 runtime manifest intentionally excludes retired history, while
+            # its reader requires every supersedes target to be present in that same
+            # manifest. The admin layer validates lineage before publication, then
+            # removes this storage-only link from the active runtime projection.
+            payload["supersedes"] = None
         rendered = yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
         return f"---\n{rendered}---\n{body}\n".encode()
 
@@ -282,16 +321,79 @@ class LocalEditableExperienceRepository:
         except OSError as error:
             raise ExperienceAdminSecurityError("experience path cannot be read safely") from error
 
-    def _load_manifest(self) -> list[dict[str, str]]:
+    def _guard_manifest_entry(self, path: Path) -> None:
+        approved = self._root / "approved"
         try:
-            payload = json.loads((self._root / "manifest.json").read_text(encoding="utf-8"))
-            if payload.get("schema_version") != "1.0" or not isinstance(
-                payload.get("entries"), list
-            ):
-                raise ValueError
-            return list(payload["entries"])
+            if _is_reparse_point(approved):
+                raise ExperienceAdminSecurityError("approved directory must not be a link")
+            resolved_approved = approved.resolve(strict=True)
+            for parent in path.parents:
+                if parent == self._root:
+                    break
+                if _is_reparse_point(parent):
+                    raise ExperienceAdminSecurityError("runtime manifest path contains a link")
+            if _is_reparse_point(path):
+                raise ExperienceAdminSecurityError("runtime manifest entry must not be a link")
+            resolved = path.resolve(strict=True)
+            linked = path.stat(follow_symlinks=False)
+            if resolved_approved not in resolved.parents or not stat.S_ISREG(linked.st_mode):
+                raise ExperienceAdminSecurityError("runtime manifest entry escapes approved")
+        except ExperienceAdminSecurityError:
+            raise
+        except OSError as error:
+            raise ExperienceAdminSecurityError(
+                "runtime manifest entry cannot be read safely"
+            ) from error
+
+    def _load_manifest(self) -> list[dict[str, str]]:
+        manifest = self._root / "manifest.json"
+        try:
+            self._guard_regular(manifest, self._root)
+            payload = json.loads(
+                manifest.read_text(encoding="utf-8"), object_pairs_hook=_unique_json
+            )
         except (OSError, ValueError, json.JSONDecodeError) as error:
             raise ExperienceAdminValidationError("invalid runtime manifest") from error
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {"schema_version", "entries"}
+            or payload["schema_version"] != "1.0"
+            or not isinstance(payload["entries"], list)
+        ):
+            raise ExperienceAdminValidationError("invalid runtime manifest")
+        entries: list[dict[str, str]] = []
+        seen: set[str] = set()
+        for item in payload["entries"]:
+            if not isinstance(item, dict) or set(item) != {"path", "sha256"}:
+                raise ExperienceAdminValidationError("invalid runtime manifest entry")
+            relative_text = item["path"]
+            digest = item["sha256"]
+            if not isinstance(relative_text, str) or not isinstance(digest, str):
+                raise ExperienceAdminValidationError("invalid runtime manifest entry")
+            relative = Path(relative_text)
+            if (
+                relative_text in seen
+                or relative.is_absolute()
+                or len(relative.parts) < 2
+                or relative.parts[0] != "approved"
+                or any(part in {"", ".", ".."} for part in relative.parts)
+                or relative.suffix.casefold() != ".md"
+            ):
+                raise ExperienceAdminSecurityError("unsafe runtime manifest path")
+            if _SHA256.fullmatch(digest) is None:
+                raise ExperienceAdminValidationError("invalid runtime manifest SHA-256")
+            entry_path = self._root / relative
+            self._guard_manifest_entry(entry_path)
+            content = entry_path.read_bytes()
+            if hashlib.sha256(content).hexdigest() != digest:
+                raise ExperienceAdminValidationError("runtime manifest hash mismatch")
+            if self._decode(content, relative).status != "approved":
+                raise ExperienceAdminValidationError(
+                    "runtime manifest may contain only approved experience"
+                )
+            seen.add(relative_text)
+            entries.append({"path": relative.as_posix(), "sha256": digest})
+        return entries
 
     @staticmethod
     def _manifest_bytes(entries: list[dict[str, str]]) -> bytes:
