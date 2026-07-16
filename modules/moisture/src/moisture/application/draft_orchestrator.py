@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ from typing import Any
 from moisture.application.deterministic_pipeline import DeterministicPipeline
 from moisture.application.confirmation_builder import build_confirmations
 from moisture.application.run_result import InternalMoistureRunResult, InternalOutput
+from moisture.application.service_request_builder import build_knowledge_request
 from moisture.contract.job_models import JobRequest
 from moisture.contract.mapper import map_run_result
 from moisture.infrastructure.atomic_write import AtomicResultWriter
@@ -120,6 +122,24 @@ def _confirmation_issues(outcome: object) -> tuple[BusinessConfirmationIssue, ..
                 )
             )
     return tuple(issues)
+
+
+def _knowledge_requests(job: JobRequest, outcome: object) -> tuple[dict[str, object], ...]:
+    pending = tuple(getattr(outcome, "pending_rule_matches", ()))
+    needed = bool(pending) or bool(getattr(outcome, "knowledge_guidance_needed", False))
+    rule_hash = outcome.rule_package.rules_sha256
+    digest_source = "|".join(
+        sorted(f"{item.rule_id}:{item.target_field or ''}" for item in pending)
+    ) or "general-guidance"
+    candidate_digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
+    request = build_knowledge_request(
+        root_job_id=job.root_job_id,
+        allowed_scopes=job.allowed_knowledge_scopes,
+        needed=needed,
+        rule_hash=rule_hash,
+        candidate_digest=candidate_digest,
+    )
+    return (request,) if request is not None else ()
 
 
 def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) -> int:
@@ -235,7 +255,7 @@ def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) ->
         outputs=outputs,
         file_results=outcome.file_results,
         confirmations=build_confirmations(job.root_job_id, _confirmation_issues(outcome)),
-        service_requests=(),
+        service_requests=_knowledge_requests(job, outcome),
         analysis_summary=(
             f"已处理 {outcome.processed_count} 个工作簿，"
             f"跳过 {outcome.skipped_count} 个，失败 {outcome.failed_count} 个。"
