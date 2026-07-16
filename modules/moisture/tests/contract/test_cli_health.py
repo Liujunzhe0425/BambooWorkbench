@@ -2,6 +2,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 MODULE_ROOT = Path(__file__).resolve().parents[2]
@@ -11,6 +12,10 @@ LAUNCHER = MODULE_ROOT / "run_module.bat"
 
 
 def run_cli(*arguments: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    if env is None:
+        env = os.environ.copy()
+        env.pop("VIRTUAL_ENV", None)
+        env["BAMBOO_MODULE_PYTHON"] = sys.executable
     return subprocess.run(
         [str(LAUNCHER), *arguments],
         cwd=MODULE_ROOT,
@@ -57,6 +62,8 @@ def write_fake_python_runtime(
         "if arguments and arguments[0] == '-c':\n"
         "    probe = arguments[1]\n"
         "    if 'sys.version_info' in probe and 'import jsonschema' in probe:\n"
+        f"        if {supported!r}:\n"
+        "            print('BAMBOO_MOISTURE_RUNTIME_OK_42C91E7D')\n"
         f"        raise SystemExit({0 if supported else 90})\n"
         "    if probe.strip() == 'import jsonschema':\n"
         "        raise SystemExit(0)\n"
@@ -82,7 +89,10 @@ def write_fake_python_runtime(
     return shim
 
 
-def test_version_writes_only_semver_to_stdout() -> None:
+def test_version_writes_only_semver_to_stdout(monkeypatch) -> None:
+    monkeypatch.setenv("BAMBOO_MODULE_PYTHON", "missing-explicit-python.exe")
+    monkeypatch.setenv("VIRTUAL_ENV", "missing-virtual-environment")
+
     completed = run_cli("version")
 
     assert completed.returncode == 0
@@ -90,7 +100,10 @@ def test_version_writes_only_semver_to_stdout() -> None:
     assert completed.stderr == ""
 
 
-def test_self_check_uses_stderr_for_diagnostics() -> None:
+def test_self_check_uses_stderr_for_diagnostics(monkeypatch) -> None:
+    monkeypatch.setenv("BAMBOO_MODULE_PYTHON", "missing-explicit-python.exe")
+    monkeypatch.setenv("VIRTUAL_ENV", "missing-virtual-environment")
+
     completed = run_cli("self-check")
 
     assert completed.returncode == 0
@@ -179,6 +192,28 @@ def test_launcher_probes_declared_schema_dependency() -> None:
     assert "import jsonschema" in launcher_text
     assert "sys.version_info" in launcher_text
     assert "(3, 11)" in launcher_text
+    assert launcher_text.count("BAMBOO_MOISTURE_RUNTIME_OK_42C91E7D") == 1
+    assert "print('%PYTHON_RUNTIME_SENTINEL%')" in launcher_text
+    assert "echo %PYTHON_RUNTIME_SENTINEL%" in launcher_text
+    assert re.search(r'fc\.exe"? /b', launcher_text)
+
+
+def test_active_environment_that_only_exits_zero_is_not_launched(tmp_path: Path) -> None:
+    fake_environment = tmp_path / "fake-environment"
+    scripts = fake_environment / "Scripts"
+    scripts.mkdir(parents=True)
+    fake_python = scripts / "python.exe"
+    command_processor = Path(os.environ["SYSTEMROOT"]) / "System32" / "cmd.exe"
+    fake_python.write_bytes(command_processor.read_bytes())
+    env = os.environ.copy()
+    env.pop("BAMBOO_MODULE_PYTHON", None)
+    env["VIRTUAL_ENV"] = str(fake_environment)
+
+    completed = run_cli("version", env=env)
+
+    assert completed.returncode == 4
+    assert completed.stdout == ""
+    assert "VIRTUAL_ENV" in completed.stderr
 
 
 def test_launcher_never_selects_python_from_path() -> None:
@@ -206,6 +241,7 @@ def test_isolated_launcher_without_dependency_ready_python_returns_4(
     isolated_launcher.write_bytes(LAUNCHER.read_bytes())
     env = os.environ.copy()
     env.pop("BAMBOO_MODULE_PYTHON", None)
+    env.pop("VIRTUAL_ENV", None)
     env["PATH"] = ""
 
     completed = subprocess.run(
@@ -260,6 +296,18 @@ def test_invalid_active_environment_does_not_fall_back_to_repository_venv(
     assert completed.returncode == 4
     assert completed.stdout == ""
     assert "VIRTUAL_ENV" in completed.stderr
+
+
+def test_repository_venv_runs_when_no_runtime_is_declared() -> None:
+    env = os.environ.copy()
+    env.pop("BAMBOO_MODULE_PYTHON", None)
+    env.pop("VIRTUAL_ENV", None)
+
+    completed = run_cli("version", env=env)
+
+    assert completed.returncode == 0
+    assert completed.stdout == "0.1.0\n"
+    assert completed.stderr == ""
 
 
 def test_active_repository_environment_runs_all_contract_commands(tmp_path: Path) -> None:
