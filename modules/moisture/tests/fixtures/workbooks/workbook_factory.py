@@ -48,6 +48,7 @@ def workbook_factory() -> Callable[..., Path]:
         start_row: int = 4,
         moisture_values: Sequence[object] | None = None,
         moisture_formula_cached_values: Sequence[object] | None = None,
+        mass_values: Sequence[tuple[object, object, object]] | None = None,
         mass_formulas_with_cached_values: bool = False,
         supplier: object = "  青山供应商  ",
         material_type: object = "竹丝",
@@ -83,9 +84,12 @@ def workbook_factory() -> Callable[..., Path]:
             first_row = row
             for _ in range(count):
                 sample_index += 1
-                initial = 100 + sample_index
-                dry = 52 + sample_index
-                foil = 4
+                if mass_values is None:
+                    initial = 100 + sample_index
+                    dry = 52 + sample_index
+                    foil = 4
+                else:
+                    initial, dry, foil = mass_values[sample_index - 1]
                 worksheet.cell(row, 1, department if row == first_row else None)
                 if mass_formulas_with_cached_values:
                     for column, value in ((2, initial), (3, dry), (4, foil)):
