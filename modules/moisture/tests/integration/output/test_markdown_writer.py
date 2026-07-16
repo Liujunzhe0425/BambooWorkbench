@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+# ruff: noqa: E402, I001
+
 import os
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
+
+MODULE_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(MODULE_ROOT / "src"))
+
 from moisture.domain.enums import (
     ConfirmationState,
     DisplayColor,
@@ -68,9 +75,7 @@ def _batch(
         interquartile_range=Decimal("0"),
     )
     direction = (
-        ScreenStatus.HIGH
-        if color in {DisplayColor.ORANGE, DisplayColor.RED}
-        else ScreenStatus.LOW
+        ScreenStatus.HIGH if color in {DisplayColor.ORANGE, DisplayColor.RED} else ScreenStatus.LOW
     )
     screening_color = DisplayColor.ORANGE if direction == ScreenStatus.HIGH else DisplayColor.GREEN
     reviewed = color in {DisplayColor.RED, DisplayColor.BLUE}
@@ -85,9 +90,7 @@ def _batch(
         ),
         ai_review=AIReviewDecision(
             status=(
-                ReviewStatus.REVIEW_HIGH
-                if color == DisplayColor.RED
-                else ReviewStatus.REVIEW_LOW
+                ReviewStatus.REVIEW_HIGH if color == DisplayColor.RED else ReviewStatus.REVIEW_LOW
             )
             if reviewed
             else ReviewStatus.NOT_COMPLETED,

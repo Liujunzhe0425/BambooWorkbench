@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+# ruff: noqa: E402, I001
+
 import re
+import sys
 from contextlib import closing
 from dataclasses import replace
 from datetime import UTC, date, datetime
@@ -10,6 +13,10 @@ from zipfile import ZipFile
 
 import openpyxl
 import pytest
+
+MODULE_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(MODULE_ROOT / "src"))
+
 from moisture.domain.enums import (
     ConfirmationState,
     DisplayColor,
