@@ -10,63 +10,55 @@ if defined PYTHONPATH (
 )
 
 if defined BAMBOO_MODULE_PYTHON goto explicit_python
-
-if exist "%~dp0.venv\Scripts\python.exe" (
-  "%~dp0.venv\Scripts\python.exe" -c "%PYTHON_RUNTIME_PROBE%" >nul 2>nul
-  if not errorlevel 1 goto module_venv
-)
+if defined VIRTUAL_ENV goto active_environment
 
 if exist "%~dp0..\..\.venv\Scripts\python.exe" (
   "%~dp0..\..\.venv\Scripts\python.exe" -c "%PYTHON_RUNTIME_PROBE%" >nul 2>nul
   if not errorlevel 1 goto repository_venv
 )
 
-"%SystemRoot%\System32\where.exe" python >nul 2>nul
-if not errorlevel 1 (
-  call python -c "%PYTHON_RUNTIME_PROBE%" >nul 2>nul
-  if not errorlevel 1 goto path_python
+if exist "%~dp0.venv\Scripts\python.exe" (
+  "%~dp0.venv\Scripts\python.exe" -c "%PYTHON_RUNTIME_PROBE%" >nul 2>nul
+  if not errorlevel 1 goto module_venv
 )
 
-"%SystemRoot%\System32\where.exe" py >nul 2>nul
-if not errorlevel 1 (
-  call py -3.12 -c "%PYTHON_RUNTIME_PROBE%" >nul 2>nul
-  if not errorlevel 1 goto py_312
-  call py -3 -c "%PYTHON_RUNTIME_PROBE%" >nul 2>nul
-  if not errorlevel 1 goto py_3
-)
-
->&2 echo No available Python runtime provides Python 3.11 or newer and required dependency jsonschema.
+>&2 echo No approved virtual environment provides Python 3.11 or newer and required dependency jsonschema.
 exit /b 4
 
 :explicit_python
-if not exist "%BAMBOO_MODULE_PYTHON%" (
-  >&2 echo BAMBOO_MODULE_PYTHON does not identify an available Python runtime.
-  exit /b 4
-)
+if not exist "%BAMBOO_MODULE_PYTHON%" goto explicit_python_missing
 call "%BAMBOO_MODULE_PYTHON%" -c "%PYTHON_RUNTIME_PROBE%" >nul 2>nul
-if errorlevel 1 (
-  >&2 echo BAMBOO_MODULE_PYTHON must provide Python 3.11 or newer and required dependency jsonschema.
-  exit /b 4
-)
+if errorlevel 1 goto explicit_python_invalid
 "%BAMBOO_MODULE_PYTHON%" -m moisture.cli %*
 exit /b %ERRORLEVEL%
 
-:module_venv
-"%~dp0.venv\Scripts\python.exe" -m moisture.cli %*
+:explicit_python_missing
+>&2 echo BAMBOO_MODULE_PYTHON does not identify an available Python runtime.
+exit /b 4
+
+:explicit_python_invalid
+>&2 echo BAMBOO_MODULE_PYTHON must provide Python 3.11 or newer and required dependency jsonschema.
+exit /b 4
+
+:active_environment
+if not exist "%VIRTUAL_ENV%\Scripts\python.exe" goto active_environment_missing
+"%VIRTUAL_ENV%\Scripts\python.exe" -c "%PYTHON_RUNTIME_PROBE%" >nul 2>nul
+if errorlevel 1 goto active_environment_invalid
+"%VIRTUAL_ENV%\Scripts\python.exe" -m moisture.cli %*
 exit /b %ERRORLEVEL%
+
+:active_environment_missing
+>&2 echo VIRTUAL_ENV does not identify an available Windows virtual environment.
+exit /b 4
+
+:active_environment_invalid
+>&2 echo VIRTUAL_ENV must provide Python 3.11 or newer and required dependency jsonschema.
+exit /b 4
 
 :repository_venv
 "%~dp0..\..\.venv\Scripts\python.exe" -m moisture.cli %*
 exit /b %ERRORLEVEL%
 
-:path_python
-python -m moisture.cli %*
-exit /b %ERRORLEVEL%
-
-:py_312
-py -3.12 -m moisture.cli %*
-exit /b %ERRORLEVEL%
-
-:py_3
-py -3 -m moisture.cli %*
+:module_venv
+"%~dp0.venv\Scripts\python.exe" -m moisture.cli %*
 exit /b %ERRORLEVEL%
