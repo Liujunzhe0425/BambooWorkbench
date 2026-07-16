@@ -15,13 +15,23 @@ from moisture.application.draft_orchestrator import (
     _ai_request,
     _confirmation_issues,
     _global_failure_file_results,
+    _knowledge_requests,
     _load_default_year,
     _status,
 )
+from moisture.application.review_state_applier import (
+    apply_validated_review,
+    degrade_batches,
+)
 from moisture.application.run_result import InternalMoistureRunResult, InternalOutput
+from moisture.application.service_response_validator import (
+    AIResponseValidationError,
+    validate_ai_response_text,
+)
 from moisture.contract.confirmation_reader import read_confirmation_bundle
 from moisture.contract.job_models import JobRequest
 from moisture.contract.mapper import map_run_result
+from moisture.contract.service_response_reader import read_service_responses
 from moisture.infrastructure.atomic_write import AtomicResultWriter
 from moisture.ports.writers import WorkbookReport
 from moisture.reporting.markdown_writer import AnalysisReportView, write_analysis_markdown
@@ -82,9 +92,51 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
         batches = outcome.batches
         anomalies = outcome.anomalies
 
+    knowledge_requests = _knowledge_requests(job, outcome)
     ai_request = _ai_request(job, outcome)
+    rebuilt_requests = knowledge_requests + (
+        (ai_request.request,) if ai_request.request is not None else ()
+    )
     errors = outcome.errors
     business_failed = outcome.processed_count == 0
+    if rebuilt_requests:
+        expected_requests = {
+            str(request["request_id"]): str(request["service"]) for request in rebuilt_requests
+        }
+        response_result = read_service_responses(
+            job.service_response_file,
+            root_job_id=job.root_job_id,
+            expected_requests=expected_requests,
+        )
+        if response_result.errors or response_result.envelope is None:
+            batches = degrade_batches(tuple(batches), "service_response_invalid")
+            errors = (*errors, "SERVICE_RESPONSE_DEGRADED: invalid_or_missing")
+        elif ai_request.request is not None:
+            ai_response = next(
+                (item for item in response_result.envelope.responses if item.service == "ai"),
+                None,
+            )
+            if ai_response is None or ai_response.status != "ok":
+                reason = (
+                    f"ai_{ai_response.status}" if ai_response is not None else "ai_response_missing"
+                )
+                batches = degrade_batches(tuple(batches), reason)
+                errors = (*errors, f"SERVICE_RESPONSE_DEGRADED: {reason}")
+            else:
+                try:
+                    decisions = validate_ai_response_text(ai_response.text, ai_request.request)
+                    reviewed = apply_validated_review(
+                        tuple(batches),
+                        tuple(anomalies),
+                        ai_request,
+                        decisions,
+                        outcome.rule_package,
+                    )
+                    batches = reviewed.batches
+                    anomalies = reviewed.anomalies
+                except AIResponseValidationError:
+                    batches = degrade_batches(tuple(batches), "invalid_ai_response")
+                    errors = (*errors, "SERVICE_RESPONSE_DEGRADED: invalid_ai_response")
     outputs: tuple[InternalOutput, ...] = ()
     if batches:
         completed_artifacts: list[Path] = []

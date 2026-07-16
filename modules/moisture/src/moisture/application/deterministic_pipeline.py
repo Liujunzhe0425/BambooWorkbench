@@ -9,6 +9,7 @@ from pathlib import Path
 from moisture.adapters.excel.source_parser import ExcelSourceParser
 from moisture.adapters.rules.builtin_evaluators import evaluate_rules
 from moisture.adapters.rules.package_loader import RulePackageLoader
+from moisture.application.ai_request_builder import candidates_from_batches
 from moisture.application.run_result import InternalAnomaly, ReviewState
 from moisture.domain.enums import (
     ConfirmationState,
@@ -17,6 +18,7 @@ from moisture.domain.enums import (
     ScreenStatus,
 )
 from moisture.domain.models import AIReviewDecision, ScreeningDecision
+from moisture.domain.review import AIReviewCandidate
 from moisture.domain.rules import PendingRuleMatch, RulePackageSnapshot
 from moisture.domain.statistics import compute_batch_statistics
 from moisture.infrastructure.file_integrity import FileIntegrityGuard
@@ -34,6 +36,7 @@ class DeterministicPipelineResult:
     failed_count: int
     rule_package: RulePackageSnapshot
     pending_rule_matches: tuple[PendingRuleMatch, ...] = ()
+    ai_review_candidates: tuple[AIReviewCandidate, ...] = ()
     anomalies: tuple[InternalAnomaly, ...] = ()
     errors: tuple[str, ...] = ()
 
@@ -220,8 +223,9 @@ class DeterministicPipeline:
                 if "fingerprint" in locals():
                     del fingerprint
 
+        frozen_batches = tuple(batches)
         return DeterministicPipelineResult(
-            batches=tuple(batches),
+            batches=frozen_batches,
             file_results=tuple(file_results),
             input_count=len(input_files),
             processed_count=processed,
@@ -229,6 +233,7 @@ class DeterministicPipeline:
             failed_count=failed,
             rule_package=snapshot,
             pending_rule_matches=tuple(pending_matches),
+            ai_review_candidates=candidates_from_batches(frozen_batches, snapshot),
             anomalies=tuple(anomalies),
             errors=tuple(errors),
         )

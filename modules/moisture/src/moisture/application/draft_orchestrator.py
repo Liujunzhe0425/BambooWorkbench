@@ -2,22 +2,26 @@
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from moisture.application.deterministic_pipeline import DeterministicPipeline
+from moisture.application.ai_request_builder import (
+    AIRequestBuildResult,
+    build_ai_request,
+    candidates_from_batches,
+)
 from moisture.application.confirmation_builder import build_confirmations
-from moisture.application.ai_request_builder import AIRequestBuildResult, build_ai_request
+from moisture.application.deterministic_pipeline import DeterministicPipeline
 from moisture.application.run_result import InternalMoistureRunResult, InternalOutput
 from moisture.application.service_request_builder import build_knowledge_request
 from moisture.contract.job_models import JobRequest
 from moisture.contract.mapper import map_run_result
+from moisture.domain.models import BusinessConfirmationIssue
 from moisture.infrastructure.atomic_write import AtomicResultWriter
 from moisture.ports.writers import WorkbookReport
-from moisture.domain.models import BusinessConfirmationIssue
 from moisture.reporting.markdown_writer import AnalysisReportView, write_analysis_markdown
 from moisture.reporting.xlsx_writer import write_summary_xlsx
 
@@ -129,9 +133,10 @@ def _knowledge_requests(job: JobRequest, outcome: object) -> tuple[dict[str, obj
     pending = tuple(getattr(outcome, "pending_rule_matches", ()))
     needed = bool(pending) or bool(getattr(outcome, "knowledge_guidance_needed", False))
     rule_hash = outcome.rule_package.rules_sha256
-    digest_source = "|".join(
-        sorted(f"{item.rule_id}:{item.target_field or ''}" for item in pending)
-    ) or "general-guidance"
+    digest_source = (
+        "|".join(sorted(f"{item.rule_id}:{item.target_field or ''}" for item in pending))
+        or "general-guidance"
+    )
     candidate_digest = hashlib.sha256(digest_source.encode("utf-8")).hexdigest()
     request = build_knowledge_request(
         root_job_id=job.root_job_id,
@@ -144,9 +149,12 @@ def _knowledge_requests(job: JobRequest, outcome: object) -> tuple[dict[str, obj
 
 
 def _ai_request(job: JobRequest, outcome: object) -> AIRequestBuildResult:
+    candidates = tuple(getattr(outcome, "ai_review_candidates", ()))
+    if not candidates:
+        candidates = candidates_from_batches(tuple(outcome.batches), outcome.rule_package)
     return build_ai_request(
         root_job_id=job.root_job_id,
-        candidates=tuple(getattr(outcome, "ai_review_candidates", ())),
+        candidates=candidates,
         rule_hash=outcome.rule_package.rules_sha256,
     )
 
