@@ -276,7 +276,16 @@ def _write_trends(workbook: Any, report: WorkbookReport, formats: dict[str, Any]
     headers = ("序号", "批次编号", "检测日期", "供应商", "均值", "区间值", "初筛下限", "初筛上限")
     worksheet = workbook.add_worksheet(SHEET_NAMES[2])
     _write_headers(worksheet, headers, formats["header"])
-    for row_index, batch in enumerate(report.batches, start=1):
+    trend_batches = tuple(
+        sorted(
+            report.batches,
+            key=lambda batch: (
+                batch.record.test_date or date.max,
+                batch.record.record_id,
+            ),
+        )
+    )
+    for row_index, batch in enumerate(trend_batches, start=1):
         values = (
             row_index,
             batch.record.record_id,
@@ -302,9 +311,9 @@ def _write_trends(workbook: Any, report: WorkbookReport, formats: dict[str, Any]
     worksheet.set_column(0, 1, 14)
     worksheet.set_column(2, 3, 16)
     worksheet.set_column(4, 7, 13)
-    if not report.batches:
+    if not trend_batches:
         return
-    last_row = len(report.batches)
+    last_row = len(trend_batches)
     average_chart = workbook.add_chart({"type": "scatter", "subtype": "straight_with_markers"})
     for column, name, color in (
         (4, "批次均值", "4472C4"),

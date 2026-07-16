@@ -50,10 +50,17 @@ class SourceFileModified(ValueError):
 _LABEL_ALIASES = {
     "supplier": {"供应商", "供货商", "供应单位", "送样单位"},
     "material_type": {"物料类型", "物料名称", "品名", "材料"},
-    "arrival_date": {"来料日期", "到货日期", "进厂日期"},
+    "arrival_date": {"来料日期", "到货日期", "到货时间", "进厂日期"},
     "test_date": {"检测日期", "检验日期", "测试日期"},
     "total_weight": {"总重量", "总重", "来料重量", "重量"},
 }
+
+_CONTEXT_YEAR_PATTERN = re.compile(
+    r"^(?P<year>(?:19|20)\d{2})年(?:\d{1,2}月(?:份)?)?$"
+)
+_LEGACY_TITLE_PATTERN = re.compile(
+    r"^(?P<supplier>.+?)(?P<material_type>原竹丝|竹丝)水分检测$"
+)
 
 
 def _as_decimal(value: object) -> Decimal:
@@ -107,6 +114,34 @@ def _extract_metadata(worksheet: Worksheet, header_row: int) -> dict[str, object
                         result[field] = candidate
                         break
     return result
+
+
+def _extract_legacy_title_metadata(
+    worksheet: Worksheet, header_row: int
+) -> dict[str, str]:
+    matches: list[dict[str, str]] = []
+    for row in range(1, header_row):
+        for column in range(1, worksheet.max_column + 1):
+            value = worksheet.cell(row, column).value
+            if value is None:
+                continue
+            match = _LEGACY_TITLE_PATTERN.fullmatch(str(value).strip())
+            if match is not None:
+                matches.append(match.groupdict())
+    if len(matches) > 1 and len({tuple(item.items()) for item in matches}) > 1:
+        raise WorkbookStructureError("multiple legacy titles contain conflicting metadata")
+    return matches[0] if matches else {}
+
+
+def _infer_default_year_from_path(path: Path) -> int | None:
+    years = {
+        int(match.group("year"))
+        for parent in path.parents
+        if (match := _CONTEXT_YEAR_PATTERN.fullmatch(parent.name)) is not None
+    }
+    if len(years) > 1:
+        raise WorkbookStructureError("input path contains conflicting year contexts")
+    return next(iter(years)) if years else None
 
 
 _FULL_DATE_PATTERNS = (
@@ -217,6 +252,12 @@ class ExcelSourceParser:
             formula_sheet = formula_book[candidate.sheet_name]
             value_sheet = value_book[candidate.sheet_name]
             metadata = _extract_metadata(formula_sheet, candidate.header_row)
+            title_metadata = _extract_legacy_title_metadata(
+                formula_sheet, candidate.header_row
+            )
+            for field in ("supplier", "material_type"):
+                if metadata[field] is None and field in title_metadata:
+                    metadata[field] = title_metadata[field]
             samples, departments = self._parse_samples(formula_sheet, value_sheet, candidate)
 
         explicit_years = {
@@ -225,7 +266,10 @@ class ExcelSourceParser:
             if (year := _explicit_year(value)) is not None
         }
         inferred_year = next(iter(explicit_years)) if len(explicit_years) == 1 else None
-        date_year = inferred_year if inferred_year is not None else default_year
+        context_year = (
+            default_year if default_year is not None else _infer_default_year_from_path(path)
+        )
+        date_year = inferred_year if inferred_year is not None else context_year
 
         return BatchRecord(
             record_id=path.stem,

@@ -229,6 +229,26 @@ def test_workbook_has_named_charts_and_plain_untrusted_text(
         )
 
 
+def test_trend_rows_are_sorted_by_detection_date(
+    tmp_path: Path, report: WorkbookReport
+) -> None:
+    dates = (date(2026, 4, 29), date(2026, 4, 8), date(2026, 4, 10), date(2026, 4, 9))
+    unsorted = WorkbookReport(
+        started_at=report.started_at,
+        batches=tuple(
+            replace(batch, record=replace(batch.record, test_date=test_date))
+            for batch, test_date in zip(report.batches, dates, strict=True)
+        ),
+    )
+
+    output = write_summary_xlsx(unsorted, tmp_path / "output")
+
+    with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
+        trend = workbook[SHEET_NAMES[2]]
+        assert [trend.cell(row, 2).value for row in range(2, 6)] == ["R2", "R4", "R3", "R1"]
+        assert [trend.cell(row, 3).value.date() for row in range(2, 6)] == sorted(dates)
+
+
 def test_workbook_is_deterministic(tmp_path: Path, report: WorkbookReport) -> None:
     first = write_summary_xlsx(report, tmp_path / "first")
     second = write_summary_xlsx(report, tmp_path / "second")

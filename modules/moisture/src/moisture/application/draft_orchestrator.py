@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,9 @@ from moisture.reporting.xlsx_writer import write_summary_xlsx
 
 class ModuleConfigError(ValueError):
     """The optional, module-owned deterministic configuration is invalid."""
+
+
+_FORMULA_CONFIRMATION_TOLERANCE = Decimal("0.0001")
 
 
 def _reject_duplicate_config_keys(
@@ -112,7 +116,11 @@ def _confirmation_issues(outcome: object) -> tuple[BusinessConfirmationIssue, ..
         for sample in record.samples:
             source_value = sample.source_moisture_value
             verified_value = sample.verified_moisture_value
-            if source_value is None or verified_value is None or source_value == verified_value:
+            if (
+                source_value is None
+                or verified_value is None
+                or abs(source_value - verified_value) <= _FORMULA_CONFIRMATION_TOLERANCE
+            ):
                 continue
             issues.append(
                 BusinessConfirmationIssue(

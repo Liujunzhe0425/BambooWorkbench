@@ -119,6 +119,93 @@ def test_reads_labelled_metadata_and_preserves_raw_values(tmp_path: Path, workbo
     assert record.total_weight_kg == Decimal("1234.5")
 
 
+def test_legacy_monthly_layout_uses_parent_year_and_title_metadata(
+    tmp_path: Path, workbook_factory
+) -> None:
+    path = workbook_factory(
+        tmp_path / "2026年4月份" / "legacy.xlsx",
+        start_row=3,
+        departments={"二厂": 4, "品质": 4},
+        legacy_title="脱敏供应方原竹丝水分检测",
+        total_weight="13270kg",
+    )
+
+    record = ExcelSourceParser().parse(path)
+
+    assert record.supplier == "脱敏供应方"
+    assert record.material_type == "原竹丝"
+    assert record.arrival_date == date(2026, 4, 7)
+    assert record.test_date == date(2026, 4, 8)
+    assert record.total_weight_kg == Decimal("13270")
+    assert len(record.samples) == 8
+
+
+def test_legacy_monthly_layout_without_year_context_stays_invalid(
+    tmp_path: Path, workbook_factory
+) -> None:
+    path = workbook_factory(
+        tmp_path / "legacy.xlsx",
+        start_row=3,
+        legacy_title="脱敏供应方竹丝水分检测",
+    )
+
+    with pytest.raises(WorkbookStructureError, match="default_year"):
+        ExcelSourceParser().parse(path)
+
+
+def test_conflicting_parent_year_contexts_are_rejected(
+    tmp_path: Path, workbook_factory
+) -> None:
+    path = workbook_factory(
+        tmp_path / "2025年" / "2026年4月份" / "legacy.xlsx",
+        start_row=3,
+        legacy_title="脱敏供应方竹丝水分检测",
+    )
+
+    with pytest.raises(WorkbookStructureError, match="conflicting year contexts"):
+        ExcelSourceParser().parse(path)
+
+
+def test_explicit_default_year_has_priority_over_parent_context(
+    tmp_path: Path, workbook_factory
+) -> None:
+    path = workbook_factory(
+        tmp_path / "2025年4月份" / "legacy.xlsx",
+        start_row=3,
+        legacy_title="脱敏供应方竹丝水分检测",
+    )
+
+    record = ExcelSourceParser().parse(path, default_year=2026)
+
+    assert record.arrival_date == date(2026, 4, 7)
+    assert record.test_date == date(2026, 4, 8)
+
+
+def test_explicit_metadata_has_priority_over_legacy_title(
+    tmp_path: Path, workbook_factory
+) -> None:
+    from openpyxl import load_workbook
+
+    path = workbook_factory(
+        tmp_path / "2026年4月份" / "legacy.xlsx",
+        start_row=3,
+        legacy_title="标题供应方原竹丝水分检测",
+    )
+    workbook = load_workbook(path)
+    worksheet = workbook.active
+    worksheet["B2"] = "供应商"
+    worksheet["C2"] = "显式供应方"
+    worksheet["H2"] = "物料类型"
+    worksheet["I2"] = "显式材料"
+    workbook.save(path)
+    workbook.close()
+
+    record = ExcelSourceParser().parse(path)
+
+    assert record.supplier == "显式供应方"
+    assert record.material_type == "显式材料"
+
+
 def test_formatting_residue_does_not_create_samples(tmp_path: Path, workbook_factory) -> None:
     path = workbook_factory(tmp_path / "formatted.xlsx", departments={"品质": 2})
 

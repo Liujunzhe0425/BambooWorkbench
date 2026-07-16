@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 MODULE_ROOT = Path(__file__).resolve().parents[2]
@@ -46,3 +47,20 @@ def test_reliable_excel_value_does_not_prompt(tmp_path: Path, workbook_factory) 
     assert run_draft(_job(source, output)) == 0
     result = json.loads((output / "result.json").read_text(encoding="utf-8"))
     assert all(item["field"] != "sample_1" for item in result["confirmations"])
+
+
+def test_excel_rounding_tail_within_formula_tolerance_does_not_prompt(
+    tmp_path: Path, workbook_factory
+) -> None:
+    source = workbook_factory(
+        tmp_path / "rounded.xlsx",
+        departments={"品质": 1},
+        moisture_formula_cached_values=[Decimal("0.494845360824742")],
+    )
+    output = tmp_path / "output"
+
+    assert run_draft(_job(source, output)) == 0
+    result = json.loads((output / "result.json").read_text(encoding="utf-8"))
+
+    assert result["status"] == "success"
+    assert result["confirmations"] == []

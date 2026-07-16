@@ -50,6 +50,9 @@ def workbook_factory() -> Callable[..., Path]:
         moisture_formula_cached_values: Sequence[object] | None = None,
         mass_values: Sequence[tuple[object, object, object]] | None = None,
         mass_formulas_with_cached_values: bool = False,
+        legacy_title: str | None = None,
+        legacy_arrival_date: object = "4.7",
+        legacy_test_date: object = "4.8",
         supplier: object = "  青山供应商  ",
         material_type: object = "竹丝",
         arrival_date: object = "7月12日",
@@ -61,17 +64,24 @@ def workbook_factory() -> Callable[..., Path]:
         worksheet = workbook.active
         worksheet.title = sheet_name
 
-        metadata = (
-            ("供应商", supplier),
-            ("物料类型", material_type),
-            ("来料日期", arrival_date),
-            ("检测日期", test_date),
-            ("总重量", total_weight),
-        )
-        for column_offset, (label, value) in enumerate(metadata):
-            column = 1 + column_offset * 2
-            worksheet.cell(1, column, label)
-            worksheet.cell(1, column + 1, value)
+        if legacy_title is None:
+            metadata = (
+                ("供应商", supplier),
+                ("物料类型", material_type),
+                ("来料日期", arrival_date),
+                ("检测日期", test_date),
+                ("总重量", total_weight),
+            )
+            for column_offset, (label, value) in enumerate(metadata):
+                column = 1 + column_offset * 2
+                worksheet.cell(1, column, label)
+                worksheet.cell(1, column + 1, value)
+        else:
+            worksheet.merge_cells("A1:G1")
+            worksheet["A1"] = legacy_title
+            worksheet["A2"] = f"到货时间：{legacy_arrival_date}"
+            worksheet["D2"] = f"检测日期：{legacy_test_date}"
+            worksheet["F2"] = f"总重：{total_weight}"
 
         headers = ("取样部门", "初始质量", "烘干质量", "锡纸质量", "相对含水率")
         for column, header in enumerate(headers, start=1):
