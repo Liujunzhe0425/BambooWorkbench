@@ -47,19 +47,13 @@ def _error(code: str, field: str, message: str) -> ProtocolReadError:
 
 def _load_payload(path: Path | None) -> tuple[object | None, ProtocolReadError | None]:
     if path is None or not path.is_file():
-        return None, _error(
-            "PROTOCOL_FILE_MISSING", "$", "confirmation protocol file is missing"
-        )
+        return None, _error("PROTOCOL_FILE_MISSING", "$", "confirmation protocol file is missing")
     try:
         return json.loads(path.read_text(encoding="utf-8")), None
     except (json.JSONDecodeError, UnicodeError):
-        return None, _error(
-            "PROTOCOL_JSON_INVALID", "$", "confirmation protocol is not valid JSON"
-        )
+        return None, _error("PROTOCOL_JSON_INVALID", "$", "confirmation protocol is not valid JSON")
     except OSError:
-        return None, _error(
-            "PROTOCOL_FILE_UNREADABLE", "$", "confirmation protocol cannot be read"
-        )
+        return None, _error("PROTOCOL_FILE_UNREADABLE", "$", "confirmation protocol cannot be read")
 
 
 def read_confirmation_bundle(
@@ -67,6 +61,7 @@ def read_confirmation_bundle(
     *,
     root_job_id: str,
     expected_confirmation_ids: Collection[str],
+    require_complete: bool = True,
 ) -> ConfirmationReadResult:
     """Read a bundle without applying answers or deciding the task status."""
 
@@ -108,9 +103,7 @@ def read_confirmation_bundle(
     job_id = payload.get("job_id")
     if not isinstance(job_id, str) or not job_id:
         errors.append(
-            _error(
-                "CONFIRMATION_BUNDLE_INVALID", "job_id", "job identity must be a string"
-            )
+            _error("CONFIRMATION_BUNDLE_INVALID", "job_id", "job identity must be a string")
         )
     elif job_id != root_job_id:
         errors.append(
@@ -126,11 +119,7 @@ def read_confirmation_bundle(
     seen_ids: set[str] = set()
     expected_ids = set(expected_confirmation_ids)
     if not isinstance(raw_answers, list):
-        errors.append(
-            _error(
-                "CONFIRMATION_BUNDLE_INVALID", "answers", "answers must be an array"
-            )
-        )
+        errors.append(_error("CONFIRMATION_BUNDLE_INVALID", "answers", "answers must be an array"))
     else:
         for index, raw_answer in enumerate(raw_answers):
             field = f"answers.{index}"
@@ -146,9 +135,9 @@ def read_confirmation_bundle(
                 "remember_mapping",
             }
             required_answer_fields = {"confirmation_id", "value"}
-            if not required_answer_fields.issubset(raw_answer) or not set(
-                raw_answer
-            ).issubset(allowed_answer_fields):
+            if not required_answer_fields.issubset(raw_answer) or not set(raw_answer).issubset(
+                allowed_answer_fields
+            ):
                 errors.append(
                     _error(
                         "CONFIRMATION_ANSWER_INVALID",
@@ -169,9 +158,7 @@ def read_confirmation_bundle(
                     )
                 )
                 continue
-            if not isinstance(apply_to_batch, bool) or not isinstance(
-                remember_mapping, bool
-            ):
+            if not isinstance(apply_to_batch, bool) or not isinstance(remember_mapping, bool):
                 errors.append(
                     _error(
                         "CONFIRMATION_ANSWER_INVALID",
@@ -207,19 +194,18 @@ def read_confirmation_bundle(
                 )
             )
 
-    for missing_id in sorted(expected_ids - seen_ids):
-        errors.append(
-            _error(
-                "CONFIRMATION_ID_MISSING",
-                f"answers.{missing_id}",
-                "expected confirmation answer is missing",
+    if require_complete:
+        for missing_id in sorted(expected_ids - seen_ids):
+            errors.append(
+                _error(
+                    "CONFIRMATION_ID_MISSING",
+                    f"answers.{missing_id}",
+                    "expected confirmation answer is missing",
+                )
             )
-        )
 
     if errors:
         return ConfirmationReadResult(bundle=None, errors=tuple(errors))
     return ConfirmationReadResult(
-        bundle=ConfirmationBundle(
-            schema_version="1.0", job_id=root_job_id, answers=tuple(answers)
-        )
+        bundle=ConfirmationBundle(schema_version="1.0", job_id=root_job_id, answers=tuple(answers))
     )

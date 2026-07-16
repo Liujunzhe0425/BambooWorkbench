@@ -4,22 +4,19 @@ import argparse
 import json
 import sys
 from collections.abc import Sequence
-from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
 
 from moisture import __version__
 from moisture.application.draft_orchestrator import run_draft
-from moisture.contract.bootstrap_result import build_bootstrap_result
+from moisture.application.finalize_orchestrator import run_finalize
 from moisture.contract.job_models import JobRequest
 from moisture.contract.progress import emit_progress
 from moisture.contract.schema_lock import collect_schema_lock_issues
 from moisture.contract.validators import (
     ContractValidationError,
     validate_job_payload,
-    validate_result_payload,
 )
-from moisture.infrastructure.atomic_write import write_json_atomic
 from moisture.infrastructure.diagnostics import collect_runtime_issues
 
 
@@ -43,9 +40,7 @@ def _load_job(job_path: Path) -> JobRequest:
     if not job_path.is_file():
         raise JobValidationError("job file does not exist")
     try:
-        payload = json.loads(
-            job_path.read_text(encoding="utf-8"), parse_float=Decimal
-        )
+        payload = json.loads(job_path.read_text(encoding="utf-8"), parse_float=Decimal)
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise JobValidationError("job file is not readable JSON") from exc
     return validate_job_payload(payload)
@@ -60,16 +55,12 @@ def _resolve_bootstrap_path(path: Path, field: str) -> Path:
 
 def _validate_bootstrap_paths(job_path: Path, job: JobRequest) -> None:
     resolved_job = _resolve_bootstrap_path(job_path, "job path")
-    resolved_inputs = [
-        _resolve_bootstrap_path(path, "input path") for path in job.input_files
-    ]
+    resolved_inputs = [_resolve_bootstrap_path(path, "input path") for path in job.input_files]
     if any(path.suffix.lower() != ".xlsx" for path in resolved_inputs):
         raise JobValidationError("input_files must contain only .xlsx files")
 
     resolved_output_dir = _resolve_bootstrap_path(job.output_dir, "output_dir")
-    result_target = _resolve_bootstrap_path(
-        resolved_output_dir / "result.json", "result target"
-    )
+    result_target = _resolve_bootstrap_path(resolved_output_dir / "result.json", "result target")
     if result_target == resolved_job or result_target in resolved_inputs:
         raise JobValidationError("result target must not overwrite job or input files")
     if resolved_output_dir == resolved_job.parent:
@@ -89,15 +80,12 @@ def _run(job_path: Path) -> int:
         sys.stderr.write(f"moisture run: invalid job: {exc}\n")
         return 2
 
-    started_at = datetime.now(UTC).isoformat()
     emit_progress(0, "Moisture processing started")
     try:
         if job.phase.value == "draft":
             run_draft(job)
         else:
-            result = build_bootstrap_result(job.to_payload(), started_at=started_at)
-            validated_result = validate_result_payload(result).to_payload()
-            write_json_atomic(job.output_dir / "result.json", validated_result)
+            run_finalize(job)
     except Exception:
         sys.stderr.write("moisture run: unable to write result.json\n")
         return 3

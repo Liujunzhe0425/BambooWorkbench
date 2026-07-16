@@ -35,9 +35,7 @@ class JobModelError(ValueError):
 
 def _path(value: str, field: str) -> Path:
     if not PureWindowsPath(value).is_absolute():
-        raise JobModelError(
-            "CONTRACT_SEMANTIC_INVALID", field, "path must be absolute"
-        )
+        raise JobModelError("CONTRACT_SEMANTIC_INVALID", field, "path must be absolute")
     return Path(value)
 
 
@@ -81,12 +79,11 @@ class JobRequest:
         phase = JobPhase(payload["phase"])
         parent_job_id = payload.get("parent_job_id")
         confirmation_value = payload.get("confirmation_file")
-        if phase is JobPhase.FINALIZE and (not parent_job_id or not confirmation_value):
-            missing = "parent_job_id" if not parent_job_id else "confirmation_file"
+        if phase is JobPhase.FINALIZE and not parent_job_id:
             raise JobModelError(
                 "CONTRACT_SEMANTIC_INVALID",
-                missing,
-                "finalize jobs require parent identity and confirmation file",
+                "parent_job_id",
+                "finalize jobs require parent identity",
             )
 
         return cls(
@@ -106,9 +103,7 @@ class JobRequest:
                 else None
             ),
             ai_enabled=payload.get("ai_enabled", False),
-            allowed_knowledge_scopes=tuple(
-                payload.get("allowed_knowledge_scopes", [])
-            ),
+            allowed_knowledge_scopes=tuple(payload.get("allowed_knowledge_scopes", [])),
             parent_job_id=parent_job_id,
             confirmation_file=(
                 _path(confirmation_value, "confirmation_file")
@@ -137,9 +132,7 @@ class JobRequest:
             "ai_enabled": self.ai_enabled,
             "allowed_knowledge_scopes": list(self.allowed_knowledge_scopes),
             "parent_job_id": self.parent_job_id,
-            "confirmation_file": (
-                str(self.confirmation_file) if self.confirmation_file else None
-            ),
+            "confirmation_file": (str(self.confirmation_file) if self.confirmation_file else None),
             "service_response_file": (
                 str(self.service_response_file) if self.service_response_file else None
             ),
