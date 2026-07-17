@@ -10,6 +10,7 @@ if defined PYTHONPATH (
   set "PYTHONPATH=%~dp0src"
 )
 
+if defined BAMBOO_MODULE_EXECUTABLE goto packaged_executable
 if defined BAMBOO_MODULE_PYTHON goto explicit_python
 if defined VIRTUAL_ENV goto active_environment
 
@@ -24,6 +25,15 @@ if exist "%~dp0.venv\Scripts\python.exe" (
 )
 
 >&2 echo No approved virtual environment provides Python 3.11 or newer and required dependency jsonschema.
+exit /b 4
+
+:packaged_executable
+if not exist "%BAMBOO_MODULE_EXECUTABLE%" goto packaged_executable_missing
+"%BAMBOO_MODULE_EXECUTABLE%" %*
+exit /b %ERRORLEVEL%
+
+:packaged_executable_missing
+>&2 echo BAMBOO_MODULE_EXECUTABLE does not identify the packaged moisture runtime.
 exit /b 4
 
 :explicit_python
@@ -65,16 +75,16 @@ exit /b %ERRORLEVEL%
 exit /b %ERRORLEVEL%
 
 :probe_python
-set "PYTHON_PROBE_OUTPUT=%TEMP%\bamboo-moisture-probe-%RANDOM%-%RANDOM%.out"
-set "PYTHON_PROBE_EXPECTED=%TEMP%\bamboo-moisture-probe-%RANDOM%-%RANDOM%.expected"
->"%PYTHON_PROBE_EXPECTED%" echo %PYTHON_RUNTIME_SENTINEL%
-call "%~1" -c "%PYTHON_RUNTIME_PROBE%" >"%PYTHON_PROBE_OUTPUT%" 2>nul
-if errorlevel 1 goto probe_python_failed
-"%SystemRoot%\System32\fc.exe" /b "%PYTHON_PROBE_OUTPUT%" "%PYTHON_PROBE_EXPECTED%" >nul 2>nul
-if errorlevel 1 goto probe_python_failed
-del /q "%PYTHON_PROBE_OUTPUT%" "%PYTHON_PROBE_EXPECTED%" >nul 2>nul
-exit /b 0
-
-:probe_python_failed
-del /q "%PYTHON_PROBE_OUTPUT%" "%PYTHON_PROBE_EXPECTED%" >nul 2>nul
+setlocal EnableDelayedExpansion
+set "PYTHON_PROBE_RESULT="
+set /a PYTHON_PROBE_LINES=0
+for /f "usebackq delims=" %%P in (`call "%~1" -c "%PYTHON_RUNTIME_PROBE%" 2^>nul`) do (
+  set /a PYTHON_PROBE_LINES+=1
+  set "PYTHON_PROBE_RESULT=%%P"
+)
+if !PYTHON_PROBE_LINES! EQU 1 if "!PYTHON_PROBE_RESULT!"=="%PYTHON_RUNTIME_SENTINEL%" (
+  endlocal
+  exit /b 0
+)
+endlocal
 exit /b 1

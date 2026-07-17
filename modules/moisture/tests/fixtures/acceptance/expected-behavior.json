@@ -6,17 +6,17 @@
     "minimum": "0.5",
     "maximum": "0.52",
     "range_value": "0.02",
-    "pending_directions": []
+    "display_color": "none"
   },
   "high_suspect": {
     "sample_count": 1,
     "mean": "0.6",
-    "pending_directions": ["high"]
+    "display_color": "orange"
   },
   "low_suspect": {
     "sample_count": 1,
     "mean": "0.4",
-    "pending_directions": ["low"]
+    "display_color": "green"
   },
   "eleven_samples": {"status": "failed", "failed_count": 1},
   "corrupt": {"status": "failed", "failed_count": 1},

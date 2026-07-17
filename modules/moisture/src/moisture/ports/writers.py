@@ -31,6 +31,15 @@ class ExperienceCitation:
 
 
 @dataclass(frozen=True, slots=True)
+class KnowledgeCitation:
+    record_id: str
+    namespace: str
+    title: str
+    content: str
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
 class WorkbookBatch:
     record: BatchRecord
     statistics: BatchStatistics

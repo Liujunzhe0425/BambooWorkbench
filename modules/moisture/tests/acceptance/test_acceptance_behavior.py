@@ -99,9 +99,8 @@ def test_synthetic_formula_statistics_and_rule_acceptance_cases(
             assert statistics.maximum == Decimal(case["maximum"])
             assert statistics.range_value == Decimal(case["range_value"])
         outcome = DeterministicPipeline().run((path,))
-        assert [item.direction for item in outcome.pending_rule_matches] == case[
-            "pending_directions"
-        ]
+        assert outcome.pending_rule_matches == ()
+        assert outcome.batches[0].final_display_color.value == case["display_color"]
         assert path.read_bytes() == before
 
 

@@ -46,8 +46,9 @@ JSON Lines 写入 stdout，普通诊断写入 stderr。任务输出目录中包�
 
 ## 通过主框架 GUI 测试正式模块
 
-普通启动命令 `.\.venv\Scripts\python.exe -m app` 默认使用 `mock_modules`，
-不会调用本目录中的正式水分模块。开发测试时，请从 BambooWorkbench 仓库根目录运行：
+普通启动命令 `.\.venv\Scripts\python.exe -m app` 默认发现并调用正式
+`modules/moisture`；只有显式传入 `--mock-modules` 时才使用 `mock_modules`。开发测试时，
+请从 BambooWorkbench 仓库根目录运行：
 
 ```powershell
 .\.venv\Scripts\python.exe -c "from pathlib import Path; from app.__main__ import main; raise SystemExit(main(data_root=Path.cwd(), use_mocks=False))"
@@ -74,8 +75,8 @@ Registry 扫描 modules/moisture
 `tasks/<job_id>/output-draft/`；数据库、日志和缓存位于仓库本地的忽略目录，
 不属于源码提交。成功批次应生成五张工作表，以及来料平均含水率和区间值趋势图。
 
-当前 `0.55/0.47` 阈值仍待业务批准，因此即使统计值超过该范围，测试结果也不会
-自动着色。普通启动与正式模块启动的区别是主框架配置责任，不应通过修改模块绕过。
+`0.55/0.47` 阈值及“竹丝/原竹丝”材料范围已由负责人于 2026-07-17 批准，命中后
+分别形成橙色/绿色确定性筛查提示。普通启动与 Mock 启动的区别仍由主框架配置控制。
 
 ## draft、finalize 与辅助证据
 
@@ -93,9 +94,9 @@ finalize 使用 `parent_job_id` 重建 draft 根身份，重新运行完整确�
 运行时规则包与经验库均只读；正式检索只使用有效期内的 approved 经验。经验编辑工具
 是离线管理端，不被 `run --job`、draft 或 finalize 引用。
 
-当前示例阈值 `0.55`（高值）和 `0.47`（低值）保持
-`pending_confirmation`，尚未获得业务批准，不是正式生产标准，也不会作为已批准规则
-自动参与正式判定。生产使用前必须由业务负责人确认并通过受治理的新版本发布。
+当前阈值 `0.55`（高值）和 `0.47`（低值）处于 `confirmed`，适用于“竹丝”和
+“原竹丝”，规则包版本为 `default-v1-approved`。橙/绿只表示确定性筛查疑似，
+不是正式错误、不合格或责任结论；规则运行时保持只读。
 
 ## 文档与测试
 
@@ -114,6 +115,6 @@ finalize 使用 `parent_job_id` 重建 draft 根身份，重新运行完整确�
 ## 已知限制
 
 - 当前仅支持计划定义的 Excel 模板语义与 1—10 个样本；
-- 未批准阈值不构成生产判定标准；
+- 当前阈值只构成筛查标准，不构成不合格或责任判定；
 - AI 和知识服务仅提供辅助证据，完全不可用时仍输出确定性结果；
 - 模块不包含 Web、身份、Session、数据库、Provider、HTTP 或在线发布服务。

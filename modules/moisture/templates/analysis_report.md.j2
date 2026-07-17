@@ -36,6 +36,11 @@
 ## 辅助服务记录与降级
 
 - 候选总数：{{ report.candidate_total }}；发送数：{{ report.candidate_sent }}；省略数：{{ report.candidate_omitted }}。
+{% for citation in report.knowledge_citations %}
+- Knowledge `{{ citation.namespace }}/{{ citation.record_id }}`《{{ citation.title }}》：{{ citation.content }}（来源：`{{ citation.source }}`）。该内容仅供复核引用，不参与颜色或责任判定。
+{% else %}
+- 无 Knowledge 报告引用。
+{% endfor %}
 {% for batch in report.reviewed_batches %}
 - `{{ batch.record.record_id }}`：{{ batch.ai_review.rationale }}；辅助颜色 {{ batch.ai_review.display_color.value }}。
 {% else %}

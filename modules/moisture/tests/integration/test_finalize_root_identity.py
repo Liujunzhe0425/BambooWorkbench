@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 MODULE_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(MODULE_ROOT / "src"))
@@ -58,7 +59,11 @@ def test_finalize_rebuilds_confirmation_ids_from_parent_not_current_id(
         allowed_knowledge_scopes=("moisture",),
         parent_job_id="draft-root",
     )
+    knowledge_outcome = SimpleNamespace(
+        **{field: getattr(outcome, field) for field in outcome.__dataclass_fields__},
+        knowledge_guidance_needed=True,
+    )
     assert (
-        _knowledge_requests(draft_job, outcome)[0]["request_id"]
-        == _knowledge_requests(finalize_job, outcome)[0]["request_id"]
+        _knowledge_requests(draft_job, knowledge_outcome)[0]["request_id"]
+        == _knowledge_requests(finalize_job, knowledge_outcome)[0]["request_id"]
     )

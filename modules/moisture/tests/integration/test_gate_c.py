@@ -36,6 +36,7 @@ def test_gate_c_cli_draft_to_offline_finalize_has_no_hidden_state(
     workbook.active["B5"] = 100
     workbook.active["C5"] = 40
     workbook.active["D5"] = 0
+    workbook.active["E5"] = 0.61
     workbook.save(source)
     workbook.close()
 

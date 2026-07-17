@@ -48,13 +48,17 @@ def test_loader_rejects_invalid_manifest_and_unsafe_rules_path(tmp_path: Path) -
         RulePackageLoader().load(tmp_path)
 
 
-def test_default_rules_are_pending_and_expected_results_are_test_only() -> None:
+def test_default_rules_are_formally_approved_for_bamboo_materials() -> None:
     snapshot = RulePackageLoader().load(ACTIVE)
 
-    assert snapshot.customer_confirmation_status == "pending_confirmation"
+    assert snapshot.customer_confirmation_status == "confirmed"
     assert {str(rule.threshold) for rule in snapshot.definitions} == {"0.55", "0.47"}
     assert all(
-        rule.customer_confirmation_status == "pending_confirmation" for rule in snapshot.definitions
+        rule.customer_confirmation_status == "confirmed" for rule in snapshot.definitions
+    )
+    assert all(
+        set(rule.applicable_materials) == {"竹丝", "原竹丝"}
+        for rule in snapshot.definitions
     )
     assert {path.name for path in ACTIVE.iterdir()} == {
         "rule-package.json",

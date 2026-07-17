@@ -64,6 +64,7 @@ def job(
     *,
     phase: JobPhase,
     service_file: Path | None = None,
+    allowed_scopes: tuple[str, ...] = (),
 ) -> JobRequest:
     return JobRequest(
         "1.0",
@@ -75,6 +76,7 @@ def job(
         output,
         parent_job_id="draft-root" if phase is JobPhase.FINALIZE else None,
         service_response_file=service_file,
+        allowed_knowledge_scopes=allowed_scopes,
     )
 
 

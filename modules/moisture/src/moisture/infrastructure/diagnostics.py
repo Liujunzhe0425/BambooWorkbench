@@ -4,6 +4,8 @@ import importlib
 import sys
 from pathlib import Path
 
+from moisture.runtime_paths import module_root as runtime_module_root
+
 MINIMUM_PYTHON = (3, 11)
 REQUIRED_FILES = (
     "module.json",
@@ -17,7 +19,7 @@ REQUIRED_FILES = (
 
 
 def collect_runtime_issues(module_root: Path | None = None) -> tuple[str, ...]:
-    root = module_root or Path(__file__).resolve().parents[3]
+    root = module_root or runtime_module_root()
     issues: list[str] = []
 
     if sys.version_info < MINIMUM_PYTHON:

@@ -280,18 +280,31 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.task_progress_page)
 
     def _on_finished(self, result: ModuleResult) -> None:
-        self._clear_confirmation(result.job_id)
-        if self._foreground_job_id != result.job_id:
+        task_id = self.context.task_service.task_id_for_result(result)
+        self._clear_confirmation(task_id)
+        if self._foreground_job_id != task_id:
             self.history_page.refresh()
             return
-        if self.task_progress_page.current_job_id == result.job_id:
+        if self.task_progress_page.current_job_id == task_id:
             self.task_progress_page.current_job_id = ""
             self.task_progress_page.cancel_button.setEnabled(False)
         self.result_center_page.show_result(result)
         self.stack.setCurrentWidget(self.result_center_page)
         if result.status in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
-            self._show_failure("任务未完成", "；".join(result.errors) or result.status.value)
+            self._show_failure("任务未完成", self._summarize_errors(result))
         self._foreground_job_id = None
+
+    @staticmethod
+    def _summarize_errors(result: ModuleResult) -> str:
+        if not result.errors:
+            return result.status.value
+        counts: dict[str, int] = {}
+        for message in result.errors:
+            detail = message.split(": ", 1)[-1]
+            code = detail.split(":", 1)[0]
+            counts[code] = counts.get(code, 0) + 1
+        summary = "；".join(f"{code} × {count}" for code, count in sorted(counts.items()))
+        return f"共 {len(result.errors)} 条错误：{summary}。完整明细见结果中心或分析报告。"
 
     def _on_failed(self, job_id: str, message: str) -> None:
         if self._starting_task:

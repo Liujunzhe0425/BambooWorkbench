@@ -176,6 +176,15 @@ def test_workbook_contains_five_required_sheets(tmp_path: Path, report: Workbook
         assert summary.cell(2, headers.index("均值") + 1).value == pytest.approx(0.61)
         assert summary.cell(2, headers.index("来源文件") + 1).value == "R1.xlsx"
         assert summary.cell(2, headers.index("来源工作表") + 1).value == "检测数据"
+        trace = workbook["来源追溯"]
+        trace_headers = [cell.value for cell in trace[1]]
+        assert trace.cell(2, trace_headers.index("来源文件") + 1).value == "R1.xlsx"
+        assert str(tmp_path) not in " ".join(
+            str(cell.value)
+            for row in trace.iter_rows()
+            for cell in row
+            if cell.value is not None
+        )
         assert summary.cell(2, headers.index("均值") + 1).number_format == "0.00%"
         assert summary.cell(2, headers.index("总重(kg)") + 1).number_format == "#,##0.0"
 

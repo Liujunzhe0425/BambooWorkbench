@@ -6,9 +6,9 @@ import json
 from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
 
 from jsonschema import Draft202012Validator
+from moisture.runtime_paths import module_root
 
 
 class AIResponseValidationError(ValueError):
@@ -35,7 +35,7 @@ def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
 
 
 def _validator() -> Draft202012Validator:
-    path = Path(__file__).parents[3] / "schemas" / "ai-review-response.schema.json"
+    path = module_root() / "schemas" / "ai-review-response.schema.json"
     schema = json.loads(path.read_text(encoding="utf-8"))
     Draft202012Validator.check_schema(schema)
     return Draft202012Validator(schema)

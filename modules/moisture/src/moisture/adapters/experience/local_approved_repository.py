@@ -25,6 +25,7 @@ from moisture.ports.experience_repository import (
     ExperienceQuery,
     ExperienceReference,
 )
+from moisture.runtime_paths import module_root
 from yaml.constructor import ConstructorError
 
 _SAFE_ID = re.compile(EXPERIENCE_ID_PATTERN)
@@ -235,7 +236,7 @@ class LocalApprovedExperienceRepository:
 
     @staticmethod
     def _load_schema() -> Draft202012Validator:
-        path = Path(__file__).parents[4] / "schemas" / "experience.schema.json"
+        path = module_root() / "schemas" / "experience.schema.json"
         try:
             schema = json.loads(path.read_text(encoding="utf-8"))
             Draft202012Validator.check_schema(schema)

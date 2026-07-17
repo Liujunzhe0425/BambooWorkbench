@@ -41,7 +41,10 @@ def build_knowledge_request(
     if len(query.encode("utf-8")) > 200:  # defensive contract guard
         raise ValueError("knowledge query exceeds 200 UTF-8 bytes")
     return {
-        "request_id": f"msr-knowledge-{_identity(root_job_id, 'knowledge', rule_hash, candidate_digest)}",
+        "request_id": (
+            "msr-knowledge-"
+            f"{_identity(root_job_id, 'knowledge', rule_hash, candidate_digest)}"
+        ),
         "service": "knowledge",
         "scope": scope,
         "purpose": "获取水分规则适用范围指导",

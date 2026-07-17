@@ -27,7 +27,7 @@ from moisture.domain.models import (
     SampleMeasurement,
     ScreeningDecision,
 )
-from moisture.ports.writers import ExperienceCitation, WorkbookBatch
+from moisture.ports.writers import ExperienceCitation, KnowledgeCitation, WorkbookBatch
 from moisture.reporting import markdown_writer
 from moisture.reporting.markdown_writer import AnalysisReportView, write_analysis_markdown
 
@@ -203,6 +203,29 @@ def test_report_handles_empty_experience_and_no_degradation(
     degradation = text.split("## 辅助服务记录与降级", 1)[1].split("## 数据质量与处理限制", 1)[0]
     assert "- 无已审核经验引用。" in experience
     assert "- 无服务降级记录。" in degradation
+
+
+def test_report_cites_knowledge_without_changing_decision_language(
+    tmp_path: Path, report: AnalysisReportView
+) -> None:
+    cited = replace(
+        report,
+        knowledge_citations=(
+            KnowledgeCitation(
+                record_id="KN-001",
+                namespace="moisture",
+                title="复核指引",
+                content="检查原始称量记录。",
+                source="local_document:guidance.md",
+            ),
+        ),
+    )
+
+    text = write_analysis_markdown(cited, tmp_path).read_text(encoding="utf-8")
+
+    assert "Knowledge `moisture/KN-001`" in text
+    assert "仅供复核引用，不参与颜色或责任判定" in text
+    assert "C:\\" not in text
 
 
 def test_view_rejects_inconsistent_candidate_counts(report: AnalysisReportView) -> None:

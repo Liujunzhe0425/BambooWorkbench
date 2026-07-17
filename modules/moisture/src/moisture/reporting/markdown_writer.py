@@ -9,7 +9,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
-from moisture.ports.writers import ExperienceCitation, WorkbookBatch
+from moisture.ports.writers import ExperienceCitation, KnowledgeCitation, WorkbookBatch
+from moisture.runtime_paths import module_root
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,10 +27,12 @@ class AnalysisReportView:
     candidate_total: int
     candidate_sent: int
     candidate_omitted: int
+    knowledge_citations: tuple[KnowledgeCitation, ...] = ()
     errors: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "batches", tuple(self.batches))
+        object.__setattr__(self, "knowledge_citations", tuple(self.knowledge_citations))
         object.__setattr__(self, "errors", tuple(self.errors))
         candidate_counts = (
             self.candidate_total,
@@ -67,7 +70,7 @@ class AnalysisReportView:
 
 
 def _template_directory() -> Path:
-    return Path(__file__).parents[3] / "templates"
+    return module_root() / "templates"
 
 
 def _render(report: AnalysisReportView) -> str:

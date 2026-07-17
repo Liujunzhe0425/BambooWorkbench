@@ -196,8 +196,10 @@ def test_launcher_probes_declared_schema_dependency() -> None:
     assert "sys.exit(1)" in launcher_text
     assert launcher_text.count("BAMBOO_MOISTURE_RUNTIME_OK_42C91E7D") == 1
     assert "print('%PYTHON_RUNTIME_SENTINEL%')" in launcher_text
-    assert "echo %PYTHON_RUNTIME_SENTINEL%" in launcher_text
-    assert re.search(r'fc\.exe"? /b', launcher_text)
+    assert '"!PYTHON_PROBE_RESULT!"=="%PYTHON_RUNTIME_SENTINEL%"' in launcher_text
+    assert "PYTHON_PROBE_LINES" in launcher_text
+    assert "fc.exe" not in launcher_text
+    assert "%TEMP%" not in launcher_text
 
 
 def test_python_optimize_cannot_bypass_explicit_runtime_version_probe(

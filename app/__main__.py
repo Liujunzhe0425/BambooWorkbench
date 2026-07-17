@@ -24,7 +24,9 @@ def main(
 ) -> int:
     command_arguments = list(sys.argv[1:] if argv is None else argv)
     if "--smoke-test" in command_arguments:
-        return smoke_test()
+        return smoke_test(use_mocks=True)
+    if "--real-smoke-test" in command_arguments:
+        return smoke_test(use_mocks=False)
     requested_modes = {
         argument
         for argument in command_arguments
@@ -64,14 +66,17 @@ def main(
                 context.close()
 
 
-def smoke_test() -> int:
+def smoke_test(*, use_mocks: bool = True) -> int:
     application = create_application(["BambooWorkbench", "--smoke-test"])
     del application
     with TemporaryDirectory(prefix="BambooWorkbench-smoke-") as directory:
-        context = build_context(Path(directory), use_mocks=True)
+        context = build_context(Path(directory), use_mocks=use_mocks)
         try:
             modules = tuple(context.registry.all())
-            if len(modules) != 3 or any(module.health != "healthy" for module in modules):
+            expected_count = 3 if use_mocks else 1
+            if len(modules) != expected_count or any(
+                module.health != "healthy" for module in modules
+            ):
                 return 2
             if not context.stylesheet.strip():
                 return 3

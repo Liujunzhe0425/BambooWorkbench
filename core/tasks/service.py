@@ -99,6 +99,7 @@ class TaskService(QObject):
         self._failed_signals: set[str] = set()
         self._cancellation_pending: set[str] = set()
         self._pending_confirmation_results: dict[str, ModuleResult] = {}
+        self._execution_task_ids: dict[str, str] = {}
         self._shutdown = False
         self._shutdown_result = True
         self._blocked_callbacks: set[str] = set()
@@ -106,6 +107,11 @@ class TaskService(QObject):
 
     def pending_confirmations(self) -> list[tuple[str, ModuleResult]]:
         return sorted(self._pending_confirmation_results.items())
+
+    def task_id_for_result(self, result: ModuleResult) -> str:
+        """Map a draft/finalize execution result back to its persisted root task."""
+
+        return self._execution_task_ids.get(result.job_id, result.job_id)
 
     def shutdown(self) -> bool:
         if self._shutdown:
@@ -226,6 +232,7 @@ class TaskService(QObject):
             raise
 
         self._states[job_id] = TaskStateMachine()
+        self._execution_task_ids[job_id] = job_id
         runner: ModuleProcessRunner | None = None
         try:
             module = self.registry.get(module_id)
@@ -410,7 +417,13 @@ class TaskService(QObject):
             )
             service_response_file = str(response_path)
         final_payload = trusted_draft.model_dump(mode="python")
+        finalize_job_id = self.job_id_factory()
+        if not _JOB_ID_PATTERN.fullmatch(finalize_job_id):
+            raise ValueError("job_id_factory returned an invalid finalize job ID")
+        if finalize_job_id == job_id:
+            finalize_job_id = hashlib.sha256(f"{job_id}:finalize".encode()).hexdigest()
         final_payload.update(
+            job_id=finalize_job_id,
             phase=JobPhase.FINALIZE,
             parent_job_id=job_id,
             confirmation_file=str(frozen_bundle_path),
@@ -419,6 +432,7 @@ class TaskService(QObject):
             ai_enabled=any(ai_consent.values()),
         )
         final_job = JobRequest.model_validate(final_payload)
+        self._execution_task_ids[final_job.job_id] = job_id
         final_path = task_dir / "job-finalize.json"
         _atomic_write_text(frozen_bundle_path, bundle.model_dump_json(indent=2))
         _atomic_write_text(final_path, final_job.model_dump_json(indent=2))
@@ -899,6 +913,7 @@ class TaskService(QObject):
         machine.transition(TaskLifecycleState.WAITING_CONFIRMATION)
         self._states[job_id] = machine
         self._jobs[job_id] = draft
+        self._execution_task_ids[draft.job_id] = job_id
         self._pending_confirmation_results[job_id] = pending
         _LOG.info("waiting confirmation recovered job=%s", job_id)
 

@@ -18,6 +18,9 @@ class ResultCenterPage(QWidget):
         subtitle.setProperty("subtle", True)
         self.status_label = QLabel("暂无任务结果")
         self.summary_label = QLabel()
+        self.error_label = QLabel()
+        self.error_label.setWordWrap(True)
+        self.error_label.setProperty("subtle", True)
         self.output_files = OutputFilesWidget()
         card = QFrame()
         card.setProperty("card", True)
@@ -27,6 +30,7 @@ class ResultCenterPage(QWidget):
         self.status_label.setProperty("section", True)
         card_layout.addWidget(self.status_label)
         card_layout.addWidget(self.summary_label)
+        card_layout.addWidget(self.error_label)
         card_layout.addWidget(self.output_files)
         layout.addWidget(title)
         layout.addWidget(subtitle)
@@ -45,4 +49,13 @@ class ResultCenterPage(QWidget):
             f"成功处理 {result.summary.processed_count}，"
             f"失败 {result.summary.failed_count}"
         )
+        if result.errors:
+            visible = result.errors[:10]
+            remainder = len(result.errors) - len(visible)
+            suffix = f"\n另有 {remainder} 条，请查看分析报告。" if remainder else ""
+            self.error_label.setText("错误明细：\n" + "\n".join(visible) + suffix)
+            self.error_label.show()
+        else:
+            self.error_label.clear()
+            self.error_label.hide()
         self.output_files.set_outputs(result.outputs)

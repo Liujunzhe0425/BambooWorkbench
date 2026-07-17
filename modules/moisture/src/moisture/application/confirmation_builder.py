@@ -53,7 +53,8 @@ def build_confirmations(
                 "options": list(candidates),
                 "confidence": 0.5,
                 "blocking": True,
-                "batch_applicable": issue.kind in {"supplier_mapping", "department_mapping", "rule_scope"},
+                "batch_applicable": issue.kind
+                in {"supplier_mapping", "department_mapping", "rule_scope"},
                 "rememberable": issue.kind in {"supplier_mapping", "department_mapping"},
                 "source": {
                     "source_file": str(issue.source_file),

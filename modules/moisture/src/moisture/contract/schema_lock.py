@@ -8,6 +8,8 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from moisture.runtime_paths import module_root as runtime_module_root
+
 SCHEMA_NAMES = (
     "job-request.schema.json",
     "module-manifest.schema.json",
@@ -22,7 +24,7 @@ class SchemaBundleError(RuntimeError):
 
 
 def _default_module_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return runtime_module_root()
 
 
 def _expected_paths() -> tuple[str, ...]:

@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
 from moisture.adapters.excel.source_parser import ExcelSourceParser
+from moisture.adapters.experience.local_approved_repository import (
+    ExperienceRepositoryError,
+    LocalApprovedExperienceRepository,
+)
 from moisture.adapters.rules.builtin_evaluators import evaluate_rules
 from moisture.adapters.rules.package_loader import RulePackageLoader
 from moisture.application.ai_request_builder import candidates_from_batches
@@ -23,7 +28,9 @@ from moisture.domain.rules import PendingRuleMatch, RulePackageSnapshot
 from moisture.domain.statistics import compute_batch_statistics
 from moisture.infrastructure.file_integrity import FileIntegrityGuard
 from moisture.infrastructure.hashing import sha256_file
-from moisture.ports.writers import WorkbookBatch
+from moisture.ports.experience_repository import ExperienceQuery, ExperienceRepository
+from moisture.ports.writers import ExperienceCitation, WorkbookBatch
+from moisture.runtime_paths import module_root as runtime_module_root
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,11 +49,14 @@ class DeterministicPipelineResult:
 
 
 def _module_root() -> Path:
-    return Path(__file__).parents[3]
+    return runtime_module_root()
 
 
 def _safe_failure(error: Exception) -> str:
-    return f"WORKBOOK_PROCESSING_FAILED: {type(error).__name__}"
+    code = getattr(error, "code", "WORKBOOK_PROCESSING_FAILED")
+    if not isinstance(code, str) or not code:
+        code = "WORKBOOK_PROCESSING_FAILED"
+    return f"{code}: {type(error).__name__}"
 
 
 def _file_result(
@@ -72,10 +82,60 @@ def _file_result(
 class DeterministicPipeline:
     """Compose the migrated Task 1—9 business core without service access."""
 
-    def __init__(self, module_root: Path | None = None) -> None:
+    def __init__(
+        self,
+        module_root: Path | None = None,
+        experience_repository: ExperienceRepository | None = None,
+    ) -> None:
         self.module_root = (module_root or _module_root()).resolve()
         self._parser = ExcelSourceParser()
         self._integrity = FileIntegrityGuard()
+        self._experience_repository = experience_repository
+        experience_root = self.module_root / "experience"
+        if self._experience_repository is None and experience_root.is_dir():
+            try:
+                self._experience_repository = LocalApprovedExperienceRepository(
+                    experience_root
+                )
+            except ExperienceRepositoryError:
+                self._experience_repository = None
+
+    def _experience_citations(
+        self,
+        record,
+    ) -> tuple[tuple[ExperienceCitation, ...], str | None]:
+        if self._experience_repository is None:
+            return (), None
+        observed = record.arrival_date or record.test_date
+        if observed is None:
+            return (), None
+        as_of = datetime.combine(
+            observed,
+            time.max,
+            tzinfo=timezone(timedelta(hours=8)),
+        )
+        try:
+            references = self._experience_repository.search(
+                ExperienceQuery.from_record(
+                    record,
+                    "total_average",
+                    as_of=as_of,
+                )
+            )
+        except (ExperienceRepositoryError, OSError, ValueError):
+            return (), "EXPERIENCE_GUIDANCE_DEGRADED"
+        return (
+            tuple(
+                ExperienceCitation(
+                    entry_id=reference.experience_id,
+                    version=reference.version,
+                    title=reference.title,
+                    source=reference.source,
+                )
+                for reference in references[:10]
+            ),
+            None,
+        )
 
     def run(
         self, input_files: tuple[Path, ...], *, default_year: int | None = None
@@ -178,6 +238,9 @@ class DeterministicPipeline:
                     else ScreeningDecision(status=ScreenStatus.NORMAL)
                 )
                 display_color = decision.display_color
+                experience_references, experience_error = self._experience_citations(record)
+                if experience_error is not None and experience_error not in errors:
+                    errors.append(experience_error)
                 batch = WorkbookBatch(
                     record=record,
                     statistics=statistics,
@@ -195,6 +258,7 @@ class DeterministicPipeline:
                         if evaluation.pending_matches
                         else "未发现已确认规则异常"
                     ),
+                    experience_references=experience_references,
                 )
                 batches.append(batch)
                 processed += 1

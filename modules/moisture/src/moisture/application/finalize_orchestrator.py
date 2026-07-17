@@ -19,6 +19,10 @@ from moisture.application.draft_orchestrator import (
     _load_default_year,
     _status,
 )
+from moisture.application.knowledge_response import (
+    KnowledgeResponseValidationError,
+    validate_knowledge_citations,
+)
 from moisture.application.review_state_applier import (
     apply_validated_review,
     degrade_batches,
@@ -33,8 +37,11 @@ from moisture.contract.job_models import JobRequest
 from moisture.contract.mapper import map_run_result
 from moisture.contract.service_response_reader import read_service_responses
 from moisture.infrastructure.atomic_write import AtomicResultWriter
-from moisture.ports.writers import WorkbookReport
-from moisture.reporting.markdown_writer import AnalysisReportView, write_analysis_markdown
+from moisture.ports.writers import KnowledgeCitation, WorkbookReport
+from moisture.reporting.markdown_writer import (
+    AnalysisReportView,
+    write_analysis_markdown,
+)
 from moisture.reporting.xlsx_writer import write_summary_xlsx
 
 
@@ -98,6 +105,7 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
         (ai_request.request,) if ai_request.request is not None else ()
     )
     errors = outcome.errors
+    knowledge_citations: tuple[KnowledgeCitation, ...] = ()
     business_failed = outcome.processed_count == 0
     if rebuilt_requests:
         expected_requests = {
@@ -137,6 +145,14 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
                 except AIResponseValidationError:
                     batches = degrade_batches(tuple(batches), "invalid_ai_response")
                     errors = (*errors, "SERVICE_RESPONSE_DEGRADED: invalid_ai_response")
+        if response_result.envelope is not None:
+            try:
+                knowledge_citations = validate_knowledge_citations(
+                    response_result.envelope.responses,
+                    allowed_scopes=set(job.allowed_knowledge_scopes),
+                )
+            except KnowledgeResponseValidationError:
+                errors = (*errors, "KNOWLEDGE_RESPONSE_DEGRADED")
     outputs: tuple[InternalOutput, ...] = ()
     if batches:
         completed_artifacts: list[Path] = []
@@ -158,6 +174,7 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
                     candidate_total=ai_request.candidate_total,
                     candidate_sent=ai_request.candidate_sent,
                     candidate_omitted=ai_request.candidate_omitted,
+                    knowledge_citations=knowledge_citations,
                     errors=errors,
                 ),
                 job.output_dir,

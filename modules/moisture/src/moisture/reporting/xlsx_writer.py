@@ -366,7 +366,7 @@ def _write_trace(workbook: Any, report: WorkbookReport, formats: dict[str, Any])
     for row, batch in enumerate(report.batches, start=1):
         values = (
             batch.record.record_id,
-            str(batch.record.source_file) if batch.record.source_file else None,
+            batch.record.source_file.name if batch.record.source_file else None,
             batch.record.source_file_hash,
             batch.record.source_sheet,
             ", ".join(str(sample.source_row) for sample in batch.record.samples),
