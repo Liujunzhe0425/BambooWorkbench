@@ -216,11 +216,17 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.module_task_page)
         self.navigation.set_current_page(PageId.WORKBENCH)
 
-    def _start_task(self, module_id: object, files: list) -> None:
+    def _start_task(
+        self, module_id: object, files: list, module_config: dict[str, object] | None
+    ) -> None:
         self._starting_task = True
         self._start_failure_job_id = None
         try:
-            job_id = self.context.task_service.create_and_start(module_id, files)
+            job_id = self.context.task_service.create_and_start(
+                module_id,
+                files,
+                module_config,
+            )
         except Exception as error:
             self._show_failure("任务创建失败", str(error))
             return
@@ -274,18 +280,31 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.task_progress_page)
 
     def _on_finished(self, result: ModuleResult) -> None:
-        self._clear_confirmation(result.job_id)
-        if self._foreground_job_id != result.job_id:
+        task_id = self.context.task_service.task_id_for_result(result)
+        self._clear_confirmation(task_id)
+        if self._foreground_job_id != task_id:
             self.history_page.refresh()
             return
-        if self.task_progress_page.current_job_id == result.job_id:
+        if self.task_progress_page.current_job_id == task_id:
             self.task_progress_page.current_job_id = ""
             self.task_progress_page.cancel_button.setEnabled(False)
         self.result_center_page.show_result(result)
         self.stack.setCurrentWidget(self.result_center_page)
         if result.status in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
-            self._show_failure("任务未完成", "；".join(result.errors) or result.status.value)
+            self._show_failure("任务未完成", self._summarize_errors(result))
         self._foreground_job_id = None
+
+    @staticmethod
+    def _summarize_errors(result: ModuleResult) -> str:
+        if not result.errors:
+            return result.status.value
+        counts: dict[str, int] = {}
+        for message in result.errors:
+            detail = message.split(": ", 1)[-1]
+            code = detail.split(":", 1)[0]
+            counts[code] = counts.get(code, 0) + 1
+        summary = "；".join(f"{code} × {count}" for code, count in sorted(counts.items()))
+        return f"共 {len(result.errors)} 条错误：{summary}。完整明细见结果中心或分析报告。"
 
     def _on_failed(self, job_id: str, message: str) -> None:
         if self._starting_task:

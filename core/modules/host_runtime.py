@@ -14,7 +14,10 @@ def module_host_command(arguments: list[str]) -> tuple[str, list[str]]:
 
 
 def add_packaged_host_environment(environment: object) -> None:
+    environment.remove("BAMBOO_MODULE_EXECUTABLE")
     if not getattr(sys, "frozen", False):
         return
     host = Path(sys.executable).resolve().with_name("BambooModuleHost.exe")
+    module_runtime = Path(sys.executable).resolve().with_name("BambooMoistureModule.exe")
     environment.insert("BAMBOO_MODULE_HOST", str(host))
+    environment.insert("BAMBOO_MODULE_EXECUTABLE", str(module_runtime))

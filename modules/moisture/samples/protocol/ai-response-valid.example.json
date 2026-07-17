@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "task_id": "example-draft-001",
+  "module_id": "moisture",
+  "responses": [
+    {
+      "request_id": "msr-ai-0123456789abcdef01234567",
+      "service": "ai",
+      "status": "ok",
+      "text": "{\"schema_version\":\"1.0\",\"rule_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"decisions\":[{\"candidate_id\":\"candidate-0123456789abcdef\",\"direction\":\"high\",\"field\":\"mean\",\"observed_value\":\"0.60\",\"decision\":\"escalate\",\"confidence\":0.86,\"reason\":\"structured evidence\",\"evidence_refs\":[\"rule:RULE-HIGH\"]}]}"
+    }
+  ]
+}

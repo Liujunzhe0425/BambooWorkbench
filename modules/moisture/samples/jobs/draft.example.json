@@ -1,0 +1,11 @@
+{
+  "schema_version": "1.0",
+  "job_id": "example-draft-001",
+  "module_id": "moisture",
+  "phase": "draft",
+  "run_mode": "single",
+  "input_files": ["${INPUT_XLSX}"],
+  "output_dir": "${OUTPUT_DIR}",
+  "ai_enabled": false,
+  "allowed_knowledge_scopes": ["moisture"]
+}

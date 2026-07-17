@@ -8,6 +8,7 @@ if (-not $Bundle.StartsWith($Root.TrimEnd('\') + '\', [System.StringComparison]:
 $Required = @(
     'BambooWorkbench.exe',
     'BambooModuleHost.exe',
+    'BambooMoistureModule.exe',
     'contracts\schemas\module-manifest.schema.json',
     'assets\brand\team-logo.svg',
     'logo\team-logo.png',
@@ -15,7 +16,9 @@ $Required = @(
     'resources\themes\bamboo.qss',
     'mock_modules\moisture\module.json',
     'mock_modules\boiling\module.json',
-    'mock_modules\after_sales\module.json'
+    'mock_modules\after_sales\module.json',
+    'modules\moisture\module.json',
+    'modules\moisture\run_module.bat'
 )
 foreach ($Item in $Required) {
     if (-not (Test-Path -LiteralPath (Join-Path $Bundle $Item) -PathType Leaf)) {
@@ -35,5 +38,17 @@ try {
 $Process.Refresh()
 if ($Process.ExitCode -ne 0) {
     throw "Packaged smoke test failed: $($Process.ExitCode)"
+}
+$RealProcess = Start-Process -FilePath $Executable -ArgumentList '--real-smoke-test' `
+    -PassThru -WindowStyle Hidden
+try {
+    Wait-Process -Id $RealProcess.Id -Timeout 90 -ErrorAction Stop
+} catch {
+    Stop-Process -Id $RealProcess.Id -Force -ErrorAction SilentlyContinue
+    throw 'Packaged real-module smoke test timed out'
+}
+$RealProcess.Refresh()
+if ($RealProcess.ExitCode -ne 0) {
+    throw "Packaged real-module smoke test failed: $($RealProcess.ExitCode)"
 }
 Write-Host 'Portable bundle verification passed.' -ForegroundColor Green

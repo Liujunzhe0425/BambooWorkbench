@@ -14,6 +14,7 @@ def test_quality_workflow_runs_windows_repository_gate() -> None:
         step.get("run", "") for step in workflow["jobs"]["quality"]["steps"]
     )
     assert "scripts/verify_repo.ps1" in run_steps
+    assert ".\\.venv\\Scripts\\python.exe" in run_steps
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["jobs"]["quality"]["env"]["PYTHONUTF8"] == "1"
 
@@ -35,6 +36,7 @@ def test_package_workflow_is_manual_or_tag_only() -> None:
         "scripts/prepare_release.ps1",
     ):
         assert command in run_steps
+    assert ".\\.venv\\Scripts\\python.exe" in run_steps
 
 
 def test_workflows_pin_only_github_owned_actions() -> None:
