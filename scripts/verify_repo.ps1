@@ -7,9 +7,9 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     throw 'Repository .venv Python is required.'
 }
 $ExpectedPython = [System.IO.Path]::GetFullPath($Python)
-$ActualPython = (& $Python -c 'import sys; print(sys.executable)') | Select-Object -Last 1
-if ([System.IO.Path]::GetFullPath($ActualPython) -ne $ExpectedPython) {
-    throw "Python interpreter is outside repository .venv: $ActualPython"
+& $Python -c 'import os, sys; raise SystemExit(0 if os.path.samefile(sys.executable, sys.argv[1]) else 3)' $ExpectedPython
+if ($LASTEXITCODE -ne 0) {
+    throw 'Python interpreter is outside repository .venv.'
 }
 
 function Invoke-Checked {
