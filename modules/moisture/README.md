@@ -46,15 +46,18 @@ JSON Lines 写入 stdout，普通诊断写入 stderr。任务输出目录中包�
 
 ## 通过主框架 GUI 测试正式模块
 
-普通启动命令 `.\.venv\Scripts\python.exe -m app` 默认发现并调用正式
-`modules/moisture`；只有显式传入 `--mock-modules` 时才使用 `mock_modules`。开发测试时，
-请从 BambooWorkbench 仓库根目录运行：
+### 快速启动
+
+打开 PowerShell，执行：
 
 ```powershell
-.\.venv\Scripts\python.exe -c "from pathlib import Path; from app.__main__ import main; raise SystemExit(main(data_root=Path.cwd(), use_mocks=False))"
+cd "D:\codexprogram\竹丝水分检测框架适配开发\BambooWorkbench"
+.\.venv\Scripts\python.exe -c "import sys; print(sys.executable); print(sys.version)"
+.\.venv\Scripts\python.exe -m app
 ```
 
-该命令让主框架以仓库根目录作为本地测试数据根目录，并按真实调用链执行：
+普通启动默认发现并调用正式 `modules/moisture`；只有显式传入 `--mock-modules`
+时才使用 `mock_modules`。正式调用链为：
 
 ```text
 Registry 扫描 modules/moisture
@@ -63,16 +66,27 @@ Registry 扫描 modules/moisture
 → 主框架读取 result.json 和 artifacts
 ```
 
-手工验收步骤：
+### 使用自己的 Excel 测试
 
 1. 在主框架中选择 `moisture` 模块；
-2. 选择一个或多个正式 `.xlsx` 文件并创建任务；
-3. 历史文件若只写月日，应放在严格形如 `2026年4月份` 的目录中；
-4. 等待任务完成并打开 `moisture_summary.xlsx` 和 `analysis_report.md`；
-5. 检查原始 Excel 未被修改。
+2. 选择一个或多个 `.xlsx` 文件；不要选择 Excel 自动生成的 `~$` 临时文件；
+3. 在“默认业务年份”中填写数据对应年份，例如 `2026`。如果工作簿日期已经包含完整
+   年月日，该值不会覆盖 Excel 中的可靠年份；
+4. 创建任务并等待处理完成；
+5. 在结果中心打开 `moisture_summary.xlsx` 和 `analysis_report.md`；
+6. 检查汇总表、颜色和趋势图，并确认原始 Excel 未被修改。
+
+可直接选择仓库外的真实样本目录，例如：
+
+```text
+D:\codexprogram\竹丝水分检测框架适配开发\2026年4月份
+```
+
+批量中存在损坏文件时，正常文件仍会处理，任务通常显示 `partial_success`。相同内容的
+重复文件只计算一次。
 
 使用仓库根目录作为测试数据根目录时，任务文件位于
-`tasks/<job_id>/output-draft/`；数据库、日志和缓存位于仓库本地的忽略目录，
+`tasks/<job_id>/output-draft/` 或 `output-final/`；数据库、日志和缓存位于仓库本地的忽略目录，
 不属于源码提交。成功批次应生成五张工作表，以及来料平均含水率和区间值趋势图。
 
 `0.55/0.47` 阈值及“竹丝/原竹丝”材料范围已由负责人于 2026-07-17 批准，命中后
