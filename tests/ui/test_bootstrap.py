@@ -136,6 +136,17 @@ def test_resource_root_uses_pyinstaller_bundle_when_frozen(
     assert resolve_resource_root() == (tmp_path / "bundle").resolve()
 
 
+def test_default_context_scans_repository_real_modules(tmp_path: Path) -> None:
+    context = build_context(tmp_path / "real-data")
+    try:
+        module = context.registry.get(ModuleId.MOISTURE)
+        assert module.is_mock is False
+        assert module.path == (Path(__file__).parents[2] / "modules" / "moisture").resolve()
+        assert module.manifest.module_version == "0.1.0"
+    finally:
+        context.close()
+
+
 def test_theme_applies_approved_visual_identity(qapp, app_context) -> None:
     stylesheet = apply_theme(qapp, app_context.resource_root)
 

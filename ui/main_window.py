@@ -216,11 +216,17 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.module_task_page)
         self.navigation.set_current_page(PageId.WORKBENCH)
 
-    def _start_task(self, module_id: object, files: list) -> None:
+    def _start_task(
+        self, module_id: object, files: list, module_config: dict[str, object] | None
+    ) -> None:
         self._starting_task = True
         self._start_failure_job_id = None
         try:
-            job_id = self.context.task_service.create_and_start(module_id, files)
+            job_id = self.context.task_service.create_and_start(
+                module_id,
+                files,
+                module_config,
+            )
         except Exception as error:
             self._show_failure("任务创建失败", str(error))
             return

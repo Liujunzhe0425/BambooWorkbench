@@ -20,12 +20,29 @@ def main(
     argv: Sequence[str] | None = None,
     data_root: Path | None = None,
     *,
-    use_mocks: bool = True,
+    use_mocks: bool | None = None,
 ) -> int:
     command_arguments = list(sys.argv[1:] if argv is None else argv)
-    if command_arguments == ["--smoke-test"]:
+    if "--smoke-test" in command_arguments:
         return smoke_test()
-    application = create_application(list(argv) if argv is not None else None)
+    requested_modes = {
+        argument
+        for argument in command_arguments
+        if argument in {"--mock-modules", "--real-modules"}
+    }
+    if len(requested_modes) > 1:
+        raise ValueError("--mock-modules and --real-modules are mutually exclusive")
+    if use_mocks is None:
+        use_mocks = "--mock-modules" in requested_modes
+    application_arguments = (
+        [argument for argument in argv if argument not in requested_modes]
+        if argv is not None
+        else [
+            sys.argv[0],
+            *(argument for argument in sys.argv[1:] if argument not in requested_modes),
+        ]
+    )
+    application = create_application(application_arguments)
     context = build_context(data_root, use_mocks=use_mocks)
     window: MainWindow | None = None
     close_context = context.close

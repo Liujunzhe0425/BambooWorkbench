@@ -68,7 +68,12 @@ def resolve_resource_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def build_context(data_root: Path | None = None, use_mocks: bool = True) -> AppContext:
+def build_context(
+    data_root: Path | None = None,
+    use_mocks: bool = False,
+    *,
+    real_module_root: Path | None = None,
+) -> AppContext:
     resource_root = resolve_resource_root()
     paths = AppPaths.for_root(data_root)
     logger = configure_logging(paths)
@@ -96,7 +101,7 @@ def build_context(data_root: Path | None = None, use_mocks: bool = True) -> AppC
             model=settings.get("ai_model", "mock-model") or "mock-model",
         )
         registry = ModuleRegistry(
-            paths.modules,
+            (real_module_root or resource_root / "modules").resolve(),
             resource_root / "mock_modules",
             use_mocks=use_mocks,
             repository=module_repository,
