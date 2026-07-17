@@ -119,7 +119,8 @@ finalize 使用 `parent_job_id` 重建 draft 根身份，重新运行完整确�
 原始工作簿。
 
 - 完整技术架构：`docs/07-模块完整架构.md`；
-- 负责人交接、责任边界和剩余阻塞：`docs/08-负责人交接要点.md`。
+- 负责人交接、责任边界和剩余阻塞：`docs/08-负责人交接要点.md`；
+- 主框架正式接入、真实 AI、治理入口和报告增强要求：`框架负责人接入与功能建设要求.md`。
 
 ```powershell
 .\.venv\Scripts\python.exe -m app.tools.module_contract_cli validate modules/moisture
