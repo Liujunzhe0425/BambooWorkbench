@@ -191,6 +191,8 @@ powershell -ExecutionPolicy Bypass -File scripts/verify_repo.ps1
 
 只运行本人模块对应的第一条合同命令。提交时附上命令输出、测试日志、输入与预期结果对应表，以及成功/异常/人工确认三个界面截图。
 
+模块 PR 触发 GitHub `quality` 工作流时，框架会自动发现并安装 `modules/*/requirements.txt`；模块成员无需修改根目录 `pyproject.toml` 或公共工作流来声明业务依赖。
+
 ## 10. 数据脱敏与交付清单
 
 - 使用虚构客户、订单、电话、地址和人员；
