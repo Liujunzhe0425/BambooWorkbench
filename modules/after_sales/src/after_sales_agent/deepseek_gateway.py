@@ -8,7 +8,6 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
-
 DEFAULT_BASE_URL = "https://api.deepseek.com"
 DEFAULT_MODEL = "deepseek-v4-flash"
 AUTO_MODEL = "auto"
@@ -53,7 +52,7 @@ class GatewayConfig:
     retry_base_delay: float = 1.0
 
     @classmethod
-    def from_mapping(cls, config: dict[str, Any] | None = None) -> "GatewayConfig":
+    def from_mapping(cls, config: dict[str, Any] | None = None) -> GatewayConfig:
         values = config or {}
         api_key = str(
             values.get("api_key")
@@ -63,7 +62,8 @@ class GatewayConfig:
         ).strip()
         if not api_key:
             raise DeepSeekGatewayError(
-                "未配置 DeepSeek API Key；请设置 DEEPSEEK_API_KEY，或发送 X-DeepSeek-API-Key 请求头。",
+                "未配置 DeepSeek API Key；请设置 DEEPSEEK_API_KEY，"
+                "或发送 X-DeepSeek-API-Key 请求头。",
                 401,
             )
         base_url = str(
@@ -121,7 +121,9 @@ def chat_completions_url(base_url: str) -> str:
     return value + "/chat/completions"
 
 
-def resolve_model(requested_model: str | None, input_value: Any, reasoning_effort: str = "medium") -> str:
+def resolve_model(
+    requested_model: str | None, input_value: Any, reasoning_effort: str = "medium"
+) -> str:
     requested = (requested_model or DEFAULT_MODEL).strip()
     if requested != AUTO_MODEL:
         return requested
@@ -150,7 +152,9 @@ def create_model_response(
         raise DeepSeekGatewayError(f"reasoning_effort 不支持，可选值：{allowed}", 400)
 
     gateway_config = GatewayConfig.from_mapping(config)
-    requested_model = str(request_payload.get("model") or gateway_config.model or DEFAULT_MODEL).strip()
+    requested_model = str(
+        request_payload.get("model") or gateway_config.model or DEFAULT_MODEL
+    ).strip()
     resolved_model = resolve_model(requested_model, input_value, effort)
     messages = _normalize_messages(input_value)
     instructions = str(request_payload.get("instructions") or "").strip()
@@ -182,12 +186,16 @@ def create_model_response(
         if value is not None and value != "":
             upstream_payload[key] = value
 
-    response_json = _post_json(chat_completions_url(gateway_config.base_url), upstream_payload, gateway_config)
+    response_json = _post_json(
+        chat_completions_url(gateway_config.base_url), upstream_payload, gateway_config
+    )
     output_text, reasoning_content, finish_reason = extract_output_text(response_json)
     return {
         "id": response_json.get("id"),
         "object": "ai.gateway.response",
-        "status": "completed" if finish_reason not in {"length", "content_filter", "insufficient_system_resource"} else finish_reason,
+        "status": "completed"
+        if finish_reason not in {"length", "content_filter", "insufficient_system_resource"}
+        else finish_reason,
         "requested_model": requested_model,
         "model": response_json.get("model") or resolved_model,
         "output_text": output_text,
@@ -207,7 +215,11 @@ def extract_output_text(response_json: dict[str, Any]) -> tuple[str, str, str]:
     if not isinstance(content, str):
         raise DeepSeekGatewayError("DeepSeek API 响应中没有可用文本。", 502)
     reasoning = message.get("reasoning_content")
-    return content, reasoning if isinstance(reasoning, str) else "", str(choice.get("finish_reason") or "stop")
+    return (
+        content,
+        reasoning if isinstance(reasoning, str) else "",
+        str(choice.get("finish_reason") or "stop"),
+    )
 
 
 def _normalize_messages(value: Any) -> list[dict[str, Any]]:
@@ -251,7 +263,9 @@ def _post_json(url: str, payload: dict[str, Any], config: GatewayConfig) -> dict
             detail = exc.read().decode("utf-8", errors="ignore")
             transient = exc.code == 429 or 500 <= exc.code <= 599
             if transient and attempt < config.max_retries:
-                _sleep_before_retry(attempt, config, exc.headers.get("Retry-After") if exc.headers else None)
+                _sleep_before_retry(
+                    attempt, config, exc.headers.get("Retry-After") if exc.headers else None
+                )
                 continue
             message = _upstream_error_message(detail) or f"DeepSeek API HTTP {exc.code}"
             status = exc.code if 400 <= exc.code < 500 else 502
@@ -275,7 +289,9 @@ def _post_json(url: str, payload: dict[str, Any], config: GatewayConfig) -> dict
     return parsed
 
 
-def _sleep_before_retry(attempt: int, config: GatewayConfig, retry_after: str | None = None) -> None:
+def _sleep_before_retry(
+    attempt: int, config: GatewayConfig, retry_after: str | None = None
+) -> None:
     delay: float | None = None
     if retry_after:
         try:
@@ -283,7 +299,7 @@ def _sleep_before_retry(attempt: int, config: GatewayConfig, retry_after: str | 
         except ValueError:
             delay = None
     if delay is None:
-        delay = config.retry_base_delay * (2 ** attempt)
+        delay = config.retry_base_delay * (2**attempt)
     time.sleep(max(0.0, min(delay, 30.0)))
 
 

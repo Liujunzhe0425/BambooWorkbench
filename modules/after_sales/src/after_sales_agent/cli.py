@@ -8,11 +8,15 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zipfile import BadZipFile
+
+from openpyxl.utils.exceptions import InvalidFileException
 
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from after_sales_agent import MODULE_ID, MODULE_NAME, MODULE_VERSION
+from after_sales_agent.analysis import write_analysis_report
 from after_sales_agent.extractor import file_sha256, process_workbook
 from after_sales_agent.report import write_summary_workbook
 from after_sales_agent.rules import load_rules
@@ -63,7 +67,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
     rules = load_rules(module_root, job.get("module_config_file"))
     # 统一工作台不会把 API Key 交给业务模块。只有独立网站通过进程内
     # runtime_config 调用本函数时才允许使用直连配置。
-    api_config = (runtime_config or {}).get("api")
+    api_config = (runtime_config or {}).get("api") if job.get("ai_enabled") else None
     progress_callback = (runtime_config or {}).get("progress_callback")
     result = _empty_result(job, rules, started_at)
 
@@ -72,26 +76,35 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
         result["summary"]["input_count"] = len(input_files)
         records: list[dict[str, Any]] = []
         seen_hashes: dict[str, str] = {}
-        _notify_progress(progress_callback, {
-            "phase": "开始分析",
-            "message": f"共 {len(input_files)} 个 Excel，正在逐份处理",
-            "total": len(input_files),
-            "completed": 0,
-            "succeeded": 0,
-            "failed": 0,
-            "current_file": "",
-        })
+        _notify_progress(
+            progress_callback,
+            {
+                "phase": "开始分析",
+                "message": f"共 {len(input_files)} 个 Excel，正在逐份处理",
+                "total": len(input_files),
+                "completed": 0,
+                "succeeded": 0,
+                "failed": 0,
+                "current_file": "",
+            },
+        )
 
         for input_index, input_file in enumerate(input_files, start=1):
-            _notify_progress(progress_callback, {
-                "phase": "调用 API 分析",
-                "message": f"正在处理第 {input_index}/{len(input_files)} 个文件：{input_file.name}",
-                "total": len(input_files),
-                "completed": input_index - 1,
-                "succeeded": result["summary"]["processed_count"],
-                "failed": result["summary"]["failed_count"],
-                "current_file": input_file.name,
-            })
+            progress_message = (
+                f"正在处理第 {input_index}/{len(input_files)} 个文件：{input_file.name}"
+            )
+            _notify_progress(
+                progress_callback,
+                {
+                    "phase": "智能辅助分析" if api_config else "离线规则分析",
+                    "message": progress_message,
+                    "total": len(input_files),
+                    "completed": input_index - 1,
+                    "succeeded": result["summary"]["processed_count"],
+                    "failed": result["summary"]["failed_count"],
+                    "current_file": input_file.name,
+                },
+            )
             file_result = {
                 "source_file": str(input_file),
                 "fingerprint": "",
@@ -124,14 +137,18 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                     record["input_index"] = input_index
                     record["case_id"] = f"{job.get('job_id', 'batch')}-{input_index}"
                     record["analysis_status"] = (
-                        "智能分析完成" if record.get("issue_analysis_source") == "api" else "规则回退完成"
+                        "智能分析完成"
+                        if record.get("issue_analysis_source") == "api"
+                        else "离线规则分析完成"
                     )
                     record["analysis_error"] = ""
                     record["included_in_summary"] = True
                     if duplicate_of:
-                        record.setdefault("warnings", []).append(
-                            f"文件内容与 {Path(duplicate_of).name} 重复；按用户保留两份的选择继续统计"
+                        duplicate_warning = (
+                            f"文件内容与 {Path(duplicate_of).name} 重复；"
+                            "按用户保留两份的选择继续统计"
                         )
+                        record.setdefault("warnings", []).append(duplicate_warning)
                         record["needs_review"] = True
                     records.append(record)
                     file_result["status"] = "success"
@@ -140,22 +157,35 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 else:
                     raise RuntimeError("未能从该工作簿生成售后记录")
             except Exception as exc:
+                error_code, error_message = _classify_workbook_error(exc)
+                public_error = f"{error_code}：{error_message}"
                 file_result["status"] = "failed"
-                file_result["error"] = str(exc)
-                result["errors"].append(f"{input_file.name}：{exc}")
+                file_result["error"] = public_error
+                result["errors"].append(f"{input_file.name}：{public_error}")
                 result["summary"]["failed_count"] += 1
-                records.append(_failed_record(input_file, input_index, str(exc), file_result.get("fingerprint")))
+                records.append(
+                    _failed_record(
+                        input_file,
+                        input_index,
+                        error_code,
+                        error_message,
+                        file_result.get("fingerprint"),
+                    )
+                )
             finally:
                 result["file_results"].append(file_result)
-                _notify_progress(progress_callback, {
-                    "phase": "调用 API 分析",
-                    "message": f"已完成 {input_index}/{len(input_files)} 个文件",
-                    "total": len(input_files),
-                    "completed": input_index,
-                    "succeeded": result["summary"]["processed_count"],
-                    "failed": result["summary"]["failed_count"],
-                    "current_file": input_file.name,
-                })
+                _notify_progress(
+                    progress_callback,
+                    {
+                        "phase": "智能辅助分析" if api_config else "离线规则分析",
+                        "message": f"已完成 {input_index}/{len(input_files)} 个文件",
+                        "total": len(input_files),
+                        "completed": input_index,
+                        "succeeded": result["summary"]["processed_count"],
+                        "failed": result["summary"]["failed_count"],
+                        "current_file": input_file.name,
+                    },
+                )
 
         answered_confirmation_ids: set[str] = set()
         if job.get("phase") == "finalize":
@@ -170,23 +200,29 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 if item["confirmation_id"] not in answered_confirmation_ids
             ]
 
-        _notify_progress(progress_callback, {
-            "phase": "生成汇总表",
-            "message": f"{len(input_files)} 个输入文件已全部对账，正在写入最终 Excel",
-            "total": len(input_files),
-            "completed": len(input_files),
-            "succeeded": result["summary"]["processed_count"],
-            "failed": result["summary"]["failed_count"],
-            "current_file": "",
-        })
+        _notify_progress(
+            progress_callback,
+            {
+                "phase": "生成汇总表",
+                "message": f"{len(input_files)} 个输入文件已全部对账，正在写入最终 Excel",
+                "total": len(input_files),
+                "completed": len(input_files),
+                "succeeded": result["summary"]["processed_count"],
+                "failed": result["summary"]["failed_count"],
+                "current_file": "",
+            },
+        )
+        result["summary"]["anomaly_count"] = len(result["anomalies"])
+        result["summary"]["confirmation_count"] = len(result["confirmations"])
+        result["status"] = decide_status(result)
         summary_path = output_dir / "after_sales_summary.xlsx"
         detail_path = output_dir / "after_sales_records.json"
+        analysis_path = output_dir / "after_sales_analysis.md"
         write_summary_workbook(records, summary_path, rules)
         with detail_path.open("w", encoding="utf-8") as f:
             json.dump(records, f, ensure_ascii=False, indent=2)
+        write_analysis_report(records, result, analysis_path)
 
-        result["summary"]["anomaly_count"] = len(result["anomalies"])
-        result["summary"]["confirmation_count"] = len(result["confirmations"])
         result["outputs"] = [
             {
                 "type": "summary_excel",
@@ -200,13 +236,18 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 "label": "售后结构化明细",
                 "mime_type": "application/json",
             },
+            {
+                "type": "analysis_markdown",
+                "path": str(analysis_path),
+                "label": "售后分析报告",
+                "mime_type": "text/markdown",
+            },
         ]
         result["analysis_summary"] = (
             f"已对账 {len(input_files)} 个输入文件，成功处理 "
             f"{result['summary']['processed_count']} 个，失败 "
-            f"{result['summary']['failed_count']} 个；Excel 汇总算法保持 1.3.1 版本。"
+            f"{result['summary']['failed_count']} 个；已生成三类金额汇总、分析图表和分析报告。"
         )
-        result["status"] = decide_status(result)
         return 0
     finally:
         result["finished_at"] = datetime.now().astimezone().isoformat()
@@ -378,34 +419,69 @@ def _apply_record_value(record: dict[str, Any], field: str, value: Any) -> None:
         record["brand"] = str(value or "未知").strip() or "未知"
         record["brand_confidence"] = 1.0
         return
-    if field in {"issue_types", "primary_issue_type"}:
+    if field == "issue_types":
         if isinstance(value, list):
             issue_types = [str(item).strip() for item in value if str(item).strip()]
         else:
-            issue_types = [item.strip() for item in re.split(r"[,，/、]", str(value or "")) if item.strip()]
+            issue_types = [
+                item.strip() for item in re.split(r"[,，/、]", str(value or "")) if item.strip()
+            ]
         if issue_types:
             record["issue_types"] = issue_types
             record["primary_issue_type"] = issue_types[0]
             record["issue_confidence"] = 1.0
         return
-    if field in {"fee_amount", "cost"}:
+    if field == "primary_issue_type":
+        primary = str(value or "").strip()
+        if primary:
+            record["primary_issue_type"] = primary
+            current = (
+                record.get("issue_types") if isinstance(record.get("issue_types"), list) else []
+            )
+            record["issue_types"] = [primary, *[item for item in current if item != primary]]
+            record["issue_confidence"] = 1.0
+        return
+    amount_fields = {
+        "fee_amount": "enterprise_cost",
+        "cost": "enterprise_cost",
+        "enterprise_cost_amount": "enterprise_cost",
+        "internal_accountability_amount": "internal_accountability",
+        "external_borne_amount": "external_borne",
+    }
+    if field in amount_fields:
+        prefix = amount_fields[field]
         text = str(value or "").replace(",", "").replace("元", "").strip()
         if not text:
-            record["fee_amount"] = None
-            record["cost"] = None
-            record["cost_included"] = False
+            record[f"{prefix}_amount"] = None
+            record[f"{prefix}_status"] = "not_found"
+            record[f"{prefix}_evidence"] = "竹简工作台人工复核：金额留空"
+            record[f"{prefix}_reviewed"] = True
+            if prefix == "enterprise_cost":
+                record["fee_amount"] = None
+                record["cost"] = None
+                record["fee_status"] = "not_found"
+                record["cost_included"] = False
             return
         amount = float(text)
         record.update(
             {
-                "fee_amount": amount,
-                "cost": amount,
-                "fee_status": "exact",
-                "cost_included": True,
-                "cost_status": "人工复核确认",
-                "cost_evidence": "竹简工作台人工复核值",
+                f"{prefix}_amount": amount,
+                f"{prefix}_status": "exact",
+                f"{prefix}_evidence": "竹简工作台人工复核值",
+                f"{prefix}_reviewed": True,
             }
         )
+        if prefix == "enterprise_cost":
+            record.update(
+                {
+                    "fee_amount": amount,
+                    "cost": amount,
+                    "fee_status": "exact",
+                    "cost_included": True,
+                    "cost_status": "人工复核确认",
+                    "cost_evidence": "竹简工作台人工复核值",
+                }
+            )
         return
     if field == "complaint_date":
         text = str(value or "").strip()
@@ -441,25 +517,44 @@ def expand_inputs(input_files: list[str]) -> list[Path]:
     return paths
 
 
-def _failed_record(path: Path, input_index: int, error: str, digest: str | None) -> dict[str, Any]:
+def _failed_record(
+    path: Path,
+    input_index: int,
+    error_code: str,
+    error_message: str,
+    digest: str | None,
+) -> dict[str, Any]:
     """保留失败文件的对账行，但不把未知业务数据计入售后统计。"""
     return {
         "input_index": input_index,
-        "source_file": str(path),
+        "source_file": path.name,
         "sheet": "",
         "file_sha256": digest or "",
         "analysis_status": "分析失败",
-        "analysis_error": error,
+        "analysis_error": f"{error_code}：{error_message}",
+        "error_code": error_code,
         "included_in_summary": False,
         "customer": "",
         "brand": "未知",
         "brand_confidence": 0.0,
         "issue_types": ["其他"],
         "primary_issue_type": "其他",
-        "issue_reason_summary": f"文件未能完成分析：{error}",
+        "issue_reason_summary": f"文件未能完成分析：{error_message}",
         "issue_confidence": 0.0,
         "cost": None,
         "fee_amount": None,
+        "enterprise_cost_amount": None,
+        "enterprise_cost_status": "not_found",
+        "enterprise_cost_evidence": "文件分析失败，无法识别企业售后成本",
+        "enterprise_cost_reviewed": False,
+        "internal_accountability_amount": None,
+        "internal_accountability_status": "not_found",
+        "internal_accountability_evidence": "文件分析失败，无法识别内部责任扣款",
+        "internal_accountability_reviewed": False,
+        "external_borne_amount": None,
+        "external_borne_status": "not_found",
+        "external_borne_evidence": "文件分析失败，无法识别外部承担金额",
+        "external_borne_reviewed": False,
         "fee_currency": "CNY",
         "fee_status": "needs_review",
         "cost_included": False,
@@ -469,11 +564,26 @@ def _failed_record(path: Path, input_index: int, error: str, digest: str | None)
         "closed": False,
         "year": None,
         "month": None,
-        "warnings": [f"文件分析失败：{error}"],
+        "warnings": [f"文件分析失败：{error_message}"],
         "needs_review": True,
         "reviewed": False,
         "source_cells": {},
     }
+
+
+def _classify_workbook_error(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, (BadZipFile, InvalidFileException, EOFError)):
+        return (
+            "WORKBOOK_INVALID_OR_CORRUPTED",
+            "工作簿损坏或不是有效的 XLSX 文件，请重新导出后再试。",
+        )
+    if isinstance(exc, FileNotFoundError):
+        return "INPUT_FILE_NOT_FOUND", "输入文件不存在或已被移动，请重新选择后再试。"
+    if isinstance(exc, PermissionError):
+        return "WORKBOOK_ACCESS_DENIED", "工作簿正在被占用或没有读取权限，请关闭文件后再试。"
+    if isinstance(exc, ValueError) and "不支持的文件扩展名" in str(exc):
+        return "WORKBOOK_FORMAT_UNSUPPORTED", "仅支持有效的 XLSX 或 XLSM 工作簿。"
+    return "WORKBOOK_PROCESSING_FAILED", "工作簿处理失败，请检查文件内容并重新导出后再试。"
 
 
 def decide_status(result: dict[str, Any]) -> str:
@@ -555,7 +665,9 @@ def self_check() -> int:
         return 0
 
 
-def _create_sample_workbook(path: Path, customer: str, brand_text: str, date_text: str, feedback: str, solution: str) -> None:
+def _create_sample_workbook(
+    path: Path, customer: str, brand_text: str, date_text: str, feedback: str, solution: str
+) -> None:
     from openpyxl import Workbook
 
     wb = Workbook()

@@ -4,7 +4,6 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any
 
-
 DEFAULT_RULES: dict[str, Any] = {
     "rule_version": "2026.07",
     "brand_order": ["桃花江", "竹语堂", "海外"],

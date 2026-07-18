@@ -7,15 +7,54 @@ from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Any
 
-
 AMOUNT_RE = re.compile(r"(?<!\d)(-?\d+(?:\.\d+)?)\s*元")
 RESULT_RE = re.compile(r"=\s*(-?\d+(?:\.\d+)?)\s*元")
 TOTAL_ANCHORS = (
-    "合计总费用", "本次售后费用", "材料合计费用", "损失合计", "费用合计",
-    "合计费用", "总计", "共计", "总费用", "小计费用",
+    "合计总费用",
+    "本次售后费用",
+    "材料合计费用",
+    "损失合计",
+    "费用合计",
+    "合计费用",
+    "总计",
+    "共计",
+    "总费用",
+    "小计费用",
 )
 TRANSFER_MARKERS = ("转嫁", "并在", "并入其他订单", "供应商承担", "合作方承担")
 ESTIMATE_MARKERS = ("预计", "预估", "约", "暂估")
+INTERNAL_ACCOUNTABILITY_MARKERS = (
+    "内部扣款",
+    "责任扣款",
+    "部门扣款",
+    "个人扣款",
+    "员工扣款",
+    "责任考核",
+    "内部考核",
+    "处罚",
+    "罚款",
+    "扣款",
+)
+EXTERNAL_BORNE_MARKERS = (
+    "供应商承担",
+    "合作方承担",
+    "厂家承担",
+    "外协承担",
+    "品牌方承担",
+    "二厂承担",
+    "由二厂承担",
+    "转嫁给",
+    "外部承担",
+    "供应商赔付",
+)
+ENTERPRISE_COST_MARKERS = (
+    "企业售后成本",
+    "企业承担",
+    "公司承担",
+    "本公司承担",
+    "我司承担",
+    "公司报销",
+)
 
 
 @dataclass
@@ -31,8 +70,27 @@ class FeeResult:
         return asdict(self)
 
 
+@dataclass
+class FeeBreakdown:
+    enterprise_cost: FeeResult
+    internal_accountability: FeeResult
+    external_borne: FeeResult
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enterprise_cost": self.enterprise_cost.to_dict(),
+            "internal_accountability": self.internal_accountability.to_dict(),
+            "external_borne": self.external_borne.to_dict(),
+        }
+
+
 def determine_fee(fields: dict[str, Any], rules: dict[str, Any]) -> FeeResult:
-    """Deterministically verify the final fee; model output is never trusted as the total."""
+    """兼容旧调用：费用等同于企业实际售后成本。"""
+    return determine_fee_breakdown(fields, rules).enterprise_cost
+
+
+def determine_fee_breakdown(fields: dict[str, Any], rules: dict[str, Any]) -> FeeBreakdown:
+    """按企业成本、内部责任扣款和外部承担三种业务口径分别核验金额。"""
     final_solution = clean_text(fields.get("solution"))
     feedback = clean_text(fields.get("feedback"))
     application = clean_text(fields.get("application"))
@@ -44,11 +102,13 @@ def determine_fee(fields: dict[str, Any], rules: dict[str, Any]) -> FeeResult:
         and extract_amounts(application)
         and (
             "未采用" in final_solution
-            or re.search(r"客户自己.{0,20}(解决|处理)|自行.{0,20}(解决|处理)", f"{feedback} {final_solution}")
+            or re.search(
+                r"客户自己.{0,20}(解决|处理)|自行.{0,20}(解决|处理)", f"{feedback} {final_solution}"
+            )
         )
         and not extract_amounts(final_solution)
     ):
-        return FeeResult(
+        enterprise_override = FeeResult(
             None,
             "needs_review",
             "方案申请中存在候选金额，但反馈显示客户自行处理，最终实际费用无法确认",
@@ -56,6 +116,8 @@ def determine_fee(fields: dict[str, Any], rules: dict[str, Any]) -> FeeResult:
             False,
             ["候选费用可能未实际发生，请人工确认"],
         )
+    else:
+        enterprise_override = None
 
     sources = [
         ("售后解决方案", final_solution),
@@ -64,13 +126,112 @@ def determine_fee(fields: dict[str, Any], rules: dict[str, Any]) -> FeeResult:
         ("反馈内容", feedback),
         ("工作簿原文", clean_text(fields.get("raw_text"))),
     ]
-    for label, text in sources:
+    results: dict[str, FeeResult | None] = {
+        "enterprise_cost": enterprise_override,
+        "internal_accountability": None,
+        "external_borne": None,
+    }
+    labels = {
+        "enterprise_cost": "企业售后成本",
+        "internal_accountability": "内部责任扣款",
+        "external_borne": "外部承担金额",
+    }
+    for source_label, text in sources:
         if not text:
             continue
-        result = analyze_fee_text(text, label, rules)
-        if result.status != "not_found":
-            return result
-    return FeeResult(None, "not_found", "原文未找到可确认的售后费用", [], False, ["费用待确认"])
+        grouped = _group_fee_clauses(text)
+        for category, clauses in grouped.items():
+            if results[category] is not None or not clauses:
+                continue
+            category_text = "；".join(clauses)
+            result = analyze_fee_text(category_text, f"{source_label}·{labels[category]}", rules)
+            if result.status == "not_found":
+                result = FeeResult(
+                    None,
+                    "needs_review",
+                    f"{source_label}：原文提到{labels[category]}，但没有可确认金额",
+                    [],
+                    False,
+                    [f"{labels[category]}金额待确认"],
+                )
+            if result.status != "not_found":
+                results[category] = result
+
+    external = results["external_borne"] or FeeResult(
+        None, "not_found", "原文未写明外部承担金额", [], False, []
+    )
+    internal = results["internal_accountability"] or FeeResult(
+        None, "not_found", "原文未写明内部责任扣款", [], False, []
+    )
+    enterprise = results["enterprise_cost"]
+    if enterprise is None and external.status != "not_found":
+        enterprise = FeeResult(
+            None,
+            "transferred",
+            "原文明示相关金额由供应商、合作方或其他外部主体承担，不计入企业售后成本",
+            [],
+            False,
+            [],
+        )
+    if enterprise is None:
+        enterprise = FeeResult(
+            None, "not_found", "原文未找到可确认的企业售后成本", [], False, ["企业售后成本待确认"]
+        )
+    return FeeBreakdown(enterprise, internal, external)
+
+
+def _group_fee_clauses(text: str) -> dict[str, list[str]]:
+    grouped = {
+        "enterprise_cost": [],
+        "internal_accountability": [],
+        "external_borne": [],
+    }
+    for segment in [
+        part.strip() for part in re.split(r"[。；;\n]", clean_text(text)) if part.strip()
+    ]:
+        clauses = [part.strip() for part in re.split(r"[，,]", segment) if part.strip()]
+        amount_clauses = [
+            clause
+            for clause in clauses
+            if extract_amounts(clause) or re.search(r"费用.{0,5}(?:为|是)?\s*0\s*元", clause)
+        ]
+        if not amount_clauses and _is_external_borne_clause(segment):
+            grouped["external_borne"].append(segment)
+            continue
+        if not amount_clauses and any(
+            marker in segment for marker in INTERNAL_ACCOUNTABILITY_MARKERS
+        ):
+            grouped["internal_accountability"].append(segment)
+            continue
+        if not amount_clauses and any(marker in segment for marker in ENTERPRISE_COST_MARKERS):
+            grouped["enterprise_cost"].append(segment)
+            continue
+        if len(amount_clauses) == 1 and _is_external_borne_clause(segment):
+            grouped["external_borne"].append(segment)
+            continue
+        if len(amount_clauses) == 1 and any(
+            marker in segment for marker in INTERNAL_ACCOUNTABILITY_MARKERS
+        ):
+            grouped["internal_accountability"].append(segment)
+            continue
+        for clause in amount_clauses:
+            if _is_external_borne_clause(clause):
+                grouped["external_borne"].append(clause)
+            elif any(marker in clause for marker in INTERNAL_ACCOUNTABILITY_MARKERS):
+                grouped["internal_accountability"].append(clause)
+            else:
+                grouped["enterprise_cost"].append(clause)
+    return grouped
+
+
+def _is_external_borne_clause(text: str) -> bool:
+    if any(marker in text for marker in EXTERNAL_BORNE_MARKERS):
+        return True
+    external_subject = r"(?:供应商|合作方|厂家|厂商|外协|品牌方|二厂|第三方)"
+    return bool(
+        re.search(rf"(?:由)?{external_subject}.{{0,12}}(?:承担|负责|赔付|报销)", text)
+        or re.search(rf"(?:承担|负责|赔付|报销).{{0,12}}{external_subject}", text)
+    )
 
 
 def analyze_fee_text(text: str, label: str, rules: dict[str, Any]) -> FeeResult:
@@ -102,7 +263,9 @@ def analyze_fee_text(text: str, label: str, rules: dict[str, Any]) -> FeeResult:
         unique = unique_amounts([item[0] for item in total_candidates])
         if len(unique) > 1:
             # A later grand-total anchor wins over earlier subtotals; otherwise flag conflict.
-            grand = [item for item in total_candidates if "合计总费用" in item[1] or "总费用" in item[1]]
+            grand = [
+                item for item in total_candidates if "合计总费用" in item[1] or "总费用" in item[1]
+            ]
             if grand:
                 value, evidence = grand[-1]
             else:
@@ -120,7 +283,14 @@ def analyze_fee_text(text: str, label: str, rules: dict[str, Any]) -> FeeResult:
         verified = verify_formula_in_text(evidence)
         tolerance = max(0.15, abs(value) * 0.0002)
         if verified is not None and abs(verified - value) > tolerance:
-            return FeeResult(None, "needs_review", f"{label}：算式与等号后金额不一致：{evidence}", [], False, ["费用算式不一致"])
+            return FeeResult(
+                None,
+                "needs_review",
+                f"{label}：算式与等号后金额不一致：{evidence}",
+                [],
+                False,
+                ["费用算式不一致"],
+            )
         return FeeResult(
             round(value, 2),
             status,
@@ -146,20 +316,35 @@ def analyze_fee_text(text: str, label: str, rules: dict[str, Any]) -> FeeResult:
                 if abs(verified - declared) > tolerance:
                     warnings.append(f"算式不一致：{evidence[:120]}")
         if warnings:
-            return FeeResult(None, "needs_review", f"{label}：发现费用算式冲突", [], False, warnings)
+            return FeeResult(
+                None, "needs_review", f"{label}：发现费用算式冲突", [], False, warnings
+            )
         items = [
             {"name": f"费用分项{index}", "amount": round(amount, 2), "evidence": evidence[:220]}
             for index, (amount, evidence) in enumerate(formula_results, start=1)
             if amount in values
         ]
-        return FeeResult(value, "calculated", f"{label}：按明确算式合计 {format_number(value)} 元", items, not has_transfer, [])
+        return FeeResult(
+            value,
+            "calculated",
+            f"{label}：按明确算式合计 {format_number(value)} 元",
+            items,
+            not has_transfer,
+            [],
+        )
 
     # A single amount with fee/loss context is usable. Multiple unanchored amounts are unsafe.
-    fee_context = any(keyword in normalized for keyword in rules.get("cost_keywords", []))
+    fee_context = (
+        any(keyword in normalized for keyword in rules.get("cost_keywords", []))
+        or any(marker in normalized for marker in INTERNAL_ACCOUNTABILITY_MARKERS)
+        or any(marker in normalized for marker in EXTERNAL_BORNE_MARKERS)
+    )
     unique = unique_amounts(amounts)
     if fee_context and len(unique) == 1:
         value = unique[0]
-        status = "estimated" if any(marker in normalized for marker in ESTIMATE_MARKERS) else "exact"
+        status = (
+            "estimated" if any(marker in normalized for marker in ESTIMATE_MARKERS) else "exact"
+        )
         return FeeResult(
             round(value, 2),
             status,
@@ -241,7 +426,9 @@ def safe_calculate(expression: str) -> float:
         if isinstance(current, ast.Constant) and isinstance(current.value, (int, float)):
             return float(current.value)
         if isinstance(current, ast.BinOp) and type(current.op) in operations:
-            return float(operations[type(current.op)](evaluate(current.left), evaluate(current.right)))
+            return float(
+                operations[type(current.op)](evaluate(current.left), evaluate(current.right))
+            )
         if isinstance(current, ast.UnaryOp) and type(current.op) in operations:
             return float(operations[type(current.op)](evaluate(current.operand)))
         raise ValueError("unsupported arithmetic node")

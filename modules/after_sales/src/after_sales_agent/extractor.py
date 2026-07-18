@@ -10,8 +10,7 @@ import openpyxl
 from openpyxl.utils.datetime import from_excel
 
 from after_sales_agent.llm_analyzer import analyze_issue_with_api, api_is_configured
-from after_sales_agent.normalizer import build_date_warnings, determine_fee
-
+from after_sales_agent.normalizer import build_date_warnings, determine_fee_breakdown
 
 MONEY_RE = re.compile(r"(?<!\d)(\d+(?:\.\d+)?)\s*元")
 FORMULA_RESULT_RE = re.compile(r"=\s*(\d+(?:\.\d+)?)\s*元")
@@ -38,7 +37,9 @@ def process_workbook(
     if raw_workbook_text:
         fields["raw_text"] = raw_workbook_text
     if not fields:
-        anomalies.append(_anomaly(path, sheet.title, "fields", "critical", "工作簿中没有可分析的文本"))
+        anomalies.append(
+            _anomaly(path, sheet.title, "fields", "critical", "工作簿中没有可分析的文本")
+        )
         return None, anomalies, confirmations
     business_fields = [key for key in fields if key not in {"raw_text", "__source_cells"}]
     if not business_fields and "raw_text" in fields:
@@ -61,8 +62,9 @@ def process_workbook(
     issue_types, issue_evidence = infer_issue_types(all_text, rules)
     issue_primary = infer_primary_issue_type(fields, issue_types)
     issue_reason_summary = ""
-    issue_confidence = 0.55 if issue_types else 0.0
+    issue_confidence = 0.85 if issue_types else 0.0
     issue_analysis_source = "rules"
+    analysis_note = "离线规则分析完成"
     api_analysis: dict[str, Any] | None = None
     strict_api = bool((api_config or {}).get("strict"))
 
@@ -80,7 +82,12 @@ def process_workbook(
             issue_evidence = {"api": api_analysis["evidence"]}
             issue_confidence = api_analysis["confidence"]
             issue_analysis_source = "api"
-            if issue_confidence < 0.65 or not issue_reason_summary or not api_analysis.get("evidence"):
+            analysis_note = "已使用授权 AI 服务辅助分析"
+            if (
+                issue_confidence < 0.65
+                or not issue_reason_summary
+                or not api_analysis.get("evidence")
+            ):
                 confirmations.append(
                     _confirmation(
                         path,
@@ -91,35 +98,15 @@ def process_workbook(
                         issue_confidence,
                         False,
                     )
-            )
-        except Exception as exc:
+                )
+        except Exception:
             if strict_api:
                 raise
-            confirmations.append(
-                _confirmation(
-                    path,
-                    "issue_types",
-                    f"API分析失败，已退回关键词规则：{exc}",
-                    issue_types,
-                    rules.get("issue_order", []),
-                    0.0,
-                    False,
-                )
-            )
+            analysis_note = "AI 辅助不可用，离线规则分析完成"
     elif strict_api:
         raise RuntimeError("API key is required in strict AI mode")
     else:
-        confirmations.append(
-            _confirmation(
-                path,
-                "api_config",
-                "未配置API，问题类型使用关键词规则粗略判断",
-                None,
-                [],
-                0.0,
-                False,
-            )
-        )
+        analysis_note = "离线规则分析完成"
 
     if not issue_types:
         issue_types = ["其他"]
@@ -170,9 +157,11 @@ def process_workbook(
     # 品牌和客户是两个不同字段。品牌没有明确证据时统一记为“未知”，
     # 但这不是阻断项，原因、费用、解决状态和汇总仍然继续生成。
     brand = normalize_brand(brand)
-
     # 模型只提供候选费用和语义证据；最终金额必须由后端确定性规则复核。
-    fee = determine_fee(fields, rules)
+    fee_breakdown = determine_fee_breakdown(fields, rules)
+    fee = fee_breakdown.enterprise_cost
+    internal_fee = fee_breakdown.internal_accountability
+    external_fee = fee_breakdown.external_borne
     cost = fee.amount
     cost_included = bool(fee.included and fee.amount is not None)
     cost_evidence = fee.evidence
@@ -185,7 +174,7 @@ def process_workbook(
         confirmations.append(
             _confirmation(
                 path,
-                "fee_amount",
+                "enterprise_cost_amount",
                 f"模型候选费用 {float(api_cost):.2f} 元与后端复核金额 {float(cost):.2f} 元不一致",
                 cost,
                 [api_cost],
@@ -193,18 +182,38 @@ def process_workbook(
                 False,
             )
         )
-    if fee.status in {"not_found", "needs_review", "transferred"}:
+    if fee.status in {"not_found", "needs_review"}:
         confirmations.append(
             _confirmation(
                 path,
-                "fee_amount",
-                fee.evidence or "未找到可确认的售后费用；保持空值，不按0元统计",
+                "enterprise_cost_amount",
+                fee.evidence or "未找到可确认的企业售后成本；保持空值，不按0元统计",
                 None,
                 [],
                 0.0,
                 False,
             )
         )
+    for field, category_fee in [
+        ("internal_accountability_amount", internal_fee),
+        ("external_borne_amount", external_fee),
+    ]:
+        if category_fee.status == "needs_review" or (
+            field == "external_borne_amount"
+            and category_fee.status == "transferred"
+            and category_fee.amount is None
+        ):
+            confirmations.append(
+                _confirmation(
+                    path,
+                    field,
+                    category_fee.evidence or "该类金额存在冲突或歧义，需人工复核",
+                    None,
+                    [],
+                    0.0,
+                    False,
+                )
+            )
 
     resolution_analysis_source = "rules"
     resolution_status, resolution_reason = infer_resolution_status(fields, rules)
@@ -221,19 +230,28 @@ def process_workbook(
         resolution_analysis_source = "api"
     closed = resolution_status == "已解决"
     warnings = list(fee.warnings)
-    warnings.extend(build_date_warnings(complaint_date, fields.get("delivery_date"), fields.get("order_no")))
+    warnings.extend(
+        build_date_warnings(complaint_date, fields.get("delivery_date"), fields.get("order_no"))
+    )
     if brand == "未知":
         warnings.append("品牌未知，需人工确认；客户名称未被用作品牌")
     if issue_confidence < 0.7:
         warnings.append("主原因置信度低于0.70")
     if year is None:
         warnings.append("提出质量问题/报修日期未注明年份")
-    needs_review = bool(warnings or fee.status in {"not_found", "needs_review", "transferred"})
-    source_cells = fields.get("__source_cells", {}) if isinstance(fields.get("__source_cells"), dict) else {}
+    needs_review = bool(
+        warnings
+        or fee.status in {"not_found", "needs_review"}
+        or internal_fee.status == "needs_review"
+        or external_fee.status == "needs_review"
+    )
+    source_cells = (
+        fields.get("__source_cells", {}) if isinstance(fields.get("__source_cells"), dict) else {}
+    )
     case_status = "已关闭" if closed else ("处理中" if resolution_status == "处理中" else "待确认")
 
     record = {
-        "source_file": str(path),
+        "source_file": path.name,
         "sheet": sheet.title,
         "file_sha256": file_sha256(path),
         "customer": fields.get("customer", ""),
@@ -257,22 +275,43 @@ def process_workbook(
         "issue_reason_summary": issue_reason_summary,
         "issue_confidence": issue_confidence,
         "issue_analysis_source": issue_analysis_source,
+        "analysis_note": analysis_note,
         "issue_evidence": issue_evidence,
         "api_analysis": api_analysis,
         "cost": round(cost, 2) if cost is not None else None,
         "fee_amount": round(cost, 2) if cost is not None else None,
+        "enterprise_cost_amount": round(cost, 2) if cost is not None else None,
+        "enterprise_cost_status": fee.status,
+        "enterprise_cost_evidence": fee.evidence,
+        "enterprise_cost_reviewed": False,
+        "internal_accountability_amount": round(internal_fee.amount, 2)
+        if internal_fee.amount is not None
+        else None,
+        "internal_accountability_status": internal_fee.status,
+        "internal_accountability_evidence": internal_fee.evidence,
+        "internal_accountability_reviewed": False,
+        "external_borne_amount": round(external_fee.amount, 2)
+        if external_fee.amount is not None
+        else None,
+        "external_borne_status": external_fee.status,
+        "external_borne_evidence": external_fee.evidence,
+        "external_borne_reviewed": False,
         "fee_currency": "CNY",
         "fee_status": fee.status,
         "cost_included": cost_included,
         "cost_status": cost_status,
         "cost_items": cost_items,
+        "internal_accountability_items": internal_fee.items,
+        "external_borne_items": external_fee.items,
         "cost_rule_amount": round(cost, 2) if cost is not None else None,
         "cost_rule_evidence": fee.evidence,
         "api_cost_candidate": api_cost,
         "api_cost_evidence": api_cost_evidence,
         "cost_evidence": cost_evidence,
         "cost_analysis_source": cost_analysis_source,
-        "selected_solution": api_analysis.get("selected_solution") if api_analysis else fields.get("solution", ""),
+        "selected_solution": api_analysis.get("selected_solution")
+        if api_analysis
+        else fields.get("solution", ""),
         "resolution_status": resolution_status,
         "resolution_reason": resolution_reason,
         "resolution_analysis_source": resolution_analysis_source,
@@ -314,7 +353,9 @@ def extract_fields(ws: Any, rules: dict[str, Any]) -> dict[str, Any]:
                 fields[field] = value
             address = value_source_address(ws, row_idx, col_idx, rules)
             if address:
-                source_cells[field] = f"{source_cells[field]},{address}" if field in source_cells else address
+                source_cells[field] = (
+                    f"{source_cells[field]},{address}" if field in source_cells else address
+                )
     fields["__source_cells"] = source_cells
     return fields
 
@@ -352,7 +393,10 @@ def extract_workbook_text(workbook: Any, max_chars: int = 40_000) -> str:
         row_limit = min(int(ws.max_row or 0), 500)
         column_limit = min(int(ws.max_column or 0), 60)
         for row_idx in range(1, row_limit + 1):
-            values = [clean_cell(ws.cell(row_idx, col_idx).value) for col_idx in range(1, column_limit + 1)]
+            values = [
+                clean_cell(ws.cell(row_idx, col_idx).value)
+                for col_idx in range(1, column_limit + 1)
+            ]
             while values and not values[-1]:
                 values.pop()
             if not any(values):
@@ -435,29 +479,75 @@ def normalize_brand(value: Any) -> str:
 def fallback_reason_summary(fields: dict[str, str], issue_types: list[str]) -> str:
     """从原表中保留最具体的原因描述，避免只有分类没有原因。"""
     keywords = {
-        "性能": ["开裂", "断裂", "裂纹", "发霉", "霉变", "腐烂", "变形", "分层", "剥离", "膨胀", "收缩", "破裂", "间隙"],
+        "性能": [
+            "开裂",
+            "断裂",
+            "裂纹",
+            "发霉",
+            "霉变",
+            "腐烂",
+            "变形",
+            "分层",
+            "剥离",
+            "膨胀",
+            "收缩",
+            "破裂",
+            "间隙",
+        ],
         "外观": ["颜色", "色差", "漆面", "划伤", "脏污", "变色", "表面"],
         "加工": ["尺寸", "规格", "开片", "加工", "图纸", "指令", "安装", "遗漏"],
     }
     wanted = [word for issue_type in issue_types for word in keywords.get(issue_type, [])]
     root_markers = [
-        "原因", "导致", "造成", "判定", "错误", "遗漏", "未涂胶", "不符", "指令", "混淆",
-        "膨胀", "收缩", "含水率", "未核对", "未确认", "责任主体", "质量问题",
+        "原因",
+        "导致",
+        "造成",
+        "判定",
+        "错误",
+        "遗漏",
+        "未涂胶",
+        "不符",
+        "指令",
+        "混淆",
+        "膨胀",
+        "收缩",
+        "含水率",
+        "未核对",
+        "未确认",
+        "责任主体",
+        "质量问题",
     ]
     investigation = clean_cell(fields.get("investigation", ""))
     if investigation:
-        parts = [part.strip(" ：:，,。；;|") for part in re.split(r"[\n。；;|]", investigation) if part.strip()]
+        parts = [
+            part.strip(" ：:，,。；;|")
+            for part in re.split(r"[\n。；;|]", investigation)
+            if part.strip()
+        ]
         causal = [
-            part for part in parts
+            part
+            for part in parts
             if any(marker in part for marker in root_markers)
             and not any(word in part for word in ["方案一", "方案二", "费用", "客户意愿"])
         ]
         if causal:
             causal = [re.sub(r"^售后对接人[:：].*?沟通[，,]?", "", part).strip() for part in causal]
-            strong_markers = ["未涂胶", "质量问题", "错误造成的原因", "导致", "膨胀", "收缩", "遗漏", "判定"]
+            strong_markers = [
+                "未涂胶",
+                "质量问题",
+                "错误造成的原因",
+                "导致",
+                "膨胀",
+                "收缩",
+                "遗漏",
+                "判定",
+            ]
             ranked = sorted(
                 enumerate(causal),
-                key=lambda item: (-sum(1 for marker in strong_markers if marker in item[1]), item[0]),
+                key=lambda item: (
+                    -sum(1 for marker in strong_markers if marker in item[1]),
+                    item[0],
+                ),
             )
             return "；".join(part for _, part in ranked[:3])[:360]
 
@@ -465,9 +555,15 @@ def fallback_reason_summary(fields: dict[str, str], issue_types: list[str]) -> s
         text = clean_cell(fields.get(field, ""))
         if not text:
             continue
-        parts = [part.strip(" ：:，,。；;|") for part in re.split(r"[\n。；;|]", text) if part.strip()]
+        parts = [
+            part.strip(" ：:，,。；;|") for part in re.split(r"[\n。；;|]", text) if part.strip()
+        ]
         relevant = [part for part in parts if any(word in part for word in wanted)] or parts
-        candidate = max(relevant, key=lambda part: (sum(1 for word in wanted if word in part), min(len(part), 220)), default=text)
+        candidate = max(
+            relevant,
+            key=lambda part: (sum(1 for word in wanted if word in part), min(len(part), 220)),
+            default=text,
+        )
         if candidate:
             return f"{candidate[:300]}；原表未写明根因"
     return "原表未提供可确认的具体原因"
@@ -479,11 +575,27 @@ def infer_primary_issue_type(fields: dict[str, str], issue_types: list[str]) -> 
     cost_based = infer_primary_from_costed_causes(fields, issue_types)
     if cost_based:
         return cost_based
-    cause_text = " ".join(str(fields.get(key, "")) for key in ["investigation", "feedback", "application"])
+    cause_text = " ".join(
+        str(fields.get(key, "")) for key in ["investigation", "feedback", "application"]
+    )
     strong_processing_markers = [
-        "未涂胶", "胶合", "图纸拆解", "设计人员", "设计遗漏", "沟通不到位", "存在遗漏",
-        "尺寸不符", "规格错误", "开片错误", "指令错误", "加工错误", "不能安装", "无法安装",
-        "大于其内径", "孔位错误", "装配尺寸",
+        "未涂胶",
+        "胶合",
+        "图纸拆解",
+        "设计人员",
+        "设计遗漏",
+        "沟通不到位",
+        "存在遗漏",
+        "尺寸不符",
+        "规格错误",
+        "开片错误",
+        "指令错误",
+        "加工错误",
+        "不能安装",
+        "无法安装",
+        "大于其内径",
+        "孔位错误",
+        "装配尺寸",
     ]
     if "加工" in issue_types and any(marker in cause_text for marker in strong_processing_markers):
         return "加工"
@@ -499,7 +611,9 @@ def infer_primary_from_costed_causes(fields: dict[str, str], issue_types: list[s
         return None
     investigation = clean_cell(fields.get("investigation", ""))
     solution = clean_cell(fields.get("solution", ""))
-    if "性能问题" not in investigation or not re.search(r"加工.{0,8}(问题|不符)|尺寸不符", investigation):
+    if "性能问题" not in investigation or not re.search(
+        r"加工.{0,8}(问题|不符)|尺寸不符", investigation
+    ):
         return None
     cause_tokens: dict[str, set[str]] = {"性能": set(), "加工": set()}
     for segment in re.split(r"[，,。；;]", investigation):
@@ -509,7 +623,9 @@ def infer_primary_from_costed_causes(fields: dict[str, str], issue_types: list[s
         if re.search(r"加工.{0,8}(问题|不符)|尺寸不符", segment):
             category = "加工"
         if category:
-            cause_tokens[category].update(re.findall(r"(?<!\d)(?:1[0-9]{2}|2[0-9]{2})(?!\d)", segment))
+            cause_tokens[category].update(
+                re.findall(r"(?<!\d)(?:1[0-9]{2}|2[0-9]{2})(?!\d)", segment)
+            )
     totals = {"性能": 0.0, "加工": 0.0}
     for segment in re.split(r"[。；;]", solution):
         match = FORMULA_RESULT_RE.search(segment)
@@ -537,7 +653,9 @@ def infer_issue_types(text: str, rules: dict[str, Any]) -> tuple[list[str], dict
     return found, evidence
 
 
-def infer_date(fields: dict[str, str], path: Path) -> tuple[str | None, int | None, int | None, float]:
+def infer_date(
+    fields: dict[str, str], path: Path
+) -> tuple[str | None, int | None, int | None, float]:
     complaint = fields.get("complaint_date", "")
     parsed = parse_date_text(complaint)
     if parsed:
@@ -669,9 +787,12 @@ def extract_selected_cost(fields: dict[str, str], rules: dict[str, Any]) -> tupl
 
 def infer_resolution_status(fields: dict[str, str], rules: dict[str, Any]) -> tuple[str, str]:
     source_text = " ".join(
-        str(fields.get(k, "")) for k in ["feedback", "application", "investigation", "solution", "responsibility"]
+        str(fields.get(k, ""))
+        for k in ["feedback", "application", "investigation", "solution", "responsibility"]
     )
-    if re.search(r"(已|已经|后面|最终).{0,12}(解决|完成|处理完|更换完|返工完|修复完|结案|关闭)", source_text):
+    if re.search(
+        r"(已|已经|后面|最终).{0,12}(解决|完成|处理完|更换完|返工完|修复完|结案|关闭)", source_text
+    ):
         return "已解决", "原文明确记录问题已经解决或处理完成"
     if re.search(r"(就此|至此|本次|售后).{0,8}(结案|关闭)|明确.{0,8}(结案|关闭)", source_text):
         return "已解决", "原文明确记录售后已经结案或关闭"
@@ -682,8 +803,20 @@ def infer_resolution_status(fields: dict[str, str], rules: dict[str, Any]) -> tu
     if not solution and not responsibility:
         return "未解决", "原表未提供售后解决方案或完成记录"
     pending_markers = [
-        "建议", "下售后单", "补数生产", "重新生产", "安排", "待", "需要", "需更换", "需维修",
-        "提供更换", "现场施工", "补齐数量", "进行更换", "进行处理",
+        "建议",
+        "下售后单",
+        "补数生产",
+        "重新生产",
+        "安排",
+        "待",
+        "需要",
+        "需更换",
+        "需维修",
+        "提供更换",
+        "现场施工",
+        "补齐数量",
+        "进行更换",
+        "进行处理",
     ]
     if any(marker in f"{solution} {responsibility}" for marker in pending_markers):
         return "处理中", "原表已形成方案，但文字显示仍需生产、补数、更换、返修或现场执行"
@@ -724,7 +857,11 @@ def file_sha256(path: Path) -> str:
 
 def _select_after_sales_sheet(workbook: Any) -> Any | None:
     for ws in workbook.worksheets:
-        probe = " ".join(clean_cell(ws.cell(r, c).value) for r in range(1, min(ws.max_row, 5) + 1) for c in range(1, min(ws.max_column, 5) + 1))
+        probe = " ".join(
+            clean_cell(ws.cell(r, c).value)
+            for r in range(1, min(ws.max_row, 5) + 1)
+            for c in range(1, min(ws.max_column, 5) + 1)
+        )
         if "售后方案申请表" in probe or "售后" in ws.title:
             return ws
     return workbook.worksheets[0] if workbook.worksheets else None
@@ -745,9 +882,11 @@ def _is_transferred_cost(text: str, rules: dict[str, Any]) -> bool:
     return "转嫁给" in text and any(keyword in text for keyword in excluded if keyword != "转嫁给")
 
 
-def _anomaly(path: Path, sheet: str | None, field: str, severity: str, message: str) -> dict[str, Any]:
+def _anomaly(
+    path: Path, sheet: str | None, field: str, severity: str, message: str
+) -> dict[str, Any]:
     return {
-        "source_file": str(path),
+        "source_file": path.name,
         "sheet": sheet,
         "field": field,
         "severity": severity,
@@ -767,7 +906,7 @@ def _confirmation(
     blocking: bool,
 ) -> dict[str, Any]:
     return {
-        "source_file": str(path),
+        "source_file": path.name,
         "field": field,
         "reason": reason,
         "suggested_value": suggested_value,
