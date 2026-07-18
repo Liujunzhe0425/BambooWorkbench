@@ -32,11 +32,13 @@ class ModuleCard(QFrame):
         self.description_label = QLabel(description)
         self.description_label.setProperty("subtle", True)
         self.description_label.setWordWrap(True)
+        self.is_installed = self._is_installed(registry, module_id)
         self.state_label = QLabel(self._state_text(registry, module_id))
         self.state_label.setProperty("pill", True)
-        self.open_button = QPushButton("打开模块")
+        self.open_button = QPushButton("打开模块" if self.is_installed else "暂未安装")
         self.open_button.setProperty("secondary", True)
         self.open_button.setAccessibleName(f"打开{title}")
+        self.open_button.setEnabled(self.is_installed)
         self.open_button.clicked.connect(lambda checked=False: self.activated.emit(self.module_id))
         layout.addWidget(self.badge_label)
         layout.addWidget(self.title_label)
@@ -50,7 +52,7 @@ class ModuleCard(QFrame):
         try:
             module = registry.get(module_id)
         except KeyError:
-            return "未安装 · 状态未知"
+            return "暂未安装 · 等待接入"
         source = "模拟模块" if module.is_mock else "正式模块"
         health = {
             "healthy": "健康",
@@ -58,3 +60,11 @@ class ModuleCard(QFrame):
             "unknown": "状态未知",
         }.get(module.health, "状态未知")
         return f"已安装 · {source} · {health}"
+
+    @staticmethod
+    def _is_installed(registry: object, module_id: object) -> bool:
+        try:
+            registry.get(module_id)
+        except KeyError:
+            return False
+        return True

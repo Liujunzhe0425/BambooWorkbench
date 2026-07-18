@@ -22,6 +22,16 @@ def test_quality_workflow_runs_windows_repository_gate() -> None:
     assert workflow["jobs"]["quality"]["env"]["PYTHONUTF8"] == "1"
 
 
+def test_repository_gate_discovers_real_module_code_tests_and_contracts() -> None:
+    gate = (ROOT / "scripts/verify_repo.ps1").read_text(encoding="utf-8")
+
+    assert "$RuffTargets += 'modules'" in gate
+    assert "$ModuleTestTargets" in gate
+    assert "python -m pytest" not in gate
+    assert "-m pytest -q @ModuleTestTargets" in gate
+    assert "module_contract_cli validate $_.FullName" in gate
+
+
 def test_package_workflow_is_manual_or_tag_only() -> None:
     workflow = yaml.safe_load(
         (ROOT / ".github/workflows/package.yml").read_text(encoding="utf-8")
