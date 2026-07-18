@@ -32,6 +32,14 @@ set PYTHON_EXE=C:\path\to\python.exe
 run_module.bat self-check
 ```
 
+Windows 便携包会在模块目录的 `runtime` 中携带独立运行时；`run_module.bat`
+会优先使用该运行时，不依赖使用者电脑上的 Python 或第三方库。框架便携版构建完成后，
+在仓库根目录执行以下命令把售后运行时装入便携目录：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File modules/after_sales/build_portable_runtime.ps1
+```
+
 ## 统一任务合同
 
 ```json

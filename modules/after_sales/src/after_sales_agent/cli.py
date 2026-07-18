@@ -22,6 +22,12 @@ from after_sales_agent.report import write_summary_workbook
 from after_sales_agent.rules import load_rules
 
 
+def _module_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent.parent
+    return Path(__file__).resolve().parents[2]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="after_sales")
     subparsers = parser.add_subparsers(dest="command")
@@ -48,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
 
 def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int:
     started_at = datetime.now().astimezone().isoformat()
-    module_root = Path(__file__).resolve().parents[2]
+    module_root = _module_root()
     try:
         with job_path.open("r", encoding="utf-8") as f:
             job = json.load(f)

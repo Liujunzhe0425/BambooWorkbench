@@ -1,6 +1,12 @@
 @echo off
 setlocal
 set "MODULE_DIR=%~dp0"
+set "PYTHONUTF8=1"
+
+if exist "%MODULE_DIR%runtime\after_sales_agent.exe" (
+  "%MODULE_DIR%runtime\after_sales_agent.exe" %*
+  exit /b %ERRORLEVEL%
+)
 
 if defined PYTHON_EXE (
   "%PYTHON_EXE%" "%MODULE_DIR%src\after_sales_agent\cli.py" %*
