@@ -38,12 +38,6 @@ class TaskRepository:
             (status, updated_at, error, result_path, job_id),
         )
 
-    def set_module_config_hash(self, job_id: str, content_hash: str | None) -> None:
-        self.database.execute(
-            "UPDATE tasks SET module_config_hash = ? WHERE job_id = ?",
-            (content_hash, job_id),
-        )
-
     def get(self, job_id: str) -> dict[str, object]:
         row = self.database.connection.execute(
             "SELECT * FROM tasks WHERE job_id = ?", (job_id,)

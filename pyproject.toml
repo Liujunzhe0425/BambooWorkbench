@@ -15,9 +15,6 @@ dependencies = [
   "keyring>=25,<26",
   "PyYAML>=6,<7",
   "openpyxl>=3.1,<4",
-  "jsonschema>=4.23,<5",
-  "XlsxWriter>=3.2,<4",
-  "Jinja2>=3.1,<4",
 ]
 
 [project.optional-dependencies]
@@ -31,7 +28,7 @@ packaging = ["pyinstaller>=6.11,<7"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = [".", "modules/moisture/src"]
+pythonpath = ["."]
 addopts = "-ra --strict-markers"
 
 [tool.ruff]
