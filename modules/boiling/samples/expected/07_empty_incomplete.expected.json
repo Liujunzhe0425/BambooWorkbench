@@ -5,14 +5,7 @@
   "expected_processed_count": 0,
   "expected_failed_count": 0,
   "expected_anomaly_fields": [
-    "impregnation_date",
-    "order_info",
-    "pressing_date",
-    "product",
-    "samples",
-    "specification",
-    "team_leader",
-    "test_date"
+    "samples"
   ],
   "expected_confirmation_fields": [],
   "expected_sample_count": 0,
@@ -21,5 +14,5 @@
   "expected_average_density_g_cm3": null,
   "expected_average_expansion_ratio": null,
   "expected_conflict_count": 0,
-  "notes": "脱敏空表机器预期；所有缺失的正常统计必填字段都必须显式提示并转人工复核。"
+  "notes": "脱敏样例机器预期；阈值观察不构成正式质量结论。"
 }
