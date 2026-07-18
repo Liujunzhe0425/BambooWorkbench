@@ -6,11 +6,11 @@ from pathlib import Path
 
 import openpyxl
 
-
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MODULE_ROOT / "src"))
 
 from after_sales_agent.cli import _create_sample_workbook, run_job  # noqa: E402
+
 from core.contracts.result import ModuleResult  # noqa: E402
 
 
@@ -55,7 +55,9 @@ def test_draft_and_finalize_write_manual_fee_to_final_excel(tmp_path):
     ModuleResult.model_validate(draft_result)
     answers = []
     for prompt in draft_result["confirmations"]:
-        value = 3200 if prompt["field"] == "fee_amount" else prompt.get("suggested_value")
+        value = (
+            3200 if prompt["field"] == "enterprise_cost_amount" else prompt.get("suggested_value")
+        )
         answers.append(
             {
                 "confirmation_id": prompt["confirmation_id"],
@@ -92,7 +94,10 @@ def test_draft_and_finalize_write_manual_fee_to_final_excel(tmp_path):
     assert final_result["status"] == "success"
     records = json.loads((final_output / "after_sales_records.json").read_text(encoding="utf-8"))
     assert records[0]["fee_amount"] == 3200
+    assert records[0]["enterprise_cost_amount"] == 3200
+    assert records[0]["enterprise_cost_reviewed"] is True
     assert records[0]["fee_status"] == "exact"
+    assert "3200.00" in (final_output / "after_sales_analysis.md").read_text(encoding="utf-8")
 
     workbook = openpyxl.load_workbook(final_output / "after_sales_summary.xlsx", data_only=True)
     assert any(
