@@ -14,6 +14,10 @@ def test_quality_workflow_runs_windows_repository_gate() -> None:
         step.get("run", "") for step in workflow["jobs"]["quality"]["steps"]
     )
     assert "scripts/verify_repo.ps1" in run_steps
+    assert "modules/*/requirements.txt" in (ROOT / ".github/workflows/quality.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "Get-ChildItem -Path modules -Filter requirements.txt" in run_steps
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["jobs"]["quality"]["env"]["PYTHONUTF8"] == "1"
 

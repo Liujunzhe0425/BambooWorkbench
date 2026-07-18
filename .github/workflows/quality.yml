@@ -26,9 +26,19 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: |
+            pyproject.toml
+            modules/*/requirements.txt
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -e ".[dev]"
+      - name: Install delivered module dependencies
+        shell: powershell
+        run: |
+          if (Test-Path -LiteralPath modules) {
+            Get-ChildItem -Path modules -Filter requirements.txt -Recurse -File |
+              Sort-Object FullName |
+              ForEach-Object { python -m pip install -r $_.FullName }
+          }
       - name: Run repository quality gate
         shell: powershell
         run: powershell -ExecutionPolicy Bypass -File scripts/verify_repo.ps1

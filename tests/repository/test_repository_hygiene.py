@@ -4,6 +4,17 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def _is_sanitized_fixture(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    parts = normalized.split("/")
+    return normalized.startswith("tests/fixtures/") or (
+        len(parts) >= 5
+        and parts[0] == "modules"
+        and bool(parts[1])
+        and parts[2:4] == ["tests", "fixtures"]
+    )
+
+
 def test_repository_ignores_local_and_sensitive_artifacts() -> None:
     rules = (ROOT / ".gitignore").read_text(encoding="utf-8")
     for required in (
@@ -34,9 +45,16 @@ def test_repository_has_no_tracked_enterprise_spreadsheets() -> None:
         path
         for path in tracked
         if Path(path).suffix.lower() in {".xlsx", ".xls"}
-        and not path.replace("\\", "/").startswith("tests/fixtures/")
+        and not _is_sanitized_fixture(path)
     ]
     assert forbidden == []
+
+
+def test_spreadsheet_fixture_scope_policy() -> None:
+    assert _is_sanitized_fixture("tests/fixtures/shared/example.xlsx")
+    assert _is_sanitized_fixture("modules/boiling/tests/fixtures/example.xlsx")
+    assert not _is_sanitized_fixture("modules/boiling/samples/example.xlsx")
+    assert not _is_sanitized_fixture("customer_data/example.xlsx")
 
 
 def test_line_ending_policy_covers_code_docs_and_windows_scripts() -> None:
