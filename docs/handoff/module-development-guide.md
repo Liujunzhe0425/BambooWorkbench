@@ -195,6 +195,7 @@ powershell -ExecutionPolicy Bypass -File scripts/verify_repo.ps1
 
 - 使用虚构客户、订单、电话、地址和人员；
 - 移除 Excel 元数据、隐藏表、批注、外链和历史作者；
+- 模块专用脱敏 Excel 夹具统一放在 `modules/<module_id>/tests/fixtures/`，公共夹具才放在根目录 `tests/fixtures/`；
 - 不交付真实企业原表、运行日志、SQLite、`.env`、密钥或 API 响应；
 - 每个样本写明其覆盖场景，但不得通过文件名泄露客户信息；
 - ZIP 之外另附 SHA-256 校验值。
