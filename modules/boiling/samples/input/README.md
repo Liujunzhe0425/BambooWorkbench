@@ -1,6 +1,6 @@
 # 脱敏输入样例
 
-工作簿已按仓库二进制夹具规则移至 `modules/boiling/tests/fixtures/samples/input/`，均为人工构造的虚拟数据：
+工作簿已按仓库二进制夹具规则移至 `tests/fixtures/boiling/samples/input/`，均为人工构造的虚拟数据：
 
 1. `01_all_pass.xlsx`：字段完整、观察范围内、剥离合格。
 2. `02_density_observation.xlsx`：密度超暂存范围。

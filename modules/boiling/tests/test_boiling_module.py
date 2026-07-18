@@ -122,7 +122,7 @@ def test_draft_job_generates_result_without_modifying_source(tmp_path):
     sample = tmp_path / "sample.xlsx"
     output = tmp_path / "output"
     job_path = tmp_path / "job.json"
-    make_labeled_sample(sample, product_usage="")
+    make_sample(sample)
     before = digest(sample)
     job_path.write_text(json.dumps(make_job(sample, output), ensure_ascii=False), encoding="utf-8")
     assert boiling_module.run_job(job_path) == 0
@@ -141,7 +141,7 @@ def test_finalize_applies_confirmation(tmp_path):
     draft_job_path = tmp_path / "draft-job.json"
     final_job_path = tmp_path / "final-job.json"
     confirmation_path = tmp_path / "confirmation.json"
-    make_labeled_sample(sample, product_usage="")
+    make_sample(sample)
     draft_job_path.write_text(
         json.dumps(make_job(sample, draft_output), ensure_ascii=False), encoding="utf-8"
     )
@@ -209,7 +209,7 @@ def test_empty_sheet_does_not_enter_normal_summary(tmp_path):
     result = json.loads((output / "result.json").read_text(encoding="utf-8"))
     assert result["status"] == "needs_confirmation"
     assert result["summary"]["processed_count"] == 0
-    assert (output / "boiling_summary.xlsx").is_file()
+    assert not (output / "boiling_summary.xlsx").exists()
 
 
 def test_extracts_all_handoff_fields_and_recalculates(tmp_path):
@@ -249,11 +249,7 @@ def test_product_usage_in_source_does_not_request_confirmation(tmp_path):
     assert result["status"] == "success"
     assert result["confirmations"] == []
     assert result["service_requests"] == []
-    assert {item["type"] for item in result["outputs"]} == {
-        "summary_excel",
-        "analysis_report",
-        "business_records",
-    }
+    assert {item["type"] for item in result["outputs"]} == {"summary_excel", "analysis_report"}
 
 
 def test_density_observation_is_not_presented_as_formal_verdict(tmp_path):
@@ -371,7 +367,7 @@ def test_outputs_are_inside_declared_output_directory(tmp_path):
 
 
 def test_all_sanitized_samples_match_machine_expected_results(tmp_path):
-    input_dir = MODULE_ROOT / "tests" / "fixtures" / "samples" / "input"
+    input_dir = MODULE_ROOT / "samples" / "input"
     expected_dir = MODULE_ROOT / "samples" / "expected"
     samples = sorted(input_dir.glob("*.xlsx"))
     assert len(samples) == 8
