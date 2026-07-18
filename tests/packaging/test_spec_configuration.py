@@ -7,6 +7,7 @@ def test_spec_bundles_framework_resources_and_both_executables() -> None:
     spec = (ROOT / "packaging/BambooWorkbench.spec").read_text(encoding="utf-8")
     for path in ("contracts", "assets", "logo", "resources", "mock_modules"):
         assert path in spec
+    assert '(str(ROOT / "modules"), "modules")' in spec
     assert 'name="BambooWorkbench"' in spec
     assert 'name="BambooModuleHost"' in spec
     assert "console=False" in spec
