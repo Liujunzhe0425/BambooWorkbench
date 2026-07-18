@@ -40,6 +40,10 @@ Windows 便携包会在模块目录的 `runtime` 中携带独立运行时；`run
 powershell -ExecutionPolicy Bypass -File modules/after_sales/build_portable_runtime.ps1
 ```
 
+进度协议使用 ASCII 安全的 JSON 转义输出。这样即使 Windows 冻结程序所在控制台仍为
+GBK，工作台也能按严格 UTF-8 逐行读取，JSON 解码后中文消息保持不变。构建脚本会运行
+冻结程序协议验收，非 UTF-8 或非逐行 JSON 的便携运行时不会通过打包。
+
 ## 统一任务合同
 
 ```json

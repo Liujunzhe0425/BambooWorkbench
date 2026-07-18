@@ -66,4 +66,31 @@ if ($LASTEXITCODE -ne 0) {
     throw "Packaged after-sales runtime self-check failed: $LASTEXITCODE"
 }
 
+# The desktop host decodes every progress line as strict UTF-8. Validate the
+# actual frozen executable because Windows console code pages can differ from
+# the source-Python test environment.
+$ValidationOutput = Join-Path $BuildRoot 'protocol-validation-output'
+$ValidationJobPath = Join-Path $BuildRoot 'protocol-validation-job.json'
+$ValidationInput = Join-Path $ModuleRoot 'tests\fixtures\samples\input\sample_after_sales.xlsx'
+$ValidationJob = [ordered]@{
+    schema_version = '1.0'
+    job_id = 'portable-protocol-validation'
+    module_id = 'after_sales'
+    phase = 'draft'
+    run_mode = 'batch'
+    input_files = @($ValidationInput)
+    output_dir = $ValidationOutput
+}
+$ValidationJobJson = $ValidationJob | ConvertTo-Json -Depth 5
+[System.IO.File]::WriteAllText(
+    $ValidationJobPath,
+    $ValidationJobJson,
+    [System.Text.UTF8Encoding]::new($false)
+)
+& $Python (Join-Path $ModuleRoot 'scripts\verify_portable_runtime.py') `
+    $RuntimeExe $ValidationJobPath
+if ($LASTEXITCODE -ne 0) {
+    throw "Packaged after-sales runtime protocol check failed: $LASTEXITCODE"
+}
+
 Write-Host "After-sales portable runtime installed: $RuntimeDestination" -ForegroundColor Green

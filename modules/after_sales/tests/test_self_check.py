@@ -1,3 +1,5 @@
+import io
+import json
 import os
 import subprocess
 import sys
@@ -7,6 +9,27 @@ MODULE_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MODULE_DIR / "src"))
 
 from after_sales_agent import cli as module_cli  # noqa: E402
+
+
+def test_progress_protocol_is_utf8_safe_on_gbk_stdout(monkeypatch):
+    raw_output = io.BytesIO()
+    gbk_stdout = io.TextIOWrapper(raw_output, encoding="gbk", newline="\n")
+    monkeypatch.setattr(module_cli.sys, "stdout", gbk_stdout)
+
+    module_cli._notify_progress(
+        None,
+        {"total": 2, "completed": 1, "message": "正在处理第 1/2 个文件"},
+    )
+    gbk_stdout.flush()
+
+    protocol_bytes = raw_output.getvalue()
+    assert protocol_bytes.isascii()
+    event = json.loads(protocol_bytes.decode("utf-8"))
+    assert event == {
+        "type": "progress",
+        "percent": 50,
+        "message": "正在处理第 1/2 个文件",
+    }
 
 
 def test_self_check_runs():

@@ -274,7 +274,10 @@ def _notify_progress(callback: Any, payload: dict[str, Any]) -> None:
                     "percent": int(completed * 100 / total),
                     "message": message,
                 },
-                ensure_ascii=False,
+                # 工作台按 UTF-8 逐行解析进度协议。冻结后的 Windows 控制台可能
+                # 仍使用 GBK，因此协议层只输出 ASCII JSON 转义，避免中文消息
+                # 被控制台编码成非 UTF-8 字节；JSON 解码后中文内容保持不变。
+                ensure_ascii=True,
             ),
             flush=True,
         )
