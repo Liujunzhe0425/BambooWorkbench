@@ -1,0 +1,23 @@
+rule_version: "2026.07-draft"
+status: "pending_customer_confirmation"
+density:
+  rule_id: "BOILING-DENSITY-001"
+  minimum_g_cm3: 1.1
+  maximum_g_cm3: 1.3
+  enabled_for_formal_judgement: false
+expansion:
+  rule_id: "BOILING-EXPANSION-001"
+  requires_product_usage: true
+  enabled_for_formal_judgement: false
+  thresholds:
+    地板:
+      maximum_ratio: 0.08
+    家具:
+      maximum_ratio: 0.07
+    墙板:
+      maximum_ratio: 0.09
+    栏杆:
+      maximum_ratio: 0.08
+notes:
+  - "以上密度和膨胀率数值均为脱敏联调暂存值，未经客户书面确认。"
+  - "暂存阈值只触发观察/人工复核，不生成正式合格或不合格结论。"

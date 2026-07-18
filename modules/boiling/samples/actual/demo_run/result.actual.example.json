@@ -1,0 +1,247 @@
+{
+  "schema_version": "1.0",
+  "job_id": "SAMPLE-BATCH-001",
+  "module_id": "boiling",
+  "module_version": "0.1.0",
+  "status": "needs_confirmation",
+  "summary": {
+    "input_count": 8,
+    "processed_count": 7,
+    "skipped_count": 0,
+    "failed_count": 0,
+    "anomaly_count": 6,
+    "confirmation_count": 2
+  },
+  "anomalies": [
+    {
+      "anomaly_id": "A-DENSITY-09900c8d5db8",
+      "severity": "warning",
+      "field": "average_density_g_cm3",
+      "value": 1.45,
+      "rule_id": "BOILING-DENSITY-001",
+      "message": "平均密度超出当前暂存阈值；该规则尚未获客户确认，不能作为正式合格判定。",
+      "suggestion": "复核原始测量值，并由有权限人员确认密度阈值后再作正式判断。",
+      "source": {
+        "source_file": "samples/input/02_density_observation.xlsx",
+        "sheet": "水煮实验",
+        "cell_or_range": null
+      }
+    },
+    {
+      "anomaly_id": "A-EXPANSION-2c406684b97f",
+      "severity": "warning",
+      "field": "average_expansion_ratio",
+      "value": 0.10000000000000003,
+      "rule_id": "BOILING-EXPANSION-001",
+      "message": "平均膨胀率超出当前产品用途对应的暂存阈值；规则尚未获客户确认。",
+      "suggestion": "复核产品用途及测量值，并由有权限人员确认正式阈值。",
+      "source": {
+        "source_file": "samples/input/03_expansion_observation.xlsx",
+        "sheet": "水煮实验",
+        "cell_or_range": null
+      }
+    },
+    {
+      "anomaly_id": "A-PEEL-9bf2d8d374c8",
+      "severity": "warning",
+      "field": "immersion_peel_result",
+      "value": "不合格",
+      "rule_id": "BOILING-PEEL-SOURCE-001",
+      "message": "原表记录浸渍剥离检测不合格。",
+      "suggestion": "保留原表结论并转人工复核；本模块不替代检测人员作正式判定。",
+      "source": {
+        "source_file": "samples/input/04_peel_fail.xlsx",
+        "sheet": "水煮实验",
+        "cell_or_range": null
+      }
+    },
+    {
+      "anomaly_id": "A-MISSING-SAMPLES-c19d705372d2",
+      "severity": "critical",
+      "field": "samples",
+      "value": null,
+      "rule_id": null,
+      "message": "缺少关键字段 samples，该文件未进入正常汇总统计。",
+      "suggestion": "复核空表、未完成表或模板结构变化，并补齐原始记录。",
+      "source": {
+        "source_file": "samples/input/07_empty_incomplete.xlsx",
+        "sheet": "水煮实验",
+        "cell_or_range": null
+      }
+    },
+    {
+      "anomaly_id": "A-CONFLICT-1-603761a3a3d3",
+      "severity": "warning",
+      "field": "density_g_cm3",
+      "value": {
+        "source": 1.28,
+        "calculated": 1.2
+      },
+      "rule_id": "BOILING-CALC-CONFLICT-001",
+      "message": "样1 的原表值与模块复算值不一致。",
+      "suggestion": "核对公式、单位和原始测量记录；在确认前同时保留两个值。",
+      "source": {
+        "source_file": "samples/input/08_calculation_conflict.xlsx",
+        "sheet": "水煮实验",
+        "cell_or_range": "F12"
+      }
+    },
+    {
+      "anomaly_id": "A-CONFLICT-2-603761a3a3d3",
+      "severity": "warning",
+      "field": "expansion_ratio",
+      "value": {
+        "source": 0.08,
+        "calculated": 0.05
+      },
+      "rule_id": "BOILING-CALC-CONFLICT-001",
+      "message": "样1 的原表值与模块复算值不一致。",
+      "suggestion": "核对公式、单位和原始测量记录；在确认前同时保留两个值。",
+      "source": {
+        "source_file": "samples/input/08_calculation_conflict.xlsx",
+        "sheet": "水煮实验",
+        "cell_or_range": "H12"
+      }
+    }
+  ],
+  "confirmations": [
+    {
+      "confirmation_id": "C-CONFLICT-1-603761a3a3d3",
+      "field": "density_g_cm3",
+      "reason": "样1 原表值与复算值冲突，需要人工选择可信来源。",
+      "suggested_value": 1.2,
+      "options": [
+        1.28,
+        1.2
+      ],
+      "confidence": 0.5,
+      "blocking": false,
+      "batch_applicable": false,
+      "rememberable": false,
+      "source": {
+        "source_file": "samples/input/08_calculation_conflict.xlsx",
+        "sheet": "水煮实验",
+        "cell_or_range": "F12"
+      }
+    },
+    {
+      "confirmation_id": "C-CONFLICT-2-603761a3a3d3",
+      "field": "expansion_ratio",
+      "reason": "样1 原表值与复算值冲突，需要人工选择可信来源。",
+      "suggested_value": 0.05,
+      "options": [
+        0.08,
+        0.05
+      ],
+      "confidence": 0.5,
+      "blocking": false,
+      "batch_applicable": false,
+      "rememberable": false,
+      "source": {
+        "source_file": "samples/input/08_calculation_conflict.xlsx",
+        "sheet": "水煮实验",
+        "cell_or_range": "H12"
+      }
+    }
+  ],
+  "outputs": [
+    {
+      "type": "summary_excel",
+      "path": "samples/actual/demo_run/boiling_summary.xlsx",
+      "label": "水煮实验汇总",
+      "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    },
+    {
+      "type": "analysis_report",
+      "path": "samples/actual/demo_run/boiling_analysis.md",
+      "label": "水煮实验分析报告",
+      "mime_type": "text/markdown"
+    }
+  ],
+  "file_results": [
+    {
+      "source_file": "samples/input/01_all_pass.xlsx",
+      "fingerprint": "045fc91d4ed45461b89681927878c7ad2a6962e2de4a8efeef638a5c66c1ccb8",
+      "status": "success",
+      "extracted_records": 1,
+      "anomaly_count": 0,
+      "missing_fields": [],
+      "error": null
+    },
+    {
+      "source_file": "samples/input/02_density_observation.xlsx",
+      "fingerprint": "09900c8d5db89501d0e2e937dc05dd54e4acc0cf4b3750c6ebb762205dc85298",
+      "status": "needs_confirmation",
+      "extracted_records": 1,
+      "anomaly_count": 1,
+      "missing_fields": [],
+      "error": null
+    },
+    {
+      "source_file": "samples/input/03_expansion_observation.xlsx",
+      "fingerprint": "2c406684b97f171d9eb05d8dbb5e4b00663f0648eb118e134a7ad7f648e58054",
+      "status": "needs_confirmation",
+      "extracted_records": 1,
+      "anomaly_count": 1,
+      "missing_fields": [],
+      "error": null
+    },
+    {
+      "source_file": "samples/input/04_peel_fail.xlsx",
+      "fingerprint": "9bf2d8d374c8c0fa6490fe5e57d78d3d5f2a5db71511e116a72d110622a71438",
+      "status": "needs_confirmation",
+      "extracted_records": 1,
+      "anomaly_count": 1,
+      "missing_fields": [],
+      "error": null
+    },
+    {
+      "source_file": "samples/input/05_retest.xlsx",
+      "fingerprint": "e2fe361d3eeb721f07dada965b4ee81d9f7abb68f87c1c534e10d999d96ea67b",
+      "status": "success",
+      "extracted_records": 1,
+      "anomaly_count": 0,
+      "missing_fields": [],
+      "error": null
+    },
+    {
+      "source_file": "samples/input/06_three_samples.xlsx",
+      "fingerprint": "60ded2d2f6ff9bc8b2bf56233585a50e2ed553fde5e43d5e00e51556db512690",
+      "status": "success",
+      "extracted_records": 1,
+      "anomaly_count": 0,
+      "missing_fields": [],
+      "error": null
+    },
+    {
+      "source_file": "samples/input/07_empty_incomplete.xlsx",
+      "fingerprint": "c19d705372d253281150577038e3a0164495755ebab6ee7670d98cdda6965fb8",
+      "status": "needs_confirmation",
+      "extracted_records": 0,
+      "anomaly_count": 1,
+      "missing_fields": [
+        "pressing_date",
+        "team_leader",
+        "impregnation_date",
+        "order_info",
+        "samples"
+      ],
+      "error": null
+    },
+    {
+      "source_file": "samples/input/08_calculation_conflict.xlsx",
+      "fingerprint": "603761a3a3d38b127bf7bb46052958b375e3ac79e02ae020a44e4f57dd3933a4",
+      "status": "needs_confirmation",
+      "extracted_records": 1,
+      "anomaly_count": 2,
+      "missing_fields": [],
+      "error": null
+    }
+  ],
+  "errors": [],
+  "service_requests": [],
+  "rule_version": "2026.07-draft",
+  "analysis_summary": "处理7个文件，失败0个，异常/观察6项，待确认2项。",
+  "started_at": "2026-07-18T14:24:23+08:00",
+  "finished_at": "2026-07-18T14:24:23+08:00"
+}

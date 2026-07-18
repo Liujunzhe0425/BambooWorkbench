@@ -1,0 +1,16 @@
+{
+  "schema_version": "1.0",
+  "sample_file": "01_all_pass.xlsx",
+  "expected_status": "success",
+  "expected_processed_count": 1,
+  "expected_failed_count": 0,
+  "expected_anomaly_fields": [],
+  "expected_confirmation_fields": [],
+  "expected_sample_count": 2,
+  "expected_retest_count": 0,
+  "expected_immersion_peel_result": "合格",
+  "expected_average_density_g_cm3": 1.2,
+  "expected_average_expansion_ratio": 0.05000000000000006,
+  "expected_conflict_count": 0,
+  "notes": "脱敏样例机器预期；阈值观察不构成正式质量结论。"
+}
