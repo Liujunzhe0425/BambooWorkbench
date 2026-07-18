@@ -54,4 +54,4 @@ python -m pytest modules/boiling/tests -q
 powershell -ExecutionPolicy Bypass -File scripts/verify_repo.ps1
 ```
 
-脱敏样例位于仓库 `tests/fixtures/boiling/samples/input/`，对应机器预期位于 `samples/expected/`。验证证据和示例汇总 Excel 同样存放在 `tests/fixtures/boiling/` 下。正式交付不包含真实企业 Excel、运行日志、数据库、密钥、客户路径或接口响应。
+脱敏样例位于仓库 `modules/boiling/tests/fixtures/samples/input/`，对应机器预期位于 `samples/expected/`。验证证据和示例汇总 Excel 同样存放在 `modules/boiling/tests/fixtures/` 下。正式交付不包含真实企业 Excel、运行日志、数据库、密钥、客户路径或接口响应。

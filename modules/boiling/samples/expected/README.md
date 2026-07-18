@@ -1,5 +1,5 @@
 # 机器预期结果
 
-每个 `*.expected.json` 与仓库 `tests/fixtures/boiling/samples/input/` 中同名脱敏工作簿一一对应，记录期望状态、处理数量、异常字段、确认字段、试件数量、复测数量和核心计算结果。
+每个 `*.expected.json` 与仓库 `modules/boiling/tests/fixtures/samples/input/` 中同名脱敏工作簿一一对应，记录期望状态、处理数量、异常字段、确认字段、试件数量、复测数量和核心计算结果。
 
 测试代码会复算核心样例；这些 JSON 便于人工验收和后续回归测试。暂存阈值对应的异常只表示观察/待复核，不是正式质量结论。
