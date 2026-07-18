@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "sample_file": "04_peel_fail.xlsx",
-  "expected_status": "needs_confirmation",
+  "expected_status": "partial_success",
   "expected_processed_count": 1,
   "expected_failed_count": 0,
   "expected_anomaly_fields": [
@@ -14,5 +14,5 @@
   "expected_average_density_g_cm3": 1.2,
   "expected_average_expansion_ratio": 0.05000000000000006,
   "expected_conflict_count": 0,
-  "notes": "脱敏样例机器预期；阈值观察不构成正式质量结论。"
+  "notes": "脱敏样例机器预期；原表浸渍剥离不合格作为异常保留，不伪造人工确认项。"
 }

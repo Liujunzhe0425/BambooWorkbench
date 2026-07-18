@@ -6,6 +6,8 @@ from pathlib import Path
 
 import openpyxl
 
+from core.contracts.result import ModuleResult
+
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 MODULE_SPEC = importlib.util.spec_from_file_location(
     "boiling_module", MODULE_ROOT / "src" / "boiling_module.py"
@@ -28,6 +30,14 @@ def make_sample(path, include_samples=True):
     sheet.cell(3, 7, "100*100*10")
     sheet.cell(5, 3, dt.date(2026, 7, 16))
     if include_samples:
+        sheet.cell(7, 1, "试件")
+        sheet.cell(7, 2, "长度(mm)")
+        sheet.cell(7, 3, "宽度(mm)")
+        sheet.cell(7, 4, "煮前厚度(mm)")
+        sheet.cell(7, 5, "重量(g)")
+        sheet.cell(7, 6, "密度(g/cm³)")
+        sheet.cell(7, 7, "煮后厚度(mm)")
+        sheet.cell(7, 8, "膨胀率")
         sheet.cell(8, 1, "样1")
         sheet.cell(8, 2, 100)
         sheet.cell(8, 3, 100)
@@ -73,30 +83,65 @@ def make_labeled_sample(
     include_retest=False,
     source_density=None,
     source_expansion=None,
+    densities=None,
+    expansions=None,
+    labels=None,
+    batch_no="DEMO-001",
 ):
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "水煮实验"
-    sheet.append(["批号", "DEMO-001", "产品名称", "脱敏竹集成材", "规格型号", "100×100×10"])
+    sheet.append(["批号", batch_no, "产品名称", "脱敏竹集成材", "规格型号", "100×100×10"])
     sheet.append(["压制日期", dt.date(2026, 7, 10), "班长", "脱敏班长", "产品用途", product_usage])
-    sheet.append(["检测日期", dt.date(2026, 7, 16), "浸胶日期", dt.date(2026, 7, 11), "订单号", "ORDER-DEMO-001"])
+    sheet.append(
+        [
+            "检测日期",
+            dt.date(2026, 7, 16),
+            "浸胶日期",
+            dt.date(2026, 7, 11),
+            "订单号",
+            "ORDER-DEMO-001",
+        ]
+    )
+    sheet.cell(7, 1, "试件")
+    sheet.cell(7, 2, "长度(mm)")
+    sheet.cell(7, 3, "宽度(mm)")
+    sheet.cell(7, 4, "煮前厚度(mm)")
+    sheet.cell(7, 5, "重量(g)")
+    sheet.cell(7, 6, "密度(g/cm³)")
+    sheet.cell(7, 7, "煮后厚度(mm)")
+    sheet.cell(7, 8, "膨胀率")
     start = 8
     total = sample_count + (1 if include_retest else 0)
+    density_values = list(densities or [density] * total)
+    expansion_values = list(expansions or [expansion] * total)
     for index in range(total):
-        label = "复测1" if include_retest and index == total - 1 else f"样{index + 1}"
+        label = (
+            labels[index]
+            if labels
+            else "复测1"
+            if include_retest and index == total - 1
+            else f"样{index + 1}"
+        )
         sample_start = start + index * 7
         sheet.cell(sample_start, 1, label)
         sheet.cell(sample_start, 2, 100)
         sheet.cell(sample_start, 3, 100)
         avg_before = 10.0
-        avg_after = avg_before * (1 + expansion)
-        weight = density * (100 * 100 * avg_before / 1000)
+        sample_density = density_values[index]
+        sample_expansion = expansion_values[index]
+        avg_after = avg_before * (1 + sample_expansion)
+        weight = sample_density * (100 * 100 * avg_before / 1000)
         sheet.cell(sample_start + 1, 5, weight)
         for row in range(sample_start, sample_start + 6):
             sheet.cell(row, 4, avg_before)
             sheet.cell(row, 7, avg_after)
-        sheet.cell(sample_start + 6, 6, density if source_density is None else source_density)
-        sheet.cell(sample_start + 6, 8, expansion if source_expansion is None else source_expansion)
+        sheet.cell(
+            sample_start + 6, 6, sample_density if source_density is None else source_density
+        )
+        sheet.cell(
+            sample_start + 6, 8, sample_expansion if source_expansion is None else source_expansion
+        )
     conclusion_row = start + total * 7 + 2
     sheet.cell(conclusion_row, 1, f"检测结论：{conclusion}")
     sheet.cell(conclusion_row, 7, "检测员")
@@ -122,7 +167,7 @@ def test_draft_job_generates_result_without_modifying_source(tmp_path):
     sample = tmp_path / "sample.xlsx"
     output = tmp_path / "output"
     job_path = tmp_path / "job.json"
-    make_sample(sample)
+    make_labeled_sample(sample, product_usage="")
     before = digest(sample)
     job_path.write_text(json.dumps(make_job(sample, output), ensure_ascii=False), encoding="utf-8")
     assert boiling_module.run_job(job_path) == 0
@@ -141,7 +186,7 @@ def test_finalize_applies_confirmation(tmp_path):
     draft_job_path = tmp_path / "draft-job.json"
     final_job_path = tmp_path / "final-job.json"
     confirmation_path = tmp_path / "confirmation.json"
-    make_sample(sample)
+    make_labeled_sample(sample, product_usage="")
     draft_job_path.write_text(
         json.dumps(make_job(sample, draft_output), ensure_ascii=False), encoding="utf-8"
     )
@@ -207,9 +252,9 @@ def test_empty_sheet_does_not_enter_normal_summary(tmp_path):
     job_path.write_text(json.dumps(make_job(sample, output), ensure_ascii=False), encoding="utf-8")
     assert boiling_module.run_job(job_path) == 0
     result = json.loads((output / "result.json").read_text(encoding="utf-8"))
-    assert result["status"] == "needs_confirmation"
-    assert result["summary"]["processed_count"] == 0
-    assert not (output / "boiling_summary.xlsx").exists()
+    assert result["status"] == "partial_success"
+    assert result["summary"]["processed_count"] == 1
+    assert (output / "boiling_summary.xlsx").is_file()
 
 
 def test_extracts_all_handoff_fields_and_recalculates(tmp_path):
@@ -249,10 +294,14 @@ def test_product_usage_in_source_does_not_request_confirmation(tmp_path):
     assert result["status"] == "success"
     assert result["confirmations"] == []
     assert result["service_requests"] == []
-    assert {item["type"] for item in result["outputs"]} == {"summary_excel", "analysis_report"}
+    assert {item["type"] for item in result["outputs"]} == {
+        "summary_excel",
+        "analysis_report",
+        "business_records",
+    }
 
 
-def test_density_observation_is_not_presented_as_formal_verdict(tmp_path):
+def test_density_rule_uses_every_sample_and_difference(tmp_path):
     sample = tmp_path / "density.xlsx"
     output = tmp_path / "output"
     job_path = tmp_path / "job.json"
@@ -260,9 +309,9 @@ def test_density_observation_is_not_presented_as_formal_verdict(tmp_path):
     job_path.write_text(json.dumps(make_job(sample, output), ensure_ascii=False), encoding="utf-8")
     assert boiling_module.run_job(job_path) == 0
     result = load_result(output)
-    anomaly = next(item for item in result["anomalies"] if item["field"] == "average_density_g_cm3")
+    anomaly = next(item for item in result["anomalies"] if item["field"] == "density")
     assert anomaly["severity"] == "warning"
-    assert "不能作为正式" in anomaly["message"]
+    assert "超出 1.1～1.3" in anomaly["message"]
     assert result["status"] == "needs_confirmation"
 
 
@@ -285,7 +334,10 @@ def test_peel_failure_is_preserved_as_source_anomaly(tmp_path):
     job_path.write_text(json.dumps(make_job(sample, output), ensure_ascii=False), encoding="utf-8")
     assert boiling_module.run_job(job_path) == 0
     result = load_result(output)
-    assert any(item["field"] == "immersion_peel_result" and item["value"] == "不合格" for item in result["anomalies"])
+    assert any(
+        item["field"] == "immersion_peel_result" and item["value"] == "不合格"
+        for item in result["anomalies"]
+    )
 
 
 def test_source_and_recalculated_conflict_are_both_retained(tmp_path):
@@ -366,8 +418,189 @@ def test_outputs_are_inside_declared_output_directory(tmp_path):
     assert all(Path(item["path"]).resolve().is_relative_to(declared) for item in result["outputs"])
 
 
+def test_real_template_four_and_five_sample_labels(tmp_path):
+    five = tmp_path / "five.xlsx"
+    four = tmp_path / "four.xlsx"
+    make_labeled_sample(
+        five,
+        sample_count=5,
+        labels=["端1-1", "端1-2", "中1", "端2-1", "端2-2"],
+    )
+    make_labeled_sample(four, sample_count=4, labels=[1, 2, 3, 4])
+    five_book = openpyxl.load_workbook(five)
+    five_book.active["J47"] = "脱敏扩展列"
+    five_book.save(five)
+    assert [sample["label"] for sample in boiling_module.extract_file(five)["samples"]] == [
+        "端1-1",
+        "端1-2",
+        "中1",
+        "端2-1",
+        "端2-2",
+    ]
+    assert len(boiling_module.extract_file(four)["samples"]) == 4
+
+
+def test_density_boundaries_and_difference_are_inclusive(tmp_path):
+    rules = boiling_module.load_rules()
+    cases = [
+        ("inclusive.xlsx", [1.1, 1.2], True),
+        ("outside.xlsx", [1.099, 1.2], False),
+        ("difference.xlsx", [1.1, 1.201], False),
+        ("upper.xlsx", [1.2, 1.3], True),
+    ]
+    for name, densities, expected in cases:
+        path = tmp_path / name
+        make_labeled_sample(path, sample_count=2, densities=densities)
+        record = boiling_module.extract_file(path)
+        boiling_module.evaluate_record(record, rules, digest(path))
+        assert record["density_rule_pass"] is expected, name
+
+
+def test_expansion_usage_boundaries_and_wall_review_gap(tmp_path):
+    rules = boiling_module.load_rules()
+    cases = [
+        ("floor-green.xlsx", "地板", 0.065, True, "绿色优等候选", False),
+        ("furniture-blue.xlsx", "家具", 0.08, True, "蓝色合格", False),
+        ("floor-red.xlsx", "地板", 0.08001, False, "红色不合格", False),
+        ("wall-blue.xlsx", "墙板", 0.12, True, "蓝色合格", False),
+        ("railing-red.xlsx", "栏杆", 0.12001, False, "红色不合格", False),
+        ("wall-gap.xlsx", "墙板", 0.07, None, "", True),
+    ]
+    for name, usage, expansion, expected_pass, expected_grade, expects_confirmation in cases:
+        path = tmp_path / name
+        make_labeled_sample(path, expansion=expansion, product_usage=usage)
+        record = boiling_module.extract_file(path)
+        _, confirmations = boiling_module.evaluate_record(record, rules, digest(path))
+        assert record["expansion_numeric_pass"] is expected_pass, name
+        assert record["expansion_grade"] == expected_grade, name
+        expansion_reviews = [item for item in confirmations if item["field"] == "expansion_review"]
+        assert bool(expansion_reviews) is expects_confirmation, name
+
+
+def test_product_usage_confirmation_is_created_once_and_applied_to_batch(tmp_path):
+    first = tmp_path / "first.xlsx"
+    second = tmp_path / "second.xlsx"
+    make_labeled_sample(first, product_usage="")
+    make_labeled_sample(second, product_usage="")
+    draft_output = tmp_path / "draft"
+    draft_job_path = tmp_path / "draft-job.json"
+    draft_job = make_job(first, draft_output)
+    draft_job["run_mode"] = "batch"
+    draft_job["input_files"] = [str(first), str(second)]
+    draft_job_path.write_text(json.dumps(draft_job, ensure_ascii=False), encoding="utf-8")
+    assert boiling_module.run_job(draft_job_path) == 0
+    draft_result = load_result(draft_output)
+    prompts = [item for item in draft_result["confirmations"] if item["field"] == "product_usage"]
+    assert len(prompts) == 1
+
+    answer_path = tmp_path / "answer.json"
+    answer_path.write_text(
+        json.dumps(
+            {
+                "answers": [
+                    {
+                        "confirmation_id": prompts[0]["confirmation_id"],
+                        "value": "家具",
+                        "apply_to_batch": True,
+                    }
+                ]
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    final_output = tmp_path / "final"
+    final_job_path = tmp_path / "final-job.json"
+    final_job = make_job(
+        first,
+        final_output,
+        phase="finalize",
+        parent_job_id="TEST-JOB-001",
+        confirmation_file=str(answer_path),
+    )
+    final_job["job_id"] = "TEST-JOB-002"
+    final_job["run_mode"] = "batch"
+    final_job["input_files"] = [str(first), str(second)]
+    final_job_path.write_text(json.dumps(final_job, ensure_ascii=False), encoding="utf-8")
+    assert boiling_module.run_job(final_job_path) == 0
+    records = json.loads((final_output / "boiling_records.json").read_text(encoding="utf-8"))
+    assert {record["product_usage"] for record in records["records"]} == {"家具"}
+
+
+def test_normal_and_incomplete_files_share_one_batch(tmp_path):
+    normal = tmp_path / "normal.xlsx"
+    incomplete = tmp_path / "incomplete.xlsx"
+    make_labeled_sample(normal)
+    make_sample(incomplete, include_samples=False)
+    output = tmp_path / "output"
+    job_path = tmp_path / "job.json"
+    job = make_job(normal, output)
+    job["run_mode"] = "batch"
+    job["input_files"] = [str(normal), str(incomplete)]
+    job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+    assert boiling_module.run_job(job_path) == 0
+    result = load_result(output)
+    assert len(result["file_results"]) == 2
+    assert result["summary"]["processed_count"] == 2
+    records = json.loads((output / "boiling_records.json").read_text(encoding="utf-8"))
+    assert len(records["records"]) == 1
+    assert len(records["excluded_records"]) == 1
+
+
+def test_result_json_validates_module_result_contract(tmp_path):
+    sample = tmp_path / "sample.xlsx"
+    output = tmp_path / "output"
+    job_path = tmp_path / "job.json"
+    make_labeled_sample(sample)
+    job_path.write_text(json.dumps(make_job(sample, output), ensure_ascii=False), encoding="utf-8")
+    assert boiling_module.run_job(job_path) == 0
+    ModuleResult.model_validate(load_result(output))
+
+
+def test_41_file_sanitized_history_regression_and_source_hashes(tmp_path):
+    source_dir = tmp_path / "history"
+    source_dir.mkdir()
+    paths = []
+    for index in range(33):
+        path = source_dir / f"FIVE-{index:02d}.xlsx"
+        make_labeled_sample(
+            path,
+            sample_count=5,
+            labels=["端1-1", "端1-2", "中1", "端2-1", "端2-2"],
+            batch_no=f"FIVE-{index:02d}",
+        )
+        paths.append(path)
+    for index in range(7):
+        path = source_dir / f"FOUR-{index:02d}.xlsx"
+        make_labeled_sample(
+            path,
+            sample_count=4,
+            labels=[1, 2, 3, 4],
+            batch_no=f"FOUR-{index:02d}",
+        )
+        paths.append(path)
+    incomplete = source_dir / "INCOMPLETE.xlsx"
+    make_sample(incomplete, include_samples=False)
+    paths.append(incomplete)
+    before = {path.name: digest(path) for path in paths}
+    output = tmp_path / "output"
+    job_path = tmp_path / "job.json"
+    job = make_job(paths[0], output)
+    job["run_mode"] = "batch"
+    job["input_files"] = [str(path) for path in paths]
+    job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+    assert boiling_module.run_job(job_path) == 0
+    result = load_result(output)
+    assert result["summary"]["input_count"] == 41
+    assert len(result["file_results"]) == 41
+    records = json.loads((output / "boiling_records.json").read_text(encoding="utf-8"))
+    assert sum(len(record["samples"]) for record in records["records"]) == 193
+    assert len(records["excluded_records"]) == 1
+    assert before == {path.name: digest(path) for path in paths}
+
+
 def test_all_sanitized_samples_match_machine_expected_results(tmp_path):
-    input_dir = MODULE_ROOT / "samples" / "input"
+    input_dir = MODULE_ROOT / "tests" / "fixtures" / "samples" / "input"
     expected_dir = MODULE_ROOT / "samples" / "expected"
     samples = sorted(input_dir.glob("*.xlsx"))
     assert len(samples) == 8
@@ -388,9 +621,13 @@ def test_all_sanitized_samples_match_machine_expected_results(tmp_path):
             "expected_processed_count": result["summary"]["processed_count"],
             "expected_failed_count": result["summary"]["failed_count"],
             "expected_anomaly_fields": sorted(item["field"] for item in result["anomalies"]),
-            "expected_confirmation_fields": sorted(item["field"] for item in result["confirmations"]),
+            "expected_confirmation_fields": sorted(
+                item["field"] for item in result["confirmations"]
+            ),
             "expected_sample_count": len(record["samples"]),
-            "expected_retest_count": sum(item["sample_type"] == "retest" for item in record["samples"]),
+            "expected_retest_count": sum(
+                item["sample_type"] == "retest" for item in record["samples"]
+            ),
             "expected_immersion_peel_result": record["immersion_peel_result"],
             "expected_average_density_g_cm3": record["average_density_g_cm3"],
             "expected_average_expansion_ratio": record["average_expansion_ratio"],

@@ -40,13 +40,14 @@ ALLOWED_JOB_FIELDS = {
 FIELD_LABELS = {
     "batch_no": ("批号", "批次号", "批次"),
     "product": ("产品名称", "产品名", "品名"),
-    "specification": ("规格型号", "产品规格", "规格"),
+    "specification": ("规格型号", "型号规格", "产品规格", "规格"),
     "pressing_date": ("压制日期", "压制时间"),
-    "team_leader": ("班组长", "班长"),
+    "team_leader": ("压机班长", "班组长", "班长"),
     "test_date": ("检测日期", "检验日期", "试验日期", "实验日期"),
     "impregnation_date": ("浸胶日期", "浸渍日期", "浸胶时间"),
     "order_info": ("订单信息", "订单编号", "订单号", "订单"),
     "product_usage": ("产品用途", "用途"),
+    "record_status": ("记录状态", "完成状态", "表单状态"),
 }
 FIXED_FALLBACKS = {
     "batch_no": (2, 1),
@@ -54,7 +55,7 @@ FIXED_FALLBACKS = {
     "specification": (3, 7),
     "test_date": (5, 3),
 }
-REQUIRED_FOR_NORMAL_STATS = (
+NON_BLOCKING_METADATA_FIELDS = (
     "product",
     "specification",
     "pressing_date",
@@ -62,12 +63,13 @@ REQUIRED_FOR_NORMAL_STATS = (
     "test_date",
     "impregnation_date",
     "order_info",
-    "samples",
 )
 SAMPLE_PATTERN = re.compile(
-    r"^(?:样(?:品|件)?|试件|复测)\s*[#№]?[A-Za-z0-9一二三四五六七八九十_-]+$",
+    r"^(?:端\d+(?:-\d+)?|中\d+(?:-\d+)?|\d+|"
+    r"(?:样(?:品|件)?|试件|复测)\s*[#№]?[A-Za-z0-9一二三四五六七八九十_-]+)$",
     re.I,
 )
+MISSING_PLACEHOLDERS = {"", "/", "／", "-", "—"}
 
 
 def emit(message, percent=0, event_type="progress"):
@@ -100,6 +102,10 @@ def as_number(value):
 
 def as_text(value):
     return "" if value is None else str(value).strip()
+
+
+def is_missing_value(value):
+    return as_text(value) in MISSING_PLACEHOLDERS
 
 
 def as_date_text(value):
@@ -135,6 +141,41 @@ def normalize_ratio(value):
     return number / 100 if abs(number) > 1 else number
 
 
+def number_format_precision(number_format, percentage=False):
+    format_text = as_text(number_format).split(";")[0]
+    match = re.search(r"0(?:\.(0+))?%?", format_text)
+    if not match:
+        return None
+    precision = len(match.group(1) or "")
+    return precision if not percentage else precision
+
+
+def formatted_number(value, number_format, percentage=False):
+    number = as_number(value)
+    if number is None:
+        return ""
+    precision = number_format_precision(number_format, percentage)
+    if precision is None:
+        precision = 3 if not percentage else 2
+    if percentage:
+        return f"{number:.{precision}%}"
+    return f"{number:.{precision}f}"
+
+
+def values_conflict(source_value, calculated_value, number_format, percentage=False):
+    source_number = as_number(source_value)
+    calculated_number = as_number(calculated_value)
+    if source_number is None or calculated_number is None:
+        return False
+    precision = number_format_precision(number_format, percentage)
+    if precision is None:
+        tolerance = 0.0005 if not percentage else 0.00005
+    else:
+        scale = 100 if percentage else 1
+        tolerance = 0.5 * (10 ** (-precision)) / scale
+    return abs(source_number - calculated_number) > tolerance + 1e-12
+
+
 def display_cell_value(value):
     if isinstance(value, (dt.date, dt.datetime)):
         return value.strftime("%Y-%m-%d")
@@ -149,11 +190,7 @@ def plausible_fixed_fallback(field, value):
             return True
         return bool(re.search(r"20\d{2}[./年-]\d{1,2}[./月-]\d{1,2}", as_text(value)))
     normalized = normalize_label(value)
-    known_labels = {
-        normalize_label(label)
-        for labels in FIELD_LABELS.values()
-        for label in labels
-    }
+    known_labels = {normalize_label(label) for labels in FIELD_LABELS.values() for label in labels}
     header_words = ("试件", "长度", "宽度", "重量", "密度", "膨胀率", "记录状态", "检测员")
     return normalized not in known_labels and not any(word in normalized for word in header_words)
 
@@ -173,8 +210,10 @@ def find_labeled_value(sheet, labels, max_rows=30, max_columns=12):
                 continue
             for normalized_label, original_label in normalized_labels:
                 if normalized == normalized_label:
-                    candidate_column = column + 1
-                    if candidate_column <= sheet.max_column:
+                    for candidate_column in range(
+                        column + 1,
+                        min(sheet.max_column, column + 3) + 1,
+                    ):
                         candidate = sheet.cell(row, candidate_column).value
                         if candidate not in (None, ""):
                             return candidate, sheet.cell(row, candidate_column).coordinate
@@ -187,14 +226,81 @@ def find_labeled_value(sheet, labels, max_rows=30, max_columns=12):
     return None, None
 
 
-def find_sample_markers(sheet):
+def find_measurement_header(sheet):
+    for row in range(1, min(sheet.max_row, 80) + 1):
+        headers = {
+            column: normalize_label(sheet.cell(row=row, column=column).value)
+            for column in range(1, min(sheet.max_column, 20) + 1)
+        }
+        values = list(headers.values())
+        if not any(value in {"序号", "试件", "样件", "样品"} for value in values):
+            continue
+        if not any("长度" in value for value in values) or not any(
+            "密度" in value for value in values
+        ):
+            continue
+        label_column = next(
+            column for column, value in headers.items() if value in {"序号", "试件", "样件", "样品"}
+        )
+        density_column = next(column for column, value in headers.items() if "密度" in value)
+        expansion_column = next(
+            (column for column, value in headers.items() if "膨胀率" in value),
+            None,
+        )
+        thickness_columns = [column for column, value in headers.items() if "厚度" in value]
+        before_column = next(
+            (column for column in thickness_columns if column < density_column),
+            None,
+        )
+        after_column = next(
+            (column for column in thickness_columns if column > density_column),
+            None,
+        )
+        return {
+            "row": row,
+            "label": label_column,
+            "length": next(
+                (column for column, value in headers.items() if "长度" in value),
+                None,
+            ),
+            "width": next(
+                (column for column, value in headers.items() if "宽度" in value),
+                None,
+            ),
+            "before": before_column,
+            "weight": next(
+                (column for column, value in headers.items() if "重量" in value or "质量" in value),
+                None,
+            ),
+            "density": density_column,
+            "after": after_column,
+            "expansion": expansion_column,
+        }
+    return None
+
+
+def is_sample_label(value):
+    text = as_text(value)
+    return bool(text and SAMPLE_PATTERN.fullmatch(text))
+
+
+def find_sample_markers(sheet, header=None):
+    header = header or find_measurement_header(sheet)
+    if not header:
+        return []
     markers = []
-    for row in range(1, sheet.max_row + 1):
-        for column in range(1, min(sheet.max_column, 3) + 1):
-            label = as_text(sheet.cell(row=row, column=column).value)
-            if label and SAMPLE_PATTERN.fullmatch(label):
-                markers.append({"row": row, "column": column, "label": label})
-                break
+    column = header["label"]
+    for row in range(header["row"] + 1, sheet.max_row + 1):
+        label = as_text(sheet.cell(row=row, column=column).value)
+        if not is_sample_label(label):
+            continue
+        structural_values = [
+            as_number(sheet.cell(row=row, column=header[key]).value)
+            for key in ("length", "width", "density")
+            if header.get(key)
+        ]
+        if any(value is not None for value in structural_values):
+            markers.append({"row": row, "column": column, "label": label})
     return markers
 
 
@@ -259,13 +365,14 @@ def extract_file(path):
 
         def value(row, column):
             calculated = value_sheet.cell(row=row, column=column).value
-            if calculated is not None:
-                return calculated
-            return sheet.cell(row=row, column=column).value
+            return (
+                calculated if calculated is not None else sheet.cell(row=row, column=column).value
+            )
 
         record = {
             "source_file": str(Path(path).resolve()),
             "source_sheet": sheet.title,
+            "source_used_range": sheet.calculate_dimension(),
             "batch_no": "",
             "product": "",
             "specification": "",
@@ -275,11 +382,13 @@ def extract_file(path):
             "impregnation_date": "",
             "order_info": "",
             "product_usage": "",
+            "record_status": "",
             "field_sources": {},
             "samples": [],
             "source_conclusion": "",
             "tester": "",
             "missing_fields": [],
+            "blocking_reasons": [],
             "conflicts": [],
             "conclusion_rule_conflicts": [],
             "rule_observations": {},
@@ -289,130 +398,220 @@ def extract_file(path):
             raw, coordinate = find_labeled_value(sheet, labels)
             if raw in (None, "") and field in FIXED_FALLBACKS:
                 row, column = FIXED_FALLBACKS[field]
-                candidate = sheet.cell(row, column).value
+                candidate = value(row, column)
                 if plausible_fixed_fallback(field, candidate):
                     raw = candidate
                     coordinate = sheet.cell(row, column).coordinate
-            if field.endswith("_date"):
-                record[field] = as_date_text(raw)
-            else:
-                record[field] = display_cell_value(raw)
+            record[field] = (
+                as_date_text(raw) if field.endswith("_date") else display_cell_value(raw)
+            )
             if coordinate:
                 record["field_sources"][field] = coordinate
+        record["batch_no"] = re.sub(r"^\s*(?:NO\.?|编号)\s*", "", record["batch_no"], flags=re.I)
 
-        markers = find_sample_markers(sheet)
+        header = find_measurement_header(sheet)
+        markers = find_sample_markers(sheet, header)
         conclusion_row = find_conclusion_row(sheet, 1)
         for sample_index, marker in enumerate(markers):
             start = marker["row"]
-            base_column = marker["column"]
-            next_start = markers[sample_index + 1]["row"] if sample_index + 1 < len(markers) else None
+            next_start = (
+                markers[sample_index + 1]["row"] if sample_index + 1 < len(markers) else None
+            )
             block_end = next_start - 1 if next_start is not None else sheet.max_row
             if conclusion_row is not None and conclusion_row > start:
                 block_end = min(block_end, conclusion_row - 1)
             block_end = min(block_end, start + 20)
-            block_rows = range(start, block_end + 1)
-            density_column = base_column + 5
-            expansion_column = base_column + 7
-            summary_candidates = [
-                row
-                for row in block_rows
-                if as_number(value(row, density_column)) is not None
-                or normalize_ratio(value(row, expansion_column)) is not None
-            ]
-            summary_row = summary_candidates[-1] if summary_candidates else block_end
-            before_column = base_column + 3
-            after_column = base_column + 6
-            measurement_stop = summary_row if summary_candidates else summary_row + 1
+            rows = list(range(start, block_end + 1))
+            label_column = header["label"]
             measurement_rows = [
                 row
-                for row in range(start, measurement_stop)
-                if as_number(value(row, before_column)) is not None
-                or as_number(value(row, after_column)) is not None
+                for row in rows
+                if normalize_label(value(row, label_column)) not in {"平均值", "平均"}
+                and any(
+                    as_number(value(row, header[key])) is not None
+                    for key in ("before", "after")
+                    if header.get(key)
+                )
             ]
-            before = [as_number(value(row, before_column)) for row in measurement_rows]
-            after = [as_number(value(row, after_column)) for row in measurement_rows]
-            avg_before = mean(before)
-            avg_after = mean(after)
-            length = first_numeric(value, range(start, min(block_end, start + 3) + 1), base_column + 1)
-            width = first_numeric(value, range(start, min(block_end, start + 3) + 1), base_column + 2)
-            weight = first_numeric(value, range(start, summary_row + 1), base_column + 4)
-            source_density = as_number(value(summary_row, density_column)) if summary_row <= sheet.max_row else None
-            source_expansion = normalize_ratio(value(summary_row, expansion_column)) if summary_row <= sheet.max_row else None
-            volume_cm3 = None
-            calculated_density = None
-            calculated_expansion = None
-            if length and width and avg_before:
-                volume_cm3 = length * width * avg_before / 1000
-                if weight is not None and volume_cm3:
-                    calculated_density = weight / volume_cm3
-            if avg_before not in (None, 0) and avg_after is not None:
-                calculated_expansion = (avg_after - avg_before) / avg_before
+            before_values = [
+                as_number(value(row, header["before"]))
+                for row in measurement_rows
+                if header.get("before") and as_number(value(row, header["before"])) is not None
+            ]
+            after_values = [
+                as_number(value(row, header["after"]))
+                for row in measurement_rows
+                if header.get("after") and as_number(value(row, header["after"])) is not None
+            ]
+            avg_before = mean(before_values)
+            avg_after = mean(after_values)
+            length = first_numeric(value, rows, header["length"]) if header.get("length") else None
+            width = first_numeric(value, rows, header["width"]) if header.get("width") else None
+            weight = first_numeric(value, rows, header["weight"]) if header.get("weight") else None
+            density_rows = [
+                row for row in rows if as_number(value(row, header["density"])) is not None
+            ]
+            expansion_rows = [
+                row
+                for row in rows
+                if header.get("expansion")
+                and normalize_ratio(value(row, header["expansion"])) is not None
+            ]
+            density_row = density_rows[0] if density_rows else None
+            expansion_row = expansion_rows[0] if expansion_rows else None
+            source_density = (
+                as_number(value(density_row, header["density"])) if density_row else None
+            )
+            source_expansion = (
+                normalize_ratio(value(expansion_row, header["expansion"]))
+                if expansion_row and header.get("expansion")
+                else None
+            )
+            density_cell = sheet.cell(density_row, header["density"]) if density_row else None
+            expansion_cell = (
+                sheet.cell(expansion_row, header["expansion"])
+                if expansion_row and header.get("expansion")
+                else None
+            )
+            volume_cm3 = (
+                length * width * avg_before / 1000 if length and width and avg_before else None
+            )
+            calculated_density = weight / volume_cm3 if weight is not None and volume_cm3 else None
+            calculated_expansion = (
+                (avg_after - avg_before) / avg_before
+                if avg_before not in (None, 0) and avg_after is not None
+                else None
+            )
             density = calculated_density if calculated_density is not None else source_density
-            expansion = calculated_expansion if calculated_expansion is not None else source_expansion
+            expansion = (
+                calculated_expansion if calculated_expansion is not None else source_expansion
+            )
             label = marker["label"]
+            source_end_column = header.get("expansion") or header["density"]
             sample = {
                 "label": label,
-                "sample_type": "retest" if "复测" in label else "normal",
+                "sample_type": "retest"
+                if "复测" in label or "复测" in Path(path).stem
+                else "normal",
                 "length_mm": length,
                 "width_mm": width,
                 "weight_g": weight,
+                "thickness_before_values_mm": before_values,
+                "thickness_after_values_mm": after_values,
                 "average_thickness_before_mm": avg_before,
                 "average_thickness_after_mm": avg_after,
                 "volume_cm3": volume_cm3,
                 "source_density_g_cm3": source_density,
+                "source_density_display": formatted_number(
+                    source_density,
+                    density_cell.number_format if density_cell else "",
+                ),
+                "source_density_formula": density_cell.value
+                if density_cell and density_cell.data_type == "f"
+                else None,
                 "calculated_density_g_cm3": calculated_density,
                 "density_g_cm3": density,
+                "density_source_cell": density_cell.coordinate if density_cell else None,
                 "source_expansion_ratio": source_expansion,
+                "source_expansion_display": formatted_number(
+                    source_expansion,
+                    expansion_cell.number_format if expansion_cell else "",
+                    percentage=True,
+                ),
+                "source_expansion_formula": (
+                    expansion_cell.value
+                    if expansion_cell and expansion_cell.data_type == "f"
+                    else None
+                ),
                 "calculated_expansion_ratio": calculated_expansion,
                 "expansion_ratio": expansion,
+                "expansion_source_cell": expansion_cell.coordinate if expansion_cell else None,
                 "source_range": (
-                    f"{sheet.cell(start, base_column).coordinate}:"
-                    f"{sheet.cell(summary_row, min(base_column + 7, sheet.max_column)).coordinate}"
+                    f"{sheet.cell(start, label_column).coordinate}:"
+                    f"{sheet.cell(block_end, source_end_column).coordinate}"
                 ),
+                "density_rule_result": "信息不足",
             }
-            if source_density is not None and calculated_density is not None:
-                difference = abs(source_density - calculated_density)
-                if difference > 0.01:
-                    record["conflicts"].append(
-                        {
-                            "field": "density_g_cm3",
-                            "sample": label,
-                            "source_value": source_density,
-                            "calculated_value": calculated_density,
-                            "difference": difference,
-                            "cell_or_range": sheet.cell(summary_row, density_column).coordinate,
-                        }
-                    )
-            if source_expansion is not None and calculated_expansion is not None:
-                difference = abs(source_expansion - calculated_expansion)
-                if difference > 0.001:
-                    record["conflicts"].append(
-                        {
-                            "field": "expansion_ratio",
-                            "sample": label,
-                            "source_value": source_expansion,
-                            "calculated_value": calculated_expansion,
-                            "difference": difference,
-                            "cell_or_range": sheet.cell(summary_row, expansion_column).coordinate,
-                        }
-                    )
+            if values_conflict(
+                source_density,
+                calculated_density,
+                density_cell.number_format if density_cell else "",
+            ):
+                record["conflicts"].append(
+                    {
+                        "field": "density_g_cm3",
+                        "sample": label,
+                        "source_value": source_density,
+                        "source_display": sample["source_density_display"],
+                        "calculated_value": calculated_density,
+                        "difference": abs(source_density - calculated_density),
+                        "cell_or_range": density_cell.coordinate,
+                    }
+                )
+            if values_conflict(
+                source_expansion,
+                calculated_expansion,
+                expansion_cell.number_format if expansion_cell else "",
+                percentage=True,
+            ):
+                record["conflicts"].append(
+                    {
+                        "field": "expansion_ratio",
+                        "sample": label,
+                        "source_value": source_expansion,
+                        "source_display": sample["source_expansion_display"],
+                        "calculated_value": calculated_expansion,
+                        "difference": abs(source_expansion - calculated_expansion),
+                        "cell_or_range": expansion_cell.coordinate,
+                    }
+                )
             record["samples"].append(sample)
 
         for row in range(1, sheet.max_row + 1):
-            cells = [as_text(sheet.cell(row, column).value) for column in range(1, min(sheet.max_column, 12) + 1)]
-            joined = " ".join(item for item in cells if item)
-            if "检测结论" in joined or "检验结论" in joined:
-                record["source_conclusion"] = re.sub(r"^.*?(?:检测|检验)结论\s*[：:]?", "", joined).strip()
-                tester_value, tester_coordinate = find_labeled_value(sheet, ("检测员", "检验员", "测试员"), max_rows=sheet.max_row)
-                record["tester"] = as_text(tester_value) or as_text(sheet.cell(row, 8).value)
-                if tester_coordinate:
-                    record["field_sources"]["tester"] = tester_coordinate
+            for column in range(1, min(sheet.max_column, 20) + 1):
+                text = as_text(sheet.cell(row, column).value)
+                if "检测结论" not in text and "检验结论" not in text:
+                    continue
+                remainder = re.sub(r"^.*?(?:检测|检验)结论\s*[：:]?", "", text).strip()
+                if remainder:
+                    record["source_conclusion"] = remainder
+                else:
+                    for candidate_column in range(
+                        column + 1, min(sheet.max_column, column + 4) + 1
+                    ):
+                        candidate = as_text(value(row, candidate_column))
+                        if candidate and "检测员" not in candidate and "检验员" not in candidate:
+                            record["source_conclusion"] = candidate
+                            break
+                record["field_sources"]["source_conclusion"] = sheet.cell(row, column).coordinate
                 break
+            if "source_conclusion" in record["field_sources"]:
+                break
+        tester_value, tester_coordinate = find_labeled_value(
+            sheet,
+            ("检测员", "检验员", "测试员"),
+            max_rows=sheet.max_row,
+        )
+        record["tester"] = as_text(tester_value)
+        if tester_coordinate:
+            record["field_sources"]["tester"] = tester_coordinate
 
-        densities = [sample["density_g_cm3"] for sample in record["samples"] if sample["density_g_cm3"] is not None]
-        expansions = [sample["expansion_ratio"] for sample in record["samples"] if sample["expansion_ratio"] is not None]
+        densities = [
+            sample["density_g_cm3"]
+            for sample in record["samples"]
+            if sample["density_g_cm3"] is not None
+        ]
+        expansions = [
+            sample["expansion_ratio"]
+            for sample in record["samples"]
+            if sample["expansion_ratio"] is not None
+        ]
         record["average_density_g_cm3"] = mean(densities)
-        record["density_range_g_cm3"] = max(densities) - min(densities) if densities else None
+        record["density_min_g_cm3"] = min(densities) if densities else None
+        record["density_max_g_cm3"] = max(densities) if densities else None
+        record["density_range_g_cm3"] = (
+            record["density_max_g_cm3"] - record["density_min_g_cm3"] if densities else None
+        )
         record["average_expansion_ratio"] = mean(expansions)
         conclusion = record["source_conclusion"]
         if re.search(r"浸渍剥离.{0,8}不合格", conclusion):
@@ -421,19 +620,29 @@ def extract_file(path):
             record["immersion_peel_result"] = "合格"
         else:
             record["immersion_peel_result"] = ""
-        for field in (
-            "product",
-            "specification",
-            "pressing_date",
-            "team_leader",
-            "test_date",
-            "impregnation_date",
-            "order_info",
-        ):
-            if not record[field]:
+        for field in NON_BLOCKING_METADATA_FIELDS:
+            if is_missing_value(record[field]):
                 record["missing_fields"].append(field)
+        if is_missing_value(record["product_usage"]):
+            record["missing_fields"].append("product_usage")
+        if not record["source_conclusion"]:
+            record["missing_fields"].append("source_conclusion")
+        computable_samples = [
+            sample
+            for sample in record["samples"]
+            if sample["density_g_cm3"] is not None and sample["expansion_ratio"] is not None
+        ]
+        record["computable_sample_count"] = len(computable_samples)
         if not record["samples"]:
-            record["missing_fields"].append("samples")
+            record["blocking_reasons"].append("未识别到测量试件")
+        elif not computable_samples:
+            record["blocking_reasons"].append("无可同时复算密度和膨胀率的试件")
+        status_text = normalize_label(record["record_status"])
+        if "未完成" in status_text or "空表" in status_text:
+            record["blocking_reasons"].append("原表标记为未完成")
+        if not record["source_conclusion"] and is_missing_value(record["test_date"]):
+            record["blocking_reasons"].append("检测日期和检测结论均缺失，判定为未完成表")
+        record["is_incomplete"] = bool(record["blocking_reasons"])
         return record
     finally:
         formula_book.close()
@@ -448,7 +657,11 @@ def load_rules(config_file=None):
         candidate = data.get("rules_file") if isinstance(data, dict) else None
         if candidate:
             candidate_path = Path(candidate)
-            rules_path = candidate_path if candidate_path.is_absolute() else config_path.parent / candidate_path
+            rules_path = (
+                candidate_path
+                if candidate_path.is_absolute()
+                else config_path.parent / candidate_path
+            )
         elif isinstance(data, dict) and ("density" in data or "expansion" in data):
             return data
     data = yaml.safe_load(rules_path.read_text(encoding="utf-8-sig")) or {}
@@ -457,7 +670,18 @@ def load_rules(config_file=None):
     return data
 
 
-def make_anomaly(record, fingerprint, suffix, severity, field, value, rule_id, message, suggestion, cell_or_range=None):
+def make_anomaly(
+    record,
+    fingerprint,
+    suffix,
+    severity,
+    field,
+    value,
+    rule_id,
+    message,
+    suggestion,
+    cell_or_range=None,
+):
     return {
         "anomaly_id": f"A-{suffix}-{fingerprint[:12]}",
         "severity": severity,
@@ -492,7 +716,7 @@ def add_conclusion_rule_conflict(
     if source_claim is None or observed_outside is None or source_claim == (not observed_outside):
         return
     source_text = "合格" if source_claim else "不合格"
-    rule_text = "超出暂存阈值" if observed_outside else "未超出暂存阈值"
+    rule_text = "不合格" if observed_outside else "合格"
     conflict = {
         "field": field,
         "source_conclusion": source_text,
@@ -509,10 +733,14 @@ def add_conclusion_rule_conflict(
             f"CONCLUSION-RULE-{conflict_index}",
             "warning",
             field,
-            {"source_conclusion": source_text, "rule_observation": rule_text, "value": observed_value},
+            {
+                "source_conclusion": source_text,
+                "rule_observation": rule_text,
+                "value": observed_value,
+            },
             "BOILING-CONCLUSION-CONFLICT-001",
-            f"原表{field}结论为{source_text}，但当前规则观察为{rule_text}；两者均已保留。",
-            "复核原表签字结论、测量数据和规则版本；暂存规则未经确认，不得自动覆盖原表。",
+            f"原表{field}结论为{source_text}，但按本版规则复核为{rule_text}；两者均已保留。",
+            "复核原表签字结论、测量数据和规则版本；人工确认前不得覆盖原表结论。",
         )
     )
     confirmations.append(
@@ -534,49 +762,151 @@ def add_conclusion_rule_conflict(
 def evaluate_record(record, rules, fingerprint):
     anomalies = []
     confirmations = []
+    rule_hits = []
     density_rule = rules.get("density") or {}
+    density_rule_id = density_rule.get("rule_id")
     minimum = as_number(density_rule.get("minimum_g_cm3"))
     maximum = as_number(density_rule.get("maximum_g_cm3"))
-    density_value = record.get("average_density_g_cm3")
-    density_outside = density_value is not None and (
-        (minimum is not None and density_value < minimum) or (maximum is not None and density_value > maximum)
+    maximum_difference = as_number(density_rule.get("maximum_difference_g_cm3"))
+    density_samples = [
+        sample for sample in record["samples"] if sample["density_g_cm3"] is not None
+    ]
+    outside_samples = []
+    for sample in density_samples:
+        value = sample["density_g_cm3"]
+        outside = (minimum is not None and value < minimum - 1e-12) or (
+            maximum is not None and value > maximum + 1e-12
+        )
+        sample["density_rule_result"] = "不合格" if outside else "合格"
+        if outside:
+            outside_samples.append(sample["label"])
+    density_difference = record.get("density_range_g_cm3")
+    difference_outside = (
+        density_difference is not None
+        and maximum_difference is not None
+        and density_difference > maximum_difference + 1e-12
     )
+    density_pass = bool(density_samples) and not outside_samples and not difference_outside
+    record["density_rule_pass"] = density_pass if density_samples else None
+    record["density_outside_samples"] = outside_samples
     record["rule_observations"]["density"] = (
-        "超出暂存阈值" if density_outside else "未超出暂存阈值"
-    ) if density_value is not None and (minimum is not None or maximum is not None) else "信息不足"
-    if density_outside:
+        "合格" if density_pass else ("不合格" if density_samples else "信息不足")
+    )
+    rule_hits.append(
+        {
+            "rule_id": density_rule_id,
+            "field": "density",
+            "result": record["rule_observations"]["density"],
+            "minimum_g_cm3": record.get("density_min_g_cm3"),
+            "maximum_g_cm3": record.get("density_max_g_cm3"),
+            "difference_g_cm3": density_difference,
+            "outside_samples": outside_samples,
+            "source_cells": [
+                sample["density_source_cell"]
+                for sample in density_samples
+                if sample.get("density_source_cell")
+            ],
+        }
+    )
+    if density_samples and not density_pass:
+        reasons = []
+        if outside_samples:
+            reasons.append("超出 1.1～1.3 g/cm³ 的试件：" + "、".join(outside_samples))
+        if difference_outside:
+            reasons.append(f"密度差 {density_difference:.6f} g/cm³ 大于 0.1 g/cm³")
         anomalies.append(
             make_anomaly(
                 record,
                 fingerprint,
                 "DENSITY",
                 "warning",
-                "average_density_g_cm3",
-                density_value,
-                density_rule.get("rule_id"),
-                "平均密度超出当前暂存阈值；该规则尚未获客户确认，不能作为正式合格判定。",
-                "复核原始测量值，并由有权限人员确认密度阈值后再作正式判断。",
+                "density",
+                {
+                    "minimum": record.get("density_min_g_cm3"),
+                    "maximum": record.get("density_max_g_cm3"),
+                    "difference": density_difference,
+                    "outside_samples": outside_samples,
+                },
+                density_rule_id,
+                "；".join(reasons),
+                "核对各试件密度、来源单元格和密度差；边界 1.1、1.3、0.1 均按合格处理。",
             )
         )
 
     expansion_rule = rules.get("expansion") or {}
-    thresholds = expansion_rule.get("thresholds") or {}
-    usage = record.get("product_usage")
-    threshold = thresholds.get(usage) if usage else None
-    if isinstance(threshold, dict):
-        maximum_ratio = normalize_ratio(threshold.get("maximum_ratio"))
-    else:
-        maximum_ratio = normalize_ratio(threshold)
+    expansion_rule_id = expansion_rule.get("rule_id")
     expansion_value = record.get("average_expansion_ratio")
-    expansion_outside = (
-        expansion_value > maximum_ratio
-        if maximum_ratio is not None and expansion_value is not None
-        else None
+    usage = as_text(record.get("product_usage"))
+    excellent_max = normalize_ratio(expansion_rule.get("excellent_max_ratio"))
+    numeric_pass = None
+    expansion_grade = ""
+    human_review = False
+    rule_detail = ""
+    if expansion_value is None:
+        rule_detail = "信息不足"
+    elif not usage:
+        rule_detail = "待确认产品用途"
+    elif usage in {"地板", "家具"}:
+        pass_max = normalize_ratio(
+            (expansion_rule.get("floor_furniture") or {}).get("pass_max_ratio")
+        )
+        if excellent_max is not None and expansion_value <= excellent_max + 1e-12:
+            numeric_pass = True
+            expansion_grade = "绿色优等候选"
+            human_review = True
+            rule_detail = "膨胀率≤6.5%，需结合开裂观察确认绿色优等"
+        elif pass_max is not None and expansion_value <= pass_max + 1e-12:
+            numeric_pass = True
+            expansion_grade = "蓝色合格"
+            human_review = True
+            rule_detail = "6.5%＜膨胀率≤8%，膨胀率维度蓝色合格，仍需核对开裂观察"
+        else:
+            numeric_pass = False
+            expansion_grade = "红色不合格"
+            rule_detail = "膨胀率＞8%，红色不合格"
+    elif usage in {"墙板", "栏杆"}:
+        blue_min = normalize_ratio((expansion_rule.get("wall_railing") or {}).get("blue_min_ratio"))
+        pass_max = normalize_ratio((expansion_rule.get("wall_railing") or {}).get("pass_max_ratio"))
+        if excellent_max is not None and expansion_value <= excellent_max + 1e-12:
+            numeric_pass = True
+            expansion_grade = "绿色优等候选"
+            human_review = True
+            rule_detail = "膨胀率≤6.5%，需结合开裂观察确认绿色优等"
+        elif blue_min is not None and expansion_value < blue_min - 1e-12:
+            human_review = True
+            rule_detail = "墙板/栏杆膨胀率＞6.5%且＜8%，v0.1 规则缺口转人工复核"
+        elif pass_max is not None and expansion_value <= pass_max + 1e-12:
+            numeric_pass = True
+            expansion_grade = "蓝色合格"
+            human_review = True
+            rule_detail = "8%≤膨胀率≤12%，膨胀率维度蓝色合格，仍需核对开裂观察"
+        else:
+            numeric_pass = False
+            expansion_grade = "红色不合格"
+            rule_detail = "膨胀率＞12%，红色不合格"
+    else:
+        human_review = True
+        rule_detail = f"产品用途“{usage}”没有自动判定规则"
+    record["expansion_numeric_pass"] = numeric_pass
+    record["expansion_grade"] = expansion_grade
+    record["expansion_human_review_required"] = human_review
+    record["rule_observations"]["expansion"] = rule_detail
+    rule_hits.append(
+        {
+            "rule_id": expansion_rule_id,
+            "field": "expansion",
+            "result": rule_detail,
+            "product_usage": usage,
+            "average_expansion_ratio": expansion_value,
+            "human_review_required": human_review,
+            "source_cells": [
+                sample["expansion_source_cell"]
+                for sample in record["samples"]
+                if sample.get("expansion_source_cell")
+            ],
+        }
     )
-    record["rule_observations"]["expansion"] = (
-        "超出暂存阈值" if expansion_outside else "未超出暂存阈值"
-    ) if expansion_outside is not None else "待确认产品用途或规则"
-    if expansion_outside:
+    if numeric_pass is False:
         anomalies.append(
             make_anomaly(
                 record,
@@ -585,11 +915,28 @@ def evaluate_record(record, rules, fingerprint):
                 "warning",
                 "average_expansion_ratio",
                 expansion_value,
-                expansion_rule.get("rule_id"),
-                "平均膨胀率超出当前产品用途对应的暂存阈值；规则尚未获客户确认。",
-                "复核产品用途及测量值，并由有权限人员确认正式阈值。",
+                expansion_rule_id,
+                rule_detail,
+                "复核产品用途、平均膨胀率和来源单元格，并保留原表结论供人工复核。",
             )
         )
+    if human_review and usage and numeric_pass is None:
+        reason = rule_detail
+        confirmations.append(
+            {
+                "confirmation_id": f"C-EXPANSION-REVIEW-{fingerprint[:12]}",
+                "field": "expansion_review",
+                "reason": reason,
+                "suggested_value": None,
+                "options": ["开裂观察符合对应等级", "开裂观察不符合对应等级", "继续待复核"],
+                "confidence": 0.0,
+                "blocking": False,
+                "batch_applicable": False,
+                "rememberable": False,
+                "source": source_ref(record["source_file"], record["source_sheet"]),
+            }
+        )
+    record["rule_hits"] = rule_hits
     conclusion = record.get("source_conclusion", "")
     add_conclusion_rule_conflict(
         record,
@@ -599,8 +946,12 @@ def evaluate_record(record, rules, fingerprint):
         "密度",
         density_rule.get("rule_id"),
         conclusion_pass_claim(conclusion, ("密度",)),
-        density_outside if density_value is not None and (minimum is not None or maximum is not None) else None,
-        density_value,
+        (not density_pass) if density_samples else None,
+        {
+            "minimum": record.get("density_min_g_cm3"),
+            "maximum": record.get("density_max_g_cm3"),
+            "difference": density_difference,
+        },
     )
     add_conclusion_rule_conflict(
         record,
@@ -610,7 +961,7 @@ def evaluate_record(record, rules, fingerprint):
         "膨胀率",
         expansion_rule.get("rule_id"),
         conclusion_pass_claim(conclusion, ("膨胀率", "膨胀")),
-        expansion_outside,
+        (not numeric_pass) if numeric_pass is not None else None,
         expansion_value,
     )
     if record.get("immersion_peel_result") == "不合格":
@@ -653,7 +1004,9 @@ def evaluate_record(record, rules, fingerprint):
                 "blocking": False,
                 "batch_applicable": False,
                 "rememberable": False,
-                "source": source_ref(record["source_file"], record["source_sheet"], conflict.get("cell_or_range")),
+                "source": source_ref(
+                    record["source_file"], record["source_sheet"], conflict.get("cell_or_range")
+                ),
             }
         )
     return anomalies, confirmations
@@ -667,16 +1020,62 @@ def style_header(cells):
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
 
+def style_result_cell(cell, value):
+    """Apply the delivery-standard color while keeping the text conclusion visible."""
+    text = str(value or "")
+    if "红色" in text or text in {"异常", "不合格"}:
+        color = "F4CCCC"
+    elif "蓝色" in text:
+        color = "CFE2F3"
+    elif "绿色" in text or text in {"正常", "合格"}:
+        color = "D9EAD3"
+    elif text in {"待确认", "是"} or "待确认" in text or "人工复核" in text:
+        color = "FFF2CC"
+    elif text == "信息不足":
+        color = "D9D9D9"
+    else:
+        return
+    cell.fill = PatternFill("solid", fgColor=color)
+    cell.font = Font(name="微软雅黑", color="000000")
+
+
 def write_summary(records, output_path, rules, excluded_records=None):
     excluded_records = excluded_records or []
     workbook = openpyxl.Workbook()
     summary = workbook.active
     summary.title = "水煮检测汇总"
     headers = [
-        "来源文件", "批号", "产品", "规格", "压制日期", "班长", "检测日期", "浸胶日期",
-        "订单信息", "产品用途", "试件数", "复测试件数", "平均密度(g/cm³)", "密度差(g/cm³)",
-        "平均膨胀率", "浸渍剥离", "原表结论", "规则观察", "业务状态", "缺失字段",
-        "复算冲突数", "结论/规则冲突数",
+        "来源文件",
+        "批号",
+        "产品",
+        "规格",
+        "压制日期",
+        "班长",
+        "检测日期",
+        "浸胶日期",
+        "订单信息",
+        "产品用途",
+        "试件数",
+        "复测试件数",
+        "平均密度(g/cm³)",
+        "最小密度(g/cm³)",
+        "最大密度(g/cm³)",
+        "密度差(g/cm³)",
+        "密度规则",
+        "平均膨胀率",
+        "膨胀率规则",
+        "自动等级",
+        "需人工复核",
+        "浸渍剥离",
+        "原表结论",
+        "业务状态",
+        "缺失/待补字段",
+        "命中规则ID",
+        "密度来源单元格",
+        "膨胀率来源单元格",
+        "复算冲突数",
+        "结论/规则冲突数",
+        "源表有效区域",
     ]
     summary.append(headers)
     style_header(summary[1])
@@ -684,56 +1083,162 @@ def write_summary(records, output_path, rules, excluded_records=None):
         summary.append(
             [
                 Path(record["source_file"]).name,
-                record["batch_no"], record["product"], record["specification"], record["pressing_date"],
-                record["team_leader"], record["test_date"], record["impregnation_date"], record["order_info"],
-                record["product_usage"], len(record["samples"]),
+                record["batch_no"],
+                record["product"],
+                record["specification"],
+                record["pressing_date"],
+                record["team_leader"],
+                record["test_date"],
+                record["impregnation_date"],
+                record["order_info"],
+                record["product_usage"],
+                len(record["samples"]),
                 sum(1 for sample in record["samples"] if sample["sample_type"] == "retest"),
-                record["average_density_g_cm3"], record["density_range_g_cm3"],
-                record["average_expansion_ratio"], record["immersion_peel_result"], record["source_conclusion"],
-                "；".join(f"{key}:{value}" for key, value in record["rule_observations"].items()),
-                record["business_status"], ", ".join(record["missing_fields"]), len(record["conflicts"]),
+                record["average_density_g_cm3"],
+                record["density_min_g_cm3"],
+                record["density_max_g_cm3"],
+                record["density_range_g_cm3"],
+                record["rule_observations"].get("density", ""),
+                record["average_expansion_ratio"],
+                record["rule_observations"].get("expansion", ""),
+                record.get("expansion_grade", ""),
+                "是" if record.get("expansion_human_review_required") else "否",
+                record["immersion_peel_result"],
+                record["source_conclusion"],
+                record["business_status"],
+                ", ".join(record["missing_fields"]),
+                ", ".join(str(item.get("rule_id") or "") for item in record.get("rule_hits", [])),
+                ", ".join(
+                    sample["density_source_cell"]
+                    for sample in record["samples"]
+                    if sample.get("density_source_cell")
+                ),
+                ", ".join(
+                    sample["expansion_source_cell"]
+                    for sample in record["samples"]
+                    if sample.get("expansion_source_cell")
+                ),
+                len(record["conflicts"]),
                 len(record["conclusion_rule_conflicts"]),
+                record.get("source_used_range", ""),
             ]
         )
     summary.freeze_panes = "A2"
     summary.auto_filter.ref = summary.dimensions
     summary.sheet_view.showGridLines = False
-    for column in ("M", "N"):
+    for column in ("M", "N", "O", "P"):
         for cell in summary[column][1:]:
             cell.number_format = "0.000"
-    for cell in summary["O"][1:]:
+    for cell in summary["R"][1:]:
         cell.number_format = "0.00%"
-    widths = {"A": 24, "B": 16, "C": 18, "D": 16, "E": 12, "F": 12, "G": 12, "H": 12,
-              "I": 18, "J": 12, "K": 10, "L": 10, "M": 16, "N": 16, "O": 14, "P": 12,
-              "Q": 44, "R": 34, "S": 12, "T": 28, "U": 12, "V": 16}
+    for row in range(2, summary.max_row + 1):
+        style_result_cell(summary[f"Q{row}"], summary[f"Q{row}"].value)
+        style_result_cell(summary[f"T{row}"], summary[f"T{row}"].value)
+        style_result_cell(summary[f"U{row}"], summary[f"U{row}"].value)
+        style_result_cell(summary[f"X{row}"], summary[f"X{row}"].value)
+    widths = {
+        "A": 24,
+        "B": 16,
+        "C": 18,
+        "D": 16,
+        "E": 12,
+        "F": 14,
+        "G": 12,
+        "H": 12,
+        "I": 18,
+        "J": 12,
+        "K": 10,
+        "L": 10,
+        "M": 15,
+        "N": 15,
+        "O": 15,
+        "P": 15,
+        "Q": 12,
+        "R": 14,
+        "S": 50,
+        "T": 16,
+        "U": 12,
+        "V": 12,
+        "W": 48,
+        "X": 12,
+        "Y": 30,
+        "Z": 34,
+        "AA": 26,
+        "AB": 26,
+        "AC": 12,
+        "AD": 16,
+        "AE": 16,
+    }
     for column, width in widths.items():
         summary.column_dimensions[column].width = width
 
     excluded_sheet = workbook.create_sheet("未纳入正常统计")
-    excluded_sheet.append([
-        "来源文件", "批号", "产品", "规格", "业务状态", "缺失字段", "处理说明",
-    ])
+    excluded_sheet.append(
+        [
+            "来源文件",
+            "批号",
+            "产品",
+            "规格",
+            "业务状态",
+            "缺失字段",
+            "阻断原因",
+            "处理说明",
+        ]
+    )
     style_header(excluded_sheet[1])
     for record in excluded_records:
-        excluded_sheet.append([
-            Path(record["source_file"]).name,
-            record["batch_no"],
-            record["product"],
-            record["specification"],
-            "信息不足",
-            ", ".join(record["missing_fields"]),
-            "空表、未完成表或关键信息不足；未进入正常汇总和图表统计。",
-        ])
+        excluded_sheet.append(
+            [
+                Path(record["source_file"]).name,
+                record["batch_no"],
+                record["product"],
+                record["specification"],
+                "信息不足",
+                ", ".join(record["missing_fields"]),
+                "；".join(record.get("blocking_reasons", [])),
+                "空表、未完成表或无可计算试件；未进入正常汇总和图表统计。",
+            ]
+        )
     excluded_sheet.auto_filter.ref = excluded_sheet.dimensions
     excluded_sheet.sheet_view.showGridLines = False
-    for column, width in {"A": 26, "B": 16, "C": 18, "D": 18, "E": 14, "F": 34, "G": 54}.items():
+    for row in range(2, excluded_sheet.max_row + 1):
+        style_result_cell(excluded_sheet[f"E{row}"], excluded_sheet[f"E{row}"].value)
+    for column, width in {
+        "A": 26,
+        "B": 16,
+        "C": 18,
+        "D": 18,
+        "E": 14,
+        "F": 34,
+        "G": 48,
+        "H": 54,
+    }.items():
         excluded_sheet.column_dimensions[column].width = width
 
     details = workbook.create_sheet("试件明细")
     detail_headers = [
-        "来源文件", "批号", "试件", "类型", "长(mm)", "宽(mm)", "重量(g)", "煮前平均厚度(mm)",
-        "煮后平均厚度(mm)", "体积(cm³)", "原表密度", "复算密度", "采用密度", "原表膨胀率",
-        "复算膨胀率", "采用膨胀率", "来源区域",
+        "来源文件",
+        "批号",
+        "试件",
+        "类型",
+        "长(mm)",
+        "宽(mm)",
+        "重量(g)",
+        "煮前平均厚度(mm)",
+        "煮后平均厚度(mm)",
+        "体积(cm³)",
+        "原表密度",
+        "原表显示密度",
+        "复算密度",
+        "采用密度",
+        "密度规则",
+        "密度来源单元格",
+        "原表膨胀率",
+        "原表显示膨胀率",
+        "复算膨胀率",
+        "采用膨胀率",
+        "膨胀率来源单元格",
+        "来源区域",
     ]
     details.append(detail_headers)
     style_header(details[1])
@@ -741,34 +1246,79 @@ def write_summary(records, output_path, rules, excluded_records=None):
         for sample in record["samples"]:
             details.append(
                 [
-                    Path(record["source_file"]).name, record["batch_no"], sample["label"], sample["sample_type"],
-                    sample["length_mm"], sample["width_mm"], sample["weight_g"],
-                    sample["average_thickness_before_mm"], sample["average_thickness_after_mm"], sample["volume_cm3"],
-                    sample["source_density_g_cm3"], sample["calculated_density_g_cm3"], sample["density_g_cm3"],
-                    sample["source_expansion_ratio"], sample["calculated_expansion_ratio"], sample["expansion_ratio"],
+                    Path(record["source_file"]).name,
+                    record["batch_no"],
+                    sample["label"],
+                    sample["sample_type"],
+                    sample["length_mm"],
+                    sample["width_mm"],
+                    sample["weight_g"],
+                    sample["average_thickness_before_mm"],
+                    sample["average_thickness_after_mm"],
+                    sample["volume_cm3"],
+                    sample["source_density_g_cm3"],
+                    sample["source_density_display"],
+                    sample["calculated_density_g_cm3"],
+                    sample["density_g_cm3"],
+                    sample["density_rule_result"],
+                    sample["density_source_cell"],
+                    sample["source_expansion_ratio"],
+                    sample["source_expansion_display"],
+                    sample["calculated_expansion_ratio"],
+                    sample["expansion_ratio"],
+                    sample["expansion_source_cell"],
                     sample["source_range"],
                 ]
             )
     details.freeze_panes = "A2"
     details.auto_filter.ref = details.dimensions
     details.sheet_view.showGridLines = False
-    for column in ("N", "O", "P"):
+    for column in ("Q", "S", "T"):
         for cell in details[column][1:]:
             cell.number_format = "0.00%"
-    for column in range(5, 14):
+    for column in (5, 6, 7, 8, 9, 10, 11, 13, 14):
         for cell in details.iter_cols(min_col=column, max_col=column, min_row=2):
             for item in cell:
                 item.number_format = "0.000"
-    for column, width in {"A": 24, "B": 15, "C": 10, "D": 10, "H": 18, "I": 18, "J": 14,
-                          "K": 14, "L": 14, "M": 14, "N": 14, "O": 14, "P": 14, "Q": 14}.items():
+    for row in range(2, details.max_row + 1):
+        style_result_cell(details[f"O{row}"], details[f"O{row}"].value)
+    for column, width in {
+        "A": 24,
+        "B": 15,
+        "C": 10,
+        "D": 10,
+        "H": 18,
+        "I": 18,
+        "J": 14,
+        "K": 14,
+        "L": 16,
+        "M": 14,
+        "N": 14,
+        "O": 12,
+        "P": 18,
+        "Q": 14,
+        "R": 18,
+        "S": 14,
+        "T": 14,
+        "U": 20,
+        "V": 16,
+    }.items():
         details.column_dimensions[column].width = width
 
     rule_sheet = workbook.create_sheet("规则说明")
     rule_sheet.append(["规则版本", rules.get("rule_version", "")])
     rule_sheet.append(["规则状态", rules.get("status", "")])
-    rule_sheet.append(["重要说明", "客户未确认的阈值仅用于异常观察，不生成正式合格/不合格结论。"])
-    rule_sheet.append(["密度暂存范围", f"{(rules.get('density') or {}).get('minimum_g_cm3', '')} ~ {(rules.get('density') or {}).get('maximum_g_cm3', '')} g/cm³"])
-    rule_sheet.append(["膨胀率规则", "必须先确定产品用途，再按用途选择阈值；未知用途转人工确认。"])
+    rule_sheet.append(
+        [
+            "密度正式规则",
+            "每个有效试件 1.1～1.3 g/cm³（含边界），且最大值-最小值≤0.1 g/cm³（含边界）。",
+        ]
+    )
+    rule_sheet.append(["绿色优等", "平均膨胀率≤6.5%，并须结合表面、侧面和端头开裂观察人工确认。"])
+    rule_sheet.append(["地板/家具", "6.5%＜平均膨胀率≤8% 为蓝色合格；＞8% 为红色不合格。"])
+    rule_sheet.append(["墙板/栏杆", "8%≤平均膨胀率≤12% 为蓝色合格；＞12% 为红色不合格。"])
+    rule_sheet.append(["v0.1 人工边界", "墙板/栏杆平均膨胀率＞6.5%且＜8% 不自动标色，转人工复核。"])
+    rule_sheet.append(["用途缺失", "不得猜测产品用途；生成一次可批量应用的确认项。"])
     rule_sheet.column_dimensions["A"].width = 20
     rule_sheet.column_dimensions["B"].width = 80
     rule_sheet.sheet_view.showGridLines = False
@@ -778,11 +1328,13 @@ def write_summary(records, output_path, rules, excluded_records=None):
         chart_sheet = workbook.create_sheet("分析图表")
         chart_sheet.append(["批号/文件", "平均密度(g/cm³)", "平均膨胀率"])
         for record in records:
-            chart_sheet.append([
-                record["batch_no"] or Path(record["source_file"]).stem,
-                record["average_density_g_cm3"],
-                record["average_expansion_ratio"],
-            ])
+            chart_sheet.append(
+                [
+                    record["batch_no"] or Path(record["source_file"]).stem,
+                    record["average_density_g_cm3"],
+                    record["average_expansion_ratio"],
+                ]
+            )
         style_header(chart_sheet[1])
         chart_sheet.column_dimensions["A"].width = 24
         chart_sheet.column_dimensions["B"].width = 18
@@ -796,7 +1348,10 @@ def write_summary(records, output_path, rules, excluded_records=None):
         density_chart.y_axis.title = "g/cm³"
         density_chart.y_axis.numFmt = "0.0"
         density_chart.legend = None
-        density_chart.add_data(Reference(chart_sheet, min_col=2, min_row=1, max_row=len(records) + 1), titles_from_data=True)
+        density_chart.add_data(
+            Reference(chart_sheet, min_col=2, min_row=1, max_row=len(records) + 1),
+            titles_from_data=True,
+        )
         density_chart.set_categories(categories)
         density_chart.height = 8
         density_chart.width = 15
@@ -807,7 +1362,10 @@ def write_summary(records, output_path, rules, excluded_records=None):
         expansion_chart.y_axis.title = "比例"
         expansion_chart.y_axis.numFmt = "0.0%"
         expansion_chart.legend = None
-        expansion_chart.add_data(Reference(chart_sheet, min_col=3, min_row=1, max_row=len(records) + 1), titles_from_data=True)
+        expansion_chart.add_data(
+            Reference(chart_sheet, min_col=3, min_row=1, max_row=len(records) + 1),
+            titles_from_data=True,
+        )
         expansion_chart.set_categories(categories)
         expansion_chart.height = 8
         expansion_chart.width = 15
@@ -826,7 +1384,9 @@ def write_summary(records, output_path, rules, excluded_records=None):
     workbook.save(output_path)
 
 
-def write_analysis_report(records, anomalies, confirmations, output_path, rules, excluded_records=None):
+def write_analysis_report(
+    records, anomalies, confirmations, output_path, rules, excluded_records=None
+):
     excluded_records = excluded_records or []
     lines = [
         "# 水煮实验分析报告",
@@ -837,25 +1397,42 @@ def write_analysis_report(records, anomalies, confirmations, output_path, rules,
         f"- 异常/观察项：{len(anomalies)}",
         f"- 待确认项：{len(confirmations)}",
         "",
-        "> 客户未确认的阈值仅用于观察和复核，不构成正式合格/不合格结论。",
+        "> 本报告按 2026-07-18 确认的 v0.1 规则复核。产品用途缺失、开裂观察缺失以及"
+        "墙板/栏杆 6.5%～8% 规则缺口均转人工确认。",
         "",
         "## 文件摘要",
         "",
-        "| 文件 | 批号 | 产品 | 业务状态 | 试件数 | 平均密度 | 平均膨胀率 | 剥离结果 |",
-        "|---|---|---|---|---:|---:|---:|---|",
+        "| 文件 | 批号 | 产品 | 业务状态 | 试件数 | 密度最小值 | 密度最大值 | 密度差 | "
+        "平均膨胀率 | 剥离结果 |",
+        "|---|---|---|---|---:|---:|---:|---:|---:|---|",
     ]
     for record in records:
-        density = "" if record["average_density_g_cm3"] is None else f"{record['average_density_g_cm3']:.3f}"
-        expansion = "" if record["average_expansion_ratio"] is None else f"{record['average_expansion_ratio']:.2%}"
+        density_min = (
+            "" if record["density_min_g_cm3"] is None else f"{record['density_min_g_cm3']:.3f}"
+        )
+        density_max = (
+            "" if record["density_max_g_cm3"] is None else f"{record['density_max_g_cm3']:.3f}"
+        )
+        density_diff = (
+            "" if record["density_range_g_cm3"] is None else f"{record['density_range_g_cm3']:.3f}"
+        )
+        expansion = (
+            ""
+            if record["average_expansion_ratio"] is None
+            else f"{record['average_expansion_ratio']:.2%}"
+        )
         lines.append(
-            f"| {Path(record['source_file']).name} | {record['batch_no']} | {record['product']} | {record['business_status']} | "
-            f"{len(record['samples'])} | {density} | {expansion} | {record['immersion_peel_result']} |"
+            f"| {Path(record['source_file']).name} | {record['batch_no']} | "
+            f"{record['product']} | {record['business_status']} | {len(record['samples'])} | "
+            f"{density_min} | {density_max} | {density_diff} | {expansion} | "
+            f"{record['immersion_peel_result']} |"
         )
     lines.extend(["", "## 未纳入正常统计", ""])
     if excluded_records:
         for record in excluded_records:
+            blocking_reasons = "；".join(record.get("blocking_reasons", []))
             lines.append(
-                f"- `{Path(record['source_file']).name}`：信息不足（缺少 {', '.join(record['missing_fields'])}）。"
+                f"- `{Path(record['source_file']).name}`：信息不足（{blocking_reasons}）。"
             )
     else:
         lines.append("- 无。")
@@ -881,9 +1458,9 @@ def write_business_records(records, excluded_records, output_path, rules):
         "module_version": MODULE_VERSION,
         "rule_version": rules.get("rule_version"),
         "status_definitions": {
-            "正常": "关键信息完整，未发现异常或待确认项。",
+            "正常": "可计算且未发现异常或待确认项。",
             "异常": "发现测量、剥离或规则观察异常，需要业务复核。",
-            "信息不足": "关键字段缺失，未纳入正常统计。",
+            "信息不足": "空表、未完成表或无可计算试件，未纳入正常统计。",
             "待确认": "产品用途或数据/结论冲突需要人工确认。",
         },
         "records": records,
@@ -909,7 +1486,15 @@ def validate_job(job):
     unknown = set(job) - ALLOWED_JOB_FIELDS
     if unknown:
         errors.append("任务包含未知字段: " + ", ".join(sorted(unknown)))
-    required = {"schema_version", "job_id", "module_id", "phase", "run_mode", "input_files", "output_dir"}
+    required = {
+        "schema_version",
+        "job_id",
+        "module_id",
+        "phase",
+        "run_mode",
+        "input_files",
+        "output_dir",
+    }
     missing = sorted(required - set(job))
     if missing:
         errors.append("任务缺少字段: " + ", ".join(missing))
@@ -924,7 +1509,11 @@ def validate_job(job):
     if job.get("run_mode") not in {"single", "batch"}:
         errors.append("本模块只支持 single 或 batch")
     files = job.get("input_files")
-    if not isinstance(files, list) or not files or not all(isinstance(item, str) and item for item in files):
+    if (
+        not isinstance(files, list)
+        or not files
+        or not all(isinstance(item, str) and item for item in files)
+    ):
         errors.append("input_files 必须是非空字符串数组")
     if job.get("run_mode") == "single" and isinstance(files, list) and len(files) != 1:
         errors.append("single 模式必须且只能提供一个文件")
@@ -944,16 +1533,32 @@ def validate_job(job):
 
 def confirmation_answers(job):
     if job["phase"] != "finalize":
-        return {}
+        return {"by_id": {}, "batch_usage": ""}
     data = load_json(job["confirmation_file"], "人工确认文件")
     answers = data.get("answers")
     if not isinstance(answers, list):
         raise ValueError("人工确认文件缺少 answers 数组")
-    return {
+    by_id = {
         item.get("confirmation_id"): item.get("value")
         for item in answers
         if isinstance(item, dict) and item.get("confirmation_id")
     }
+    batch_usage = ""
+    for item in answers:
+        if not isinstance(item, dict):
+            continue
+        confirmation_id = as_text(item.get("confirmation_id"))
+        if confirmation_id.startswith("C-PRODUCT-USAGE-BATCH-") and item.get("value"):
+            batch_usage = as_text(item.get("value"))
+            break
+        if (
+            confirmation_id.startswith("C-PRODUCT-USAGE-")
+            and item.get("apply_to_batch")
+            and item.get("value")
+        ):
+            batch_usage = as_text(item.get("value"))
+            break
+    return {"by_id": by_id, "batch_usage": batch_usage}
 
 
 def result_template(job, started, rule_version):
@@ -984,11 +1589,11 @@ def result_template(job, started, rule_version):
     }
 
 
-def product_usage_confirmation(record, fingerprint):
+def product_usage_confirmation(record, scope_id):
     return {
-        "confirmation_id": f"C-PRODUCT-USAGE-{fingerprint[:12]}",
+        "confirmation_id": f"C-PRODUCT-USAGE-BATCH-{scope_id}",
         "field": "product_usage",
-        "reason": "原文件未提供产品用途，无法选择膨胀率标准。",
+        "reason": "本批输入文件未提供产品用途；请确认一次并批量应用，模块不得自行猜测膨胀率标准。",
         "suggested_value": None,
         "options": ["地板", "家具", "墙板", "栏杆", "其他"],
         "confidence": 0.0,
@@ -1028,6 +1633,10 @@ def run_job(job_path):
     records = []
     excluded_records = []
     seen = set()
+    usage_prompt_added = False
+    scope_id = as_text(job.get("parent_job_id")) or job["job_id"]
+    answer_map = answers["by_id"]
+    batch_usage = answers["batch_usage"]
     emit("任务开始", 0)
     for index, raw_path in enumerate(job["input_files"], 1):
         source = Path(raw_path).resolve()
@@ -1051,45 +1660,58 @@ def run_job(job_path):
                 seen.add(fingerprint)
                 record = extract_file(source)
                 missing_fields = record["missing_fields"]
-                blocking_missing = [field for field in REQUIRED_FOR_NORMAL_STATS if field in missing_fields]
-                if blocking_missing:
-                    status = "needs_confirmation"
+                if record["is_incomplete"]:
+                    status = "partial_success"
                     record["business_status"] = "信息不足"
                     anomalies = [
                         make_anomaly(
                             record,
                             fingerprint,
-                            f"MISSING-{field.upper()}",
+                            "INCOMPLETE",
                             "critical",
-                            field,
-                            None,
-                            None,
-                            f"缺少关键字段 {field}，该文件未进入正常汇总统计。",
-                            "复核空表、未完成表或模板结构变化，并补齐原始记录。",
-                            record["field_sources"].get(field),
+                            "workbook_completion",
+                            record["blocking_reasons"],
+                            "BOILING-INPUT-COMPLETENESS-001",
+                            "；".join(record["blocking_reasons"]),
+                            "复核空表、未完成表或模板结构变化；补齐后重新运行。",
                         )
-                        for field in blocking_missing
                     ]
                     result["anomalies"].extend(anomalies)
                     anomaly_count += len(anomalies)
                     excluded_records.append(record)
+                    extracted_records = 1
+                    result["summary"]["processed_count"] += 1
                 else:
-                    confirmation_id = f"C-PRODUCT-USAGE-{fingerprint[:12]}"
-                    usage_answer = answers.get(confirmation_id)
+                    if is_missing_value(record["product_usage"]):
+                        record["product_usage"] = ""
+                    batch_confirmation_id = f"C-PRODUCT-USAGE-BATCH-{scope_id}"
+                    individual_confirmation_id = f"C-PRODUCT-USAGE-{fingerprint[:12]}"
+                    usage_answer = (
+                        batch_usage
+                        or answer_map.get(batch_confirmation_id)
+                        or answer_map.get(individual_confirmation_id)
+                    )
                     usage_confirmation_pending = False
                     if usage_answer:
                         record["product_usage"] = as_text(usage_answer)
-                    elif not record["product_usage"] and job["phase"] == "draft":
-                        result["confirmations"].append(product_usage_confirmation(record, fingerprint))
+                        record["missing_fields"] = [
+                            field for field in record["missing_fields"] if field != "product_usage"
+                        ]
+                    elif is_missing_value(record["product_usage"]):
+                        if not usage_prompt_added:
+                            result["confirmations"].append(
+                                product_usage_confirmation(record, scope_id)
+                            )
+                            usage_prompt_added = True
                         usage_confirmation_pending = True
-                    elif not record["product_usage"] and job["phase"] == "finalize":
-                        raise ValueError("正式阶段缺少产品用途确认答案")
                     anomalies, confirmations = evaluate_record(record, rules, fingerprint)
                     result["anomalies"].extend(anomalies)
                     anomaly_count += len(anomalies)
-                    if job["phase"] == "draft":
-                        result["confirmations"].extend(confirmations)
-                    if usage_confirmation_pending or confirmations:
+                    pending_confirmations = [
+                        item for item in confirmations if item["confirmation_id"] not in answer_map
+                    ]
+                    result["confirmations"].extend(pending_confirmations)
+                    if usage_confirmation_pending or pending_confirmations:
                         record["business_status"] = "待确认"
                     elif anomalies:
                         record["business_status"] = "异常"
@@ -1098,7 +1720,12 @@ def run_job(job_path):
                     records.append(record)
                     extracted_records = 1
                     result["summary"]["processed_count"] += 1
-                    status = "needs_confirmation" if anomalies or confirmations or (not record["product_usage"]) else "success"
+                    if usage_confirmation_pending or pending_confirmations:
+                        status = "needs_confirmation"
+                    elif anomalies:
+                        status = "partial_success"
+                    else:
+                        status = "success"
         except Exception as exc:  # isolate a bad workbook from the remaining batch
             error = str(exc)
             result["summary"]["failed_count"] += 1
@@ -1114,7 +1741,10 @@ def run_job(job_path):
                 "error": error,
             }
         )
-        emit(f"已处理 {index}/{len(job['input_files'])}: {source.name}", round(index / len(job["input_files"]) * 80))
+        emit(
+            f"已处理 {index}/{len(job['input_files'])}: {source.name}",
+            round(index / len(job["input_files"]) * 80),
+        )
 
     if records or excluded_records:
         summary_path = output_dir / "boiling_summary.xlsx"
@@ -1137,7 +1767,9 @@ def run_job(job_path):
                         "type": "summary_excel",
                         "path": str(summary_path),
                         "label": "水煮实验汇总",
-                        "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        "mime_type": (
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        ),
                     },
                     {
                         "type": "analysis_report",
@@ -1155,19 +1787,27 @@ def run_job(job_path):
             )
         except (OSError, ValueError) as exc:
             result["errors"].append(f"生成汇总文件失败: {exc}")
-            result["summary"]["failed_count"] += 1
 
     result["summary"]["anomaly_count"] = len(result["anomalies"])
     result["summary"]["confirmation_count"] = len(result["confirmations"])
-    if result["confirmations"] or result["anomalies"]:
+    if result["confirmations"]:
         result["status"] = "needs_confirmation"
-    elif result["summary"]["failed_count"] or result["summary"]["skipped_count"]:
-        result["status"] = "partial_success" if records else "failed"
+    elif result["summary"]["processed_count"] == 0 and result["summary"]["failed_count"]:
+        result["status"] = "failed"
+    elif (
+        result["anomalies"]
+        or excluded_records
+        or result["summary"]["failed_count"]
+        or result["summary"]["skipped_count"]
+        or result["errors"]
+    ):
+        result["status"] = "partial_success"
     else:
         result["status"] = "success"
     result["analysis_summary"] = (
         f"处理{result['summary']['processed_count']}个文件，失败{result['summary']['failed_count']}个，"
-        f"异常/观察{result['summary']['anomaly_count']}项，待确认{result['summary']['confirmation_count']}项。"
+        f"未纳入正常统计{len(excluded_records)}个，异常/观察{result['summary']['anomaly_count']}项，"
+        f"待确认{result['summary']['confirmation_count']}项。"
     )
     result["finished_at"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
     try:
@@ -1185,19 +1825,41 @@ def self_check():
         workbook = openpyxl.Workbook()
         sheet = workbook.active
         sheet.title = "水煮实验"
+        sheet.append(["水煮实验检测记录（自检）"])
         sheet.append(["批号", "TEST-001", "产品名称", "脱敏测试产品", "规格", "100*100*10"])
         sheet.append(["压制日期", dt.date(2026, 7, 15), "班长", "脱敏班长", "产品用途", "家具"])
-        sheet.append(["检测日期", dt.date(2026, 7, 16), "浸胶日期", dt.date(2026, 7, 14), "订单号", "ORDER-001"])
-        sheet.cell(8, 1, "样1")
-        sheet.cell(8, 2, 100)
-        sheet.cell(8, 3, 100)
-        sheet.cell(9, 5, 120)
-        for row in range(8, 14):
+        sheet.append(
+            [
+                "检测日期",
+                dt.date(2026, 7, 16),
+                "浸胶日期",
+                dt.date(2026, 7, 14),
+                "订单号",
+                "ORDER-001",
+            ]
+        )
+        sheet.append(
+            [
+                "试件",
+                "长度(mm)",
+                "宽度(mm)",
+                "煮前厚度(mm)",
+                "重量(g)",
+                "密度(g/cm³)",
+                "煮后厚度(mm)",
+                "膨胀率",
+            ]
+        )
+        sheet.cell(6, 1, "样1")
+        sheet.cell(6, 2, 100)
+        sheet.cell(6, 3, 100)
+        sheet.cell(7, 5, 120)
+        for row in range(6, 12):
             sheet.cell(row, 4, 10.0)
             sheet.cell(row, 7, 10.5)
-        sheet.cell(14, 6, 1.2)
-        sheet.cell(14, 8, 0.05)
-        sheet.cell(17, 1, "检测结论：密度检测合格，2h膨胀率检测合格，浸渍剥离检测合格")
+        sheet.cell(12, 6, 1.2)
+        sheet.cell(12, 8, 0.05)
+        sheet.cell(14, 1, "检测结论：密度检测合格，2h膨胀率检测合格，浸渍剥离检测合格")
         workbook.save(sample_path)
         record = extract_file(sample_path)
         if record["product"] != "脱敏测试产品" or len(record["samples"]) != 1:

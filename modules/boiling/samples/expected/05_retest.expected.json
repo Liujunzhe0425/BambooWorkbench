@@ -12,5 +12,5 @@
   "expected_average_density_g_cm3": 1.2,
   "expected_average_expansion_ratio": 0.050000000000000065,
   "expected_conflict_count": 0,
-  "notes": "脱敏样例机器预期；阈值观察不构成正式质量结论。"
+  "notes": "脱敏样例机器预期；复测试件独立保留并参与可计算统计。"
 }

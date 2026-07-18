@@ -1,23 +1,25 @@
-rule_version: "2026.07-draft"
-status: "pending_customer_confirmation"
+rule_version: "2026.07.18-v0.1"
+status: "confirmed_with_wall_railing_review_gap"
 density:
   rule_id: "BOILING-DENSITY-001"
   minimum_g_cm3: 1.1
   maximum_g_cm3: 1.3
-  enabled_for_formal_judgement: false
+  maximum_difference_g_cm3: 0.1
+  inclusive_boundaries: true
+  enabled_for_formal_judgement: true
 expansion:
   rule_id: "BOILING-EXPANSION-001"
   requires_product_usage: true
-  enabled_for_formal_judgement: false
-  thresholds:
-    地板:
-      maximum_ratio: 0.08
-    家具:
-      maximum_ratio: 0.07
-    墙板:
-      maximum_ratio: 0.09
-    栏杆:
-      maximum_ratio: 0.08
+  excellent_max_ratio: 0.065
+  floor_furniture:
+    pass_max_ratio: 0.08
+    fail_above_ratio: 0.08
+  wall_railing:
+    manual_review_above_ratio: 0.065
+    blue_min_ratio: 0.08
+    pass_max_ratio: 0.12
+    fail_above_ratio: 0.12
 notes:
-  - "以上密度和膨胀率数值均为脱敏联调暂存值，未经客户书面确认。"
-  - "暂存阈值只触发观察/人工复核，不生成正式合格或不合格结论。"
+  - "绿色优等还须结合表面、侧面和端头开裂观察；缺少结构化观察时转人工确认。"
+  - "墙板、栏杆膨胀率大于6.5%且小于8%在 v0.1 不自动标色，转人工复核。"
+  - "产品用途缺失时不得选择膨胀率标准，可通过一次确认批量应用。"

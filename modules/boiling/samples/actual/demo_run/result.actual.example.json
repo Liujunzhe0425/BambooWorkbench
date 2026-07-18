@@ -1,26 +1,56 @@
 {
   "schema_version": "1.0",
-  "job_id": "SAMPLE-BATCH-001",
+  "job_id": "BOILING-PR14-SANITIZED-DEMO",
   "module_id": "boiling",
   "module_version": "0.1.0",
   "status": "needs_confirmation",
   "summary": {
     "input_count": 8,
-    "processed_count": 7,
+    "processed_count": 8,
     "skipped_count": 0,
     "failed_count": 0,
-    "anomaly_count": 6,
-    "confirmation_count": 2
+    "anomaly_count": 8,
+    "confirmation_count": 4
   },
   "anomalies": [
     {
       "anomaly_id": "A-DENSITY-09900c8d5db8",
       "severity": "warning",
-      "field": "average_density_g_cm3",
-      "value": 1.45,
+      "field": "density",
+      "value": {
+        "minimum": 1.45,
+        "maximum": 1.45,
+        "difference": 0.0,
+        "outside_samples": [
+          "样1",
+          "样2"
+        ]
+      },
       "rule_id": "BOILING-DENSITY-001",
-      "message": "平均密度超出当前暂存阈值；该规则尚未获客户确认，不能作为正式合格判定。",
-      "suggestion": "复核原始测量值，并由有权限人员确认密度阈值后再作正式判断。",
+      "message": "超出 1.1～1.3 g/cm³ 的试件：样1、样2",
+      "suggestion": "核对各试件密度、来源单元格和密度差；边界 1.1、1.3、0.1 均按合格处理。",
+      "source": {
+        "source_file": "modules/boiling/tests/fixtures/samples/input/02_density_observation.xlsx",
+        "sheet": "水煮实验",
+        "cell_or_range": null
+      }
+    },
+    {
+      "anomaly_id": "A-CONCLUSION-RULE-1-09900c8d5db8",
+      "severity": "warning",
+      "field": "密度",
+      "value": {
+        "source_conclusion": "合格",
+        "rule_observation": "不合格",
+        "value": {
+          "minimum": 1.45,
+          "maximum": 1.45,
+          "difference": 0.0
+        }
+      },
+      "rule_id": "BOILING-CONCLUSION-CONFLICT-001",
+      "message": "原表密度结论为合格，但按本版规则复核为不合格；两者均已保留。",
+      "suggestion": "复核原表签字结论、测量数据和规则版本；人工确认前不得覆盖原表结论。",
       "source": {
         "source_file": "tests/fixtures/boiling/samples/input/02_density_observation.xlsx",
         "sheet": "水煮实验",
@@ -33,8 +63,26 @@
       "field": "average_expansion_ratio",
       "value": 0.10000000000000003,
       "rule_id": "BOILING-EXPANSION-001",
-      "message": "平均膨胀率超出当前产品用途对应的暂存阈值；规则尚未获客户确认。",
-      "suggestion": "复核产品用途及测量值，并由有权限人员确认正式阈值。",
+      "message": "膨胀率＞8%，红色不合格",
+      "suggestion": "复核产品用途、平均膨胀率和来源单元格，并保留原表结论供人工复核。",
+      "source": {
+        "source_file": "modules/boiling/tests/fixtures/samples/input/03_expansion_observation.xlsx",
+        "sheet": "水煮实验",
+        "cell_or_range": null
+      }
+    },
+    {
+      "anomaly_id": "A-CONCLUSION-RULE-1-2c406684b97f",
+      "severity": "warning",
+      "field": "膨胀率",
+      "value": {
+        "source_conclusion": "合格",
+        "rule_observation": "不合格",
+        "value": 0.10000000000000003
+      },
+      "rule_id": "BOILING-CONCLUSION-CONFLICT-001",
+      "message": "原表膨胀率结论为合格，但按本版规则复核为不合格；两者均已保留。",
+      "suggestion": "复核原表签字结论、测量数据和规则版本；人工确认前不得覆盖原表结论。",
       "source": {
         "source_file": "tests/fixtures/boiling/samples/input/03_expansion_observation.xlsx",
         "sheet": "水煮实验",
@@ -56,13 +104,16 @@
       }
     },
     {
-      "anomaly_id": "A-MISSING-SAMPLES-c19d705372d2",
+      "anomaly_id": "A-INCOMPLETE-c19d705372d2",
       "severity": "critical",
-      "field": "samples",
-      "value": null,
-      "rule_id": null,
-      "message": "缺少关键字段 samples，该文件未进入正常汇总统计。",
-      "suggestion": "复核空表、未完成表或模板结构变化，并补齐原始记录。",
+      "field": "workbook_completion",
+      "value": [
+        "未识别到测量试件",
+        "原表标记为未完成"
+      ],
+      "rule_id": "BOILING-INPUT-COMPLETENESS-001",
+      "message": "未识别到测量试件；原表标记为未完成",
+      "suggestion": "复核空表、未完成表或模板结构变化；补齐后重新运行。",
       "source": {
         "source_file": "tests/fixtures/boiling/samples/input/07_empty_incomplete.xlsx",
         "sheet": "水煮实验",
@@ -105,6 +156,44 @@
     }
   ],
   "confirmations": [
+    {
+      "confirmation_id": "C-CONCLUSION-RULE-密度-09900c8d5db8",
+      "field": "密度",
+      "reason": "原表结论“合格”与规则观察“不合格”不一致，需要人工复核。",
+      "suggested_value": null,
+      "options": [
+        "合格",
+        "不合格"
+      ],
+      "confidence": 0.0,
+      "blocking": false,
+      "batch_applicable": false,
+      "rememberable": false,
+      "source": {
+        "source_file": "modules/boiling/tests/fixtures/samples/input/02_density_observation.xlsx",
+        "sheet": "水煮实验",
+        "cell_or_range": null
+      }
+    },
+    {
+      "confirmation_id": "C-CONCLUSION-RULE-膨胀率-2c406684b97f",
+      "field": "膨胀率",
+      "reason": "原表结论“合格”与规则观察“不合格”不一致，需要人工复核。",
+      "suggested_value": null,
+      "options": [
+        "合格",
+        "不合格"
+      ],
+      "confidence": 0.0,
+      "blocking": false,
+      "batch_applicable": false,
+      "rememberable": false,
+      "source": {
+        "source_file": "modules/boiling/tests/fixtures/samples/input/03_expansion_observation.xlsx",
+        "sheet": "水煮实验",
+        "cell_or_range": null
+      }
+    },
     {
       "confirmation_id": "C-CONFLICT-1-603761a3a3d3",
       "field": "density_g_cm3",
@@ -153,9 +242,15 @@
     },
     {
       "type": "analysis_report",
-      "path": "samples/actual/demo_run/boiling_analysis.md",
+      "path": "modules/boiling/samples/actual/demo_run/boiling_analysis.md",
       "label": "水煮实验分析报告",
       "mime_type": "text/markdown"
+    },
+    {
+      "type": "business_records",
+      "path": "modules/boiling/samples/actual/demo_run/boiling_records.json",
+      "label": "水煮实验结构化业务记录",
+      "mime_type": "application/json"
     }
   ],
   "file_results": [
@@ -173,7 +268,7 @@
       "fingerprint": "09900c8d5db89501d0e2e937dc05dd54e4acc0cf4b3750c6ebb762205dc85298",
       "status": "needs_confirmation",
       "extracted_records": 1,
-      "anomaly_count": 1,
+      "anomaly_count": 2,
       "missing_fields": [],
       "error": null
     },
@@ -182,14 +277,14 @@
       "fingerprint": "2c406684b97f171d9eb05d8dbb5e4b00663f0648eb118e134a7ad7f648e58054",
       "status": "needs_confirmation",
       "extracted_records": 1,
-      "anomaly_count": 1,
+      "anomaly_count": 2,
       "missing_fields": [],
       "error": null
     },
     {
       "source_file": "tests/fixtures/boiling/samples/input/04_peel_fail.xlsx",
       "fingerprint": "9bf2d8d374c8c0fa6490fe5e57d78d3d5f2a5db71511e116a72d110622a71438",
-      "status": "needs_confirmation",
+      "status": "partial_success",
       "extracted_records": 1,
       "anomaly_count": 1,
       "missing_fields": [],
@@ -216,15 +311,11 @@
     {
       "source_file": "tests/fixtures/boiling/samples/input/07_empty_incomplete.xlsx",
       "fingerprint": "c19d705372d253281150577038e3a0164495755ebab6ee7670d98cdda6965fb8",
-      "status": "needs_confirmation",
-      "extracted_records": 0,
+      "status": "partial_success",
+      "extracted_records": 1,
       "anomaly_count": 1,
       "missing_fields": [
-        "pressing_date",
-        "team_leader",
-        "impregnation_date",
-        "order_info",
-        "samples"
+        "source_conclusion"
       ],
       "error": null
     },
@@ -240,8 +331,8 @@
   ],
   "errors": [],
   "service_requests": [],
-  "rule_version": "2026.07-draft",
-  "analysis_summary": "处理7个文件，失败0个，异常/观察6项，待确认2项。",
-  "started_at": "2026-07-18T14:24:23+08:00",
-  "finished_at": "2026-07-18T14:24:23+08:00"
+  "rule_version": "2026.07.18-v0.1",
+  "analysis_summary": "处理8个文件，失败0个，未纳入正常统计1个，异常/观察8项，待确认4项。",
+  "started_at": "2026-07-18T00:00:00+08:00",
+  "finished_at": "2026-07-18T00:00:01+08:00"
 }
