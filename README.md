@@ -31,6 +31,14 @@ py -3.12 -m venv .venv
 .\.venv\Scripts\python.exe -m app
 ```
 
+正式启动默认只加载真实业务模块。需要演示空框架和模拟流程时，必须显式启用演示模式：
+
+```powershell
+.\.venv\Scripts\python.exe -m app --demo
+```
+
+安装版同样可使用 `BambooWorkbench.exe --demo`；Mock 输出只用于演示，不参与正式业务判断。
+
 一键质量检查：
 
 ```powershell
