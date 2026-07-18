@@ -34,9 +34,6 @@ class ModuleCard(QFrame):
         self.description_label.setWordWrap(True)
         self.state_label = QLabel(self._state_text(registry, module_id))
         self.state_label.setProperty("pill", True)
-        self.details_label = QLabel(self._details_text(registry, module_id))
-        self.details_label.setProperty("subtle", True)
-        self.details_label.setWordWrap(True)
         self.open_button = QPushButton("打开模块")
         self.open_button.setProperty("secondary", True)
         self.open_button.setAccessibleName(f"打开{title}")
@@ -46,7 +43,6 @@ class ModuleCard(QFrame):
         layout.addWidget(self.description_label)
         layout.addStretch()
         layout.addWidget(self.state_label)
-        layout.addWidget(self.details_label)
         layout.addWidget(self.open_button)
 
     @staticmethod
@@ -62,11 +58,3 @@ class ModuleCard(QFrame):
             "unknown": "状态未知",
         }.get(module.health, "状态未知")
         return f"已安装 · {source} · {health}"
-
-    @staticmethod
-    def _details_text(registry: object, module_id: object) -> str:
-        try:
-            module = registry.get(module_id)
-        except KeyError:
-            return "版本：未知\n路径：未安装"
-        return f"版本：{module.manifest.module_version}\n路径：{module.path}"

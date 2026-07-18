@@ -115,19 +115,11 @@ MIGRATION_4 = Migration(
     ),
 )
 
-MIGRATION_5 = Migration(
-    version=5,
-    statements=(
-        "ALTER TABLE tasks ADD COLUMN module_config_hash TEXT",
-    ),
-)
-
 MIGRATIONS: tuple[Migration, ...] = (
     MIGRATION_1,
     MIGRATION_2,
     MIGRATION_3,
     MIGRATION_4,
-    MIGRATION_5,
 )
 
 

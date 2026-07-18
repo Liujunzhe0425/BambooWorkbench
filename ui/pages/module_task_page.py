@@ -9,7 +9,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QPushButton,
-    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -18,7 +17,7 @@ from ui.widgets.file_drop_zone import FileDropZone
 
 
 class ModuleTaskPage(QWidget):
-    task_requested = Signal(object, list, object)
+    task_requested = Signal(object, list)
 
     def __init__(self) -> None:
         super().__init__()
@@ -42,12 +41,6 @@ class ModuleTaskPage(QWidget):
         self.file_list.itemSelectionChanged.connect(self._update_buttons)
         self.intake_feedback = QLabel("请选择或拖放待处理文件")
         self.intake_feedback.setAccessibleName("文件接收状态")
-        self.year_label = QLabel("历史数据年份（仅当文件内没有完整年份时使用）")
-        self.default_year = QSpinBox()
-        self.default_year.setRange(0, 2100)
-        self.default_year.setSpecialValueText("未指定")
-        self.default_year.setAccessibleName("历史数据默认年份")
-        self.default_year.setToolTip("请输入业务文件所属年份；不会使用当前年份或文件时间猜测。")
 
         picker_row = QHBoxLayout()
         self.add_files_button = QPushButton("添加文件")
@@ -85,8 +78,6 @@ class ModuleTaskPage(QWidget):
         card_layout.addLayout(picker_row)
         card_layout.addWidget(self.file_list, 1)
         card_layout.addWidget(self.intake_feedback)
-        card_layout.addWidget(self.year_label)
-        card_layout.addWidget(self.default_year)
         card_layout.addWidget(self.run_button)
         layout.addWidget(self.title)
         layout.addWidget(self.subtitle)
@@ -106,10 +97,6 @@ class ModuleTaskPage(QWidget):
             extension.casefold() if extension.startswith(".") else f".{extension.casefold()}"
             for extension in extensions
         }
-        is_moisture = getattr(module_id, "value", module_id) == "moisture"
-        self.year_label.setVisible(is_moisture)
-        self.default_year.setVisible(is_moisture)
-        self.default_year.setValue(0)
         self.clear_files()
 
     def add_files(self, paths: list[Path]) -> None:
@@ -180,10 +167,4 @@ class ModuleTaskPage(QWidget):
 
     def _run(self) -> None:
         if self.module_id is not None and self.files:
-            module_config = None
-            if (
-                getattr(self.module_id, "value", self.module_id) == "moisture"
-                and self.default_year.value()
-            ):
-                module_config = {"default_year": self.default_year.value()}
-            self.task_requested.emit(self.module_id, list(self.files), module_config)
+            self.task_requested.emit(self.module_id, list(self.files))

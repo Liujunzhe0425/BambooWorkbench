@@ -1,5 +1,3 @@
-import hashlib
-import json
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
@@ -48,60 +46,6 @@ def test_task_service_snapshots_input_persists_outputs_and_finishes(
     assert len(task_repository.list_outputs(job_id)) == 3
     assert source.read_bytes() == b"source-bytes"
     assert job_id not in service.runners
-
-
-def test_task_service_persists_canonical_module_config(
-    qtbot, app_services: dict[str, object], tmp_path: Path
-) -> None:
-    source = tmp_path / "normal.xlsx"
-    source.write_bytes(b"source-bytes")
-    service = _service(app_services)
-
-    with qtbot.waitSignal(service.finished, timeout=15_000):
-        job_id = service.create_and_start(
-            ModuleId.MOISTURE,
-            [source],
-            {"default_year": 2026},
-        )
-
-    task_dir = service.paths.tasks / job_id
-    config_path = task_dir / "module-config.json"
-    draft = json.loads((task_dir / "job-draft.json").read_text(encoding="utf-8"))
-    task_repository = app_services["task_repository"]
-    assert isinstance(task_repository, TaskRepository)
-    assert config_path.read_text(encoding="utf-8") == '{"default_year":2026}'
-    assert draft["module_config_file"] == str(config_path.resolve())
-    assert task_repository.get(job_id)["module_config_hash"] == hashlib.sha256(
-        config_path.read_bytes()
-    ).hexdigest()
-
-
-@pytest.mark.parametrize(
-    "module_config",
-    [
-        {"default_year": float("nan")},
-        {"payload": object()},
-        {"payload": "x" * 70_000},
-    ],
-)
-def test_task_service_rejects_unsafe_module_config(
-    qtbot,
-    app_services: dict[str, object],
-    tmp_path: Path,
-    module_config: dict[str, object],
-) -> None:
-    source = tmp_path / "normal.xlsx"
-    source.write_bytes(b"source-bytes")
-    service = _service(app_services)
-    failures = QSignalSpy(service.failed)
-
-    job_id = service.create_and_start(ModuleId.MOISTURE, [source], module_config)
-    qtbot.waitUntil(lambda: failures.count() == 1, timeout=5_000)
-
-    task_repository = app_services["task_repository"]
-    assert isinstance(task_repository, TaskRepository)
-    assert task_repository.get(job_id)["status"] == "failed"
-    assert not (service.paths.tasks / job_id / "module-config.json").exists()
 
 
 def test_task_service_persists_confirmation_prompts_before_state_and_signal(

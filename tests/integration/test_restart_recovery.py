@@ -54,62 +54,6 @@ def test_waiting_confirmation_survives_real_context_restart(qtbot, tmp_path: Pat
         second.close()
 
 
-def test_waiting_confirmation_preserves_module_config_across_restart(
-    qtbot, tmp_path: Path
-) -> None:
-    root = tmp_path / "restart-config-data"
-    source = tmp_path / "confirm.xlsx"
-    source.write_bytes(b"mock")
-    first = build_context(root, use_mocks=True)
-    try:
-        waiting = QSignalSpy(first.task_service.needs_confirmation)
-        job_id = first.task_service.create_and_start(
-            ModuleId.MOISTURE,
-            [source],
-            {"default_year": 2026},
-        )
-        assert waiting.wait(15_000)
-    finally:
-        first.close()
-
-    second = build_context(root, use_mocks=True)
-    try:
-        pending = second.task_service.pending_confirmations()
-        assert [item[0] for item in pending] == [job_id]
-        recovered = second.task_service._jobs[job_id]
-        assert recovered.module_config_file == str(
-            (second.paths.tasks / job_id / "module-config.json").resolve()
-        )
-    finally:
-        second.close()
-
-
-def test_waiting_recovery_rejects_modified_module_config(qtbot, tmp_path: Path) -> None:
-    root = tmp_path / "tampered-module-config"
-    source = tmp_path / "confirm.xlsx"
-    source.write_bytes(b"mock")
-    first = build_context(root, use_mocks=True)
-    waiting = QSignalSpy(first.task_service.needs_confirmation)
-    job_id = first.task_service.create_and_start(
-        ModuleId.MOISTURE,
-        [source],
-        {"default_year": 2026},
-    )
-    assert waiting.wait(15_000)
-    (first.paths.tasks / job_id / "module-config.json").write_text(
-        '{"default_year":2025}',
-        encoding="utf-8",
-    )
-    first.close()
-
-    second = build_context(root, use_mocks=True)
-    try:
-        assert second.task_repository.get(job_id)["status"] == "failed"
-        assert second.task_service.pending_confirmations() == []
-    finally:
-        second.close()
-
-
 def test_context_shutdown_cancels_real_active_job_before_database_close(
     qtbot, tmp_path: Path
 ) -> None:

@@ -20,13 +20,18 @@ foreach ($Target in @($Build, $Dist)) {
     }
 }
 
-$Python = Join-Path $Root '.venv\Scripts\python.exe'
-if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
-    throw 'Repository .venv Python is required for packaging.'
+$VenvPython = Join-Path $Root '.venv\Scripts\python.exe'
+$Python = if ($env:BAMBOO_PYTHON -and (Test-Path -LiteralPath $env:BAMBOO_PYTHON -PathType Leaf)) {
+    $env:BAMBOO_PYTHON
+} elseif (Test-Path -LiteralPath $VenvPython -PathType Leaf) {
+    $VenvPython
+} else {
+    'python'
 }
 & $Python -c 'import PyInstaller'
 if ($LASTEXITCODE -ne 0) {
-    throw 'Packaging dependencies are missing from the repository .venv.'
+    & $Python -m pip install -e '.[packaging]'
+    if ($LASTEXITCODE -ne 0) { throw 'Unable to install packaging dependencies' }
 }
 & $Python -m PyInstaller --clean --noconfirm `
     --workpath $Build --distpath $Dist packaging\BambooWorkbench.spec

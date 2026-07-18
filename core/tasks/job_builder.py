@@ -5,11 +5,7 @@ from core.contracts.job import JobRequest
 
 
 def build_draft_job(
-    job_id: str,
-    module_id: ModuleId,
-    snapshots: list[Path],
-    task_dir: Path,
-    module_config_file: Path | None = None,
+    job_id: str, module_id: ModuleId, snapshots: list[Path], task_dir: Path
 ) -> JobRequest:
     return JobRequest(
         schema_version="1.0",
@@ -19,9 +15,7 @@ def build_draft_job(
         run_mode=RunMode.SINGLE if len(snapshots) == 1 else RunMode.BATCH,
         input_files=[str(path.resolve()) for path in snapshots],
         output_dir=str((task_dir / "output-draft").resolve()),
-        module_config_file=(
-            str(module_config_file.resolve()) if module_config_file is not None else None
-        ),
+        module_config_file=None,
         ai_enabled=False,
         allowed_knowledge_scopes=["shared", module_id.value],
     )

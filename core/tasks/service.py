@@ -8,7 +8,7 @@ import tempfile
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from PySide6.QtCore import QObject, Signal
@@ -40,8 +40,6 @@ _JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{6,64}$")
 _TERMINAL_MARKER = ".terminal-pending.json"
 _SERVICE_CONSENT_PREFIX = "service-consent:"
 _LOG = logging.getLogger("bamboo_workbench")
-_MODULE_CONFIG_NAME = "module-config.json"
-_MODULE_CONFIG_MAX_BYTES = 65_536
 
 
 def _new_job_id() -> str:
@@ -99,7 +97,6 @@ class TaskService(QObject):
         self._failed_signals: set[str] = set()
         self._cancellation_pending: set[str] = set()
         self._pending_confirmation_results: dict[str, ModuleResult] = {}
-        self._execution_task_ids: dict[str, str] = {}
         self._shutdown = False
         self._shutdown_result = True
         self._blocked_callbacks: set[str] = set()
@@ -107,11 +104,6 @@ class TaskService(QObject):
 
     def pending_confirmations(self) -> list[tuple[str, ModuleResult]]:
         return sorted(self._pending_confirmation_results.items())
-
-    def task_id_for_result(self, result: ModuleResult) -> str:
-        """Map a draft/finalize execution result back to its persisted root task."""
-
-        return self._execution_task_ids.get(result.job_id, result.job_id)
 
     def shutdown(self) -> bool:
         if self._shutdown:
@@ -207,12 +199,7 @@ class TaskService(QObject):
             self._cancellation_pending.discard(job_id)
             raise InvalidTaskTransition(f"job {job_id} cancellation was not accepted")
 
-    def create_and_start(
-        self,
-        module_id: ModuleId,
-        inputs: list[Path],
-        module_config: dict[str, Any] | None = None,
-    ) -> str:
+    def create_and_start(self, module_id: ModuleId, inputs: list[Path]) -> str:
         timestamp = datetime.now().astimezone()
         job_id = self.job_id_factory()
         if not _JOB_ID_PATTERN.fullmatch(job_id):
@@ -232,7 +219,6 @@ class TaskService(QObject):
             raise
 
         self._states[job_id] = TaskStateMachine()
-        self._execution_task_ids[job_id] = job_id
         runner: ModuleProcessRunner | None = None
         try:
             module = self.registry.get(module_id)
@@ -257,17 +243,11 @@ class TaskService(QObject):
             except Exception:
                 remove_snapshots(snapshots)
                 raise
-            module_config_file = self._write_module_config(
-                job_id,
-                task_dir,
-                module_config,
-            )
             job = build_draft_job(
                 job_id,
                 module_id,
                 [snapshot.copy for snapshot in snapshots],
                 task_dir,
-                module_config_file,
             )
             job_path = task_dir / "job-draft.json"
             job_path.write_text(job.model_dump_json(indent=2), encoding="utf-8")
@@ -280,43 +260,6 @@ class TaskService(QObject):
         except Exception as exc:
             self._record_failure(job_id, self._error_message(exc), runner)
         return job_id
-
-    def _write_module_config(
-        self,
-        job_id: str,
-        task_dir: Path,
-        module_config: dict[str, Any] | None,
-    ) -> Path | None:
-        if module_config is None:
-            self.task_repository.set_module_config_hash(job_id, None)
-            return None
-        if not isinstance(module_config, dict) or any(
-            not isinstance(key, str) for key in module_config
-        ):
-            raise ValueError("module configuration must be a JSON object with string keys")
-        try:
-            content = json.dumps(
-                module_config,
-                ensure_ascii=False,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-        except (TypeError, ValueError) as error:
-            raise ValueError("module configuration must contain JSON values") from error
-        encoded = content.encode("utf-8")
-        if len(encoded) > _MODULE_CONFIG_MAX_BYTES:
-            raise ValueError("module configuration exceeds 65536 UTF-8 bytes")
-        target = resolve_contained_target(
-            task_dir / _MODULE_CONFIG_NAME,
-            task_dir,
-            "module configuration target",
-            reject_link=True,
-        )
-        _atomic_write_text(target, content)
-        content_hash = hashlib.sha256(encoded).hexdigest()
-        self.task_repository.set_module_config_hash(job_id, content_hash)
-        return target.resolve(strict=True)
 
     def finalize(self, job_id: str, bundle_path: Path) -> None:
         self._begin_finalize(job_id, bundle_path, validate_answers=True)
@@ -417,13 +360,7 @@ class TaskService(QObject):
             )
             service_response_file = str(response_path)
         final_payload = trusted_draft.model_dump(mode="python")
-        finalize_job_id = self.job_id_factory()
-        if not _JOB_ID_PATTERN.fullmatch(finalize_job_id):
-            raise ValueError("job_id_factory returned an invalid finalize job ID")
-        if finalize_job_id == job_id:
-            finalize_job_id = hashlib.sha256(f"{job_id}:finalize".encode()).hexdigest()
         final_payload.update(
-            job_id=finalize_job_id,
             phase=JobPhase.FINALIZE,
             parent_job_id=job_id,
             confirmation_file=str(frozen_bundle_path),
@@ -432,7 +369,6 @@ class TaskService(QObject):
             ai_enabled=any(ai_consent.values()),
         )
         final_job = JobRequest.model_validate(final_payload)
-        self._execution_task_ids[final_job.job_id] = job_id
         final_path = task_dir / "job-finalize.json"
         _atomic_write_text(frozen_bundle_path, bundle.model_dump_json(indent=2))
         _atomic_write_text(final_path, final_job.model_dump_json(indent=2))
@@ -450,7 +386,6 @@ class TaskService(QObject):
             self._record_failure(job_id, self._error_message(exc), runner)
 
     def _validate_draft_paths(self, job_id: str, task_dir: Path, draft: JobRequest) -> None:
-        task = self.task_repository.get(job_id)
         persisted_files = self.task_repository.list_files(job_id)
         persisted_snapshots = [
             resolve_contained_file(
@@ -500,33 +435,10 @@ class TaskService(QObject):
             raise ValueError("job-draft ai_enabled must remain false")
         if draft.allowed_knowledge_scopes != ["shared", draft.module_id.value]:
             raise ValueError("job-draft knowledge scopes are not canonical")
-        config_hash = task["module_config_hash"]
-        if config_hash is None:
-            if draft.module_config_file is not None:
-                raise ValueError("job-draft has an unexpected module configuration")
-        else:
-            expected_config = resolve_contained_file(
-                task_dir / _MODULE_CONFIG_NAME,
-                task_dir,
-                "module configuration file",
-                reject_link=True,
-            )
-            draft_config = resolve_contained_file(
-                Path(draft.module_config_file or ""),
-                task_dir,
-                "draft module configuration",
-                reject_link=True,
-            )
-            if draft_config != expected_config:
-                raise ValueError("job-draft module configuration is not canonical")
-            if draft_config.stat().st_size > _MODULE_CONFIG_MAX_BYTES:
-                raise ValueError("module configuration exceeds the size limit")
-            if self._sha256(draft_config) != str(config_hash):
-                raise ValueError("module configuration fingerprint does not match persisted state")
-
         if any(
             value is not None
             for value in (
+                draft.module_config_file,
                 draft.service_response_file,
                 draft.parent_job_id,
                 draft.confirmation_file,
@@ -913,7 +825,6 @@ class TaskService(QObject):
         machine.transition(TaskLifecycleState.WAITING_CONFIRMATION)
         self._states[job_id] = machine
         self._jobs[job_id] = draft
-        self._execution_task_ids[draft.job_id] = job_id
         self._pending_confirmation_results[job_id] = pending
         _LOG.info("waiting confirmation recovered job=%s", job_id)
 
