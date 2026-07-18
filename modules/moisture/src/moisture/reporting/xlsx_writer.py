@@ -14,6 +14,12 @@ from uuid import uuid4
 import xlsxwriter
 from moisture.domain.enums import DisplayColor
 from moisture.ports.writers import WorkbookBatch, WorkbookReport
+from moisture.reporting.labels import (
+    color_label,
+    confirmation_label,
+    review_label,
+    screen_label,
+)
 from moisture.reporting.workbook_validation import REQUIRED_SHEET_NAMES, validate_workbook
 
 COLOR_HEX: dict[str, str | None] = {
@@ -50,6 +56,9 @@ SUMMARY_HEADERS = (
     "初筛下限",
     "初筛上限",
     "规则版本",
+    "规则SHA-256",
+    "规则适用范围",
+    "规则确认状态",
     "初筛状态",
     "AI复判状态",
     "置信度",
@@ -177,11 +186,14 @@ def _summary_row(batch: WorkbookBatch, index: int) -> list[object | None]:
         _number(batch.lower_threshold),
         _number(batch.upper_threshold),
         batch.rule_version,
-        batch.screening_decision.status.value,
-        batch.ai_review.status.value,
+        batch.rule_hash,
+        batch.rule_applicable_scope,
+        "已确认" if batch.rule_confirmation_status == "confirmed" else "待业务确认",
+        screen_label(batch.screening_decision.status),
+        review_label(batch.ai_review.status),
         _number(batch.ai_review.confidence),
-        batch.final_display_color.value,
-        batch.confirmation_state.value,
+        color_label(batch.final_display_color),
+        confirmation_label(batch.confirmation_state),
         batch.review_suggestion,
         batch.record.source_file.name if batch.record.source_file else None,
         batch.record.source_sheet,
@@ -198,9 +210,9 @@ def _write_summary(workbook: Any, report: WorkbookReport, formats: dict[str, Any
     worksheet.set_column(6, 16, 11)
     worksheet.set_column(17, 17, 30)
     worksheet.set_column(18, 29, 13)
-    worksheet.set_column(30, 35, 16)
-    worksheet.set_column(36, 36, 28)
-    worksheet.set_column(37, 38, 20)
+    worksheet.set_column(30, 38, 16)
+    worksheet.set_column(39, 39, 28)
+    worksheet.set_column(40, 41, 20)
     columns = {header: index for index, header in enumerate(SUMMARY_HEADERS)}
     date_columns = {columns["到货日期"], columns["检测日期"]}
     percent_headers = {
@@ -259,10 +271,10 @@ def _write_anomalies(workbook: Any, report: WorkbookReport, formats: dict[str, A
         values = (
             batch.record.record_id,
             batch.ai_review.target_field or batch.screening_decision.target_field,
-            batch.screening_decision.status.value,
-            batch.ai_review.status.value,
-            batch.final_display_color.value,
-            batch.ai_review.rationale or batch.screening_decision.reason,
+            screen_label(batch.screening_decision.status),
+            review_label(batch.ai_review.status),
+            color_label(batch.final_display_color),
+            batch.ai_review.rationale or batch.screening_decision.reason or batch.review_suggestion,
             batch.review_suggestion,
         )
         for column, value in enumerate(values):
@@ -360,7 +372,18 @@ def _write_trends(workbook: Any, report: WorkbookReport, formats: dict[str, Any]
 
 
 def _write_trace(workbook: Any, report: WorkbookReport, formats: dict[str, Any]) -> None:
-    headers = ("批次编号", "来源文件", "文件哈希", "来源工作表", "样本行", "规则版本", "经验引用")
+    headers = (
+        "批次编号",
+        "来源文件",
+        "文件哈希",
+        "来源工作表",
+        "样本行",
+        "规则版本",
+        "规则SHA-256",
+        "规则适用范围",
+        "规则确认状态",
+        "经验引用",
+    )
     worksheet = workbook.add_worksheet(SHEET_NAMES[3])
     _write_headers(worksheet, headers, formats["header"])
     for row, batch in enumerate(report.batches, start=1):
@@ -371,16 +394,22 @@ def _write_trace(workbook: Any, report: WorkbookReport, formats: dict[str, Any])
             batch.record.source_sheet,
             ", ".join(str(sample.source_row) for sample in batch.record.samples),
             batch.rule_version,
+            batch.rule_hash,
+            batch.rule_applicable_scope,
+            batch.rule_confirmation_status,
             "; ".join(f"{item.entry_id} v{item.version}" for item in batch.experience_references),
         )
         for column, value in enumerate(values):
             worksheet.write(
-                row, column, value, formats["wrap"] if column in {1, 2, 6} else formats["text"]
+                row,
+                column,
+                value,
+                formats["wrap"] if column in {1, 2, 6, 7, 9} else formats["text"],
             )
     worksheet.set_column(0, 0, 16)
     worksheet.set_column(1, 1, 28)
     worksheet.set_column(2, 2, 68)
-    worksheet.set_column(3, 6, 22)
+    worksheet.set_column(3, 9, 22)
 
 
 def _write_model_records(workbook: Any, report: WorkbookReport, formats: dict[str, Any]) -> None:
@@ -390,12 +419,12 @@ def _write_model_records(workbook: Any, report: WorkbookReport, formats: dict[st
     for row, batch in enumerate(report.batches, start=1):
         values = (
             batch.record.record_id,
-            batch.ai_review.status.value,
+            review_label(batch.ai_review.status),
             _number(batch.ai_review.confidence),
             batch.ai_review.target_field,
             batch.ai_review.rationale,
             batch.ai_degradation_reason,
-            batch.confirmation_state.value,
+            confirmation_label(batch.confirmation_state),
         )
         for column, value in enumerate(values):
             cell_format = formats["number"] if column == 2 else formats["wrap"]

@@ -141,6 +141,9 @@ def report(tmp_path: Path) -> WorkbookReport:
                 final_display_color=color,
                 confirmation_state=ConfirmationState.PENDING_HUMAN_REVIEW,
                 rule_version="rules-v1",
+                rule_hash="c" * 64,
+                rule_applicable_scope="竹丝/原竹丝；全年",
+                rule_confirmation_status="confirmed",
                 lower_threshold=Decimal("0.47"),
                 upper_threshold=Decimal("0.55"),
                 review_suggestion="建议人工复核，不构成正式判定",
@@ -176,6 +179,15 @@ def test_workbook_contains_five_required_sheets(tmp_path: Path, report: Workbook
         assert summary.cell(2, headers.index("均值") + 1).value == pytest.approx(0.61)
         assert summary.cell(2, headers.index("来源文件") + 1).value == "R1.xlsx"
         assert summary.cell(2, headers.index("来源工作表") + 1).value == "检测数据"
+        assert summary.cell(2, headers.index("初筛下限") + 1).value == pytest.approx(0.47)
+        assert summary.cell(2, headers.index("初筛上限") + 1).value == pytest.approx(0.55)
+        assert summary.cell(2, headers.index("规则SHA-256") + 1).value == "c" * 64
+        assert summary.cell(2, headers.index("规则适用范围") + 1).value == "竹丝/原竹丝；全年"
+        assert summary.cell(2, headers.index("规则确认状态") + 1).value == "已确认"
+        assert summary.cell(2, headers.index("初筛状态") + 1).value == "偏高疑似"
+        assert summary.cell(2, headers.index("AI复判状态") + 1).value == "辅助复判未完成"
+        assert summary.cell(2, headers.index("最终显示色") + 1).value == "橙色"
+        assert summary.cell(2, headers.index("人工确认状态") + 1).value == "待人工复核"
         trace = workbook["来源追溯"]
         trace_headers = [cell.value for cell in trace[1]]
         assert trace.cell(2, trace_headers.index("来源文件") + 1).value == "R1.xlsx"
@@ -187,6 +199,17 @@ def test_workbook_contains_five_required_sheets(tmp_path: Path, report: Workbook
         )
         assert summary.cell(2, headers.index("均值") + 1).number_format == "0.00%"
         assert summary.cell(2, headers.index("总重(kg)") + 1).number_format == "#,##0.0"
+        customer_text = " ".join(
+            str(cell.value)
+            for worksheet in workbook.worksheets
+            if worksheet.title != "来源追溯"
+            for row in worksheet.iter_rows()
+            for cell in row
+            if cell.value is not None
+        )
+        assert "not_required" not in customer_text
+        assert "pending_human_review" not in customer_text
+        assert not re.search(r"\bNone\b", customer_text)
 
 
 def test_review_colors_match_contract_semantics(tmp_path: Path, report: WorkbookReport) -> None:

@@ -167,3 +167,4 @@ class PendingRuleMatch:
 class RuleEvaluationResult:
     decisions: tuple[ScreeningDecision, ...] = ()
     pending_matches: tuple[PendingRuleMatch, ...] = ()
+    applicable_definitions: tuple[RuleDefinition, ...] = ()

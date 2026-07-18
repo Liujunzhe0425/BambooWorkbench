@@ -27,7 +27,47 @@ def build_confirmations(
     """Map genuine module ambiguities to stable contract prompts."""
 
     prompts: list[dict[str, object]] = []
-    for issue in issues:
+    year_issues = tuple(issue for issue in issues if issue.kind == "default_year")
+    if year_issues:
+        fingerprints = tuple(sorted({issue.fingerprint for issue in year_issues}))
+        identity = json.dumps(
+            {
+                "root_job_id": root_job_id,
+                "fingerprints": fingerprints,
+                "field": "default_year",
+                "date_signatures": tuple(
+                    sorted(
+                        f"{issue.fingerprint}:{issue.cell_or_range or ''}"
+                        for issue in year_issues
+                    )
+                ),
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        confirmation_id = f"msr-confirm-{hashlib.sha256(identity).hexdigest()[:24]}"
+        count = len(fingerprints)
+        prompts.append(
+            {
+                "confirmation_id": confirmation_id,
+                "field": "default_year",
+                "reason": f"有 {count} 个文件的业务日期只有月/日，请输入统一的四位业务年份",
+                "suggested_value": None,
+                "options": [],
+                "confidence": 1.0,
+                "blocking": True,
+                "batch_applicable": True,
+                "rememberable": False,
+                "source": {
+                    "source_file": f"批量输入（{count} 个文件）",
+                    "sheet": None,
+                    "cell_or_range": "arrival_date/test_date",
+                },
+            }
+        )
+
+    for issue in (item for item in issues if item.kind != "default_year"):
         candidates = _normalized_candidates(issue)
         if not candidates:
             continue

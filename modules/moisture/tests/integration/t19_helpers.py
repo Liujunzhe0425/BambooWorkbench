@@ -131,10 +131,17 @@ def write_envelope(path: Path, responses: list[dict[str, object]]) -> Path:
 
 
 def workbook_contains_color(path: Path, color: str) -> bool:
+    display = {
+        "orange": "橙色",
+        "green": "绿色",
+        "red": "红色",
+        "blue": "蓝色",
+        "none": "无颜色",
+    }[color]
     workbook = load_workbook(path, read_only=True, data_only=True)
     try:
         return any(
-            cell.value == color
+            cell.value == display
             for sheet in workbook.worksheets
             for row in sheet.iter_rows()
             for cell in row

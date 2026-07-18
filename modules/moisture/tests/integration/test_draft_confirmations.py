@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: E402, I001
+
 import json
 import sys
 from decimal import Decimal
@@ -9,15 +11,17 @@ MODULE_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(MODULE_ROOT / "src"))
 sys.path.insert(0, str(MODULE_ROOT / "tests"))
 
-from moisture.application.draft_orchestrator import run_draft
 from moisture.application.deterministic_pipeline import DeterministicPipeline
+from moisture.application.draft_orchestrator import run_draft
 from moisture.contract.job_models import JobPhase, JobRequest, ModuleId, RunMode
 
 pytest_plugins = ("fixtures.workbooks.workbook_factory",)
 
 
 def _job(source: Path, output: Path, job_id: str = "draft-root") -> JobRequest:
-    return JobRequest("1.0", job_id, ModuleId.MOISTURE, JobPhase.DRAFT, RunMode.SINGLE, (source,), output)
+    return JobRequest(
+        "1.0", job_id, ModuleId.MOISTURE, JobPhase.DRAFT, RunMode.SINGLE, (source,), output
+    )
 
 
 def test_formula_conflict_confirmation_is_repeatable(tmp_path: Path, workbook_factory) -> None:

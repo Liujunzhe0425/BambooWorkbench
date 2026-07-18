@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: E402, I001
+
 import json
 import sys
 from decimal import Decimal
@@ -21,7 +23,9 @@ def test_request_is_stable_sorted_redacted_and_declares_consent() -> None:
     values = (candidate("b", "0.10"), candidate(secret, "0.20", secret), candidate("a", "0.10"))
 
     first = build_ai_request(root_job_id="draft-root", candidates=values, rule_hash="a" * 64)
-    second = build_ai_request(root_job_id="draft-root", candidates=tuple(reversed(values)), rule_hash="a" * 64)
+    second = build_ai_request(
+        root_job_id="draft-root", candidates=tuple(reversed(values)), rule_hash="a" * 64
+    )
 
     assert first.request is not None and second.request is not None
     assert first.request["request_id"] == second.request["request_id"]
@@ -39,5 +43,7 @@ def test_candidate_limit_and_utf8_payload_budget_keep_omission_counts() -> None:
     assert built.request is not None
     assert (built.candidate_total, built.candidate_sent, built.candidate_omitted) == (75, 50, 25)
     payload = built.request["payload"]
-    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+        "utf-8"
+    )
     assert len(encoded) <= MAX_PAYLOAD_BYTES

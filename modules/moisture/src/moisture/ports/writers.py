@@ -49,6 +49,9 @@ class WorkbookBatch:
     confirmation_state: ConfirmationState
     rule_version: str
     review_suggestion: str
+    rule_hash: str = ""
+    rule_applicable_scope: str = ""
+    rule_confirmation_status: str = ""
     lower_threshold: Decimal | None = None
     upper_threshold: Decimal | None = None
     experience_references: tuple[ExperienceCitation, ...] = ()

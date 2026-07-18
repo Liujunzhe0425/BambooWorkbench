@@ -240,6 +240,7 @@ def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) ->
                     rule_version=package.rule_version,
                     rule_hash=package.rules_sha256,
                     rule_source=package.source,
+                    rule_applicable_scope=package.applicable_scope,
                     rule_confirmation_status=package.customer_confirmation_status,
                     candidate_total=ai_request.candidate_total,
                     candidate_sent=ai_request.candidate_sent,

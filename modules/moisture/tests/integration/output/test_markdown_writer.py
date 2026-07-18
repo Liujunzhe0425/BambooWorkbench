@@ -136,6 +136,7 @@ def report() -> AnalysisReportView:
         rule_version="rules-v1",
         rule_hash="b" * 64,
         rule_source="rules/active/rule-package.json",
+        rule_applicable_scope="竹丝/原竹丝；全年",
         rule_confirmation_status="pending_confirmation",
         candidate_total=7,
         candidate_sent=4,
@@ -163,6 +164,12 @@ def test_report_separates_deterministic_and_auxiliary_evidence(
     assert "b" * 64 in text
     assert "rules/active/rule-package.json" in text
     assert "待业务确认" in text
+    assert "材料适用范围：竹丝/原竹丝；全年" in text
+    assert "下限 0.47，上限 0.55" in text
+    assert "未配置" not in text
+    assert "not_required" not in text
+    assert "pending_human_review" not in text
+    assert "；None。" not in text
     assert "EXP-001" in text and "1.2.0" in text
     assert "候选总数：7；发送数：4；省略数：3" in text
     assert "AI 服务超时" in text

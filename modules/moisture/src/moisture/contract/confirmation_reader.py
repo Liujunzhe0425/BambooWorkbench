@@ -62,6 +62,7 @@ def read_confirmation_bundle(
     root_job_id: str,
     expected_confirmation_ids: Collection[str],
     require_complete: bool = True,
+    ignored_confirmation_id_prefixes: tuple[str, ...] = (),
 ) -> ConfirmationReadResult:
     """Read a bundle without applying answers or deciding the task status."""
 
@@ -177,7 +178,11 @@ def read_confirmation_bundle(
                 )
             else:
                 seen_ids.add(confirmation_id)
-            if confirmation_id not in expected_ids:
+            ignored = any(
+                confirmation_id.startswith(prefix)
+                for prefix in ignored_confirmation_id_prefixes
+            )
+            if confirmation_id not in expected_ids and not ignored:
                 errors.append(
                     _error(
                         "CONFIRMATION_ID_UNKNOWN",
@@ -185,14 +190,15 @@ def read_confirmation_bundle(
                         "confirmation ID was not requested",
                     )
                 )
-            answers.append(
-                ConfirmationAnswer(
-                    confirmation_id=confirmation_id,
-                    value=_freeze_json(raw_answer["value"]),
-                    apply_to_batch=apply_to_batch,
-                    remember_mapping=remember_mapping,
+            if not ignored:
+                answers.append(
+                    ConfirmationAnswer(
+                        confirmation_id=confirmation_id,
+                        value=_freeze_json(raw_answer["value"]),
+                        apply_to_batch=apply_to_batch,
+                        remember_mapping=remember_mapping,
+                    )
                 )
-            )
 
     if require_complete:
         for missing_id in sorted(expected_ids - seen_ids):

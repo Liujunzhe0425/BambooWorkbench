@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from moisture.ports.writers import ExperienceCitation, KnowledgeCitation, WorkbookBatch
+from moisture.reporting.labels import color_label, screen_label
 from moisture.runtime_paths import module_root
 
 
@@ -23,6 +24,7 @@ class AnalysisReportView:
     rule_version: str
     rule_hash: str
     rule_source: str
+    rule_applicable_scope: str
     rule_confirmation_status: str
     candidate_total: int
     candidate_sent: int
@@ -51,6 +53,28 @@ class AnalysisReportView:
             "pending_confirmation": "待业务确认",
         }
         return labels.get(self.rule_confirmation_status, self.rule_confirmation_status)
+
+    @property
+    def status_label(self) -> str:
+        labels = {
+            "success": "成功",
+            "partial_success": "部分成功",
+            "failed": "失败",
+            "needs_confirmation": "等待人工确认",
+        }
+        return labels.get(self.status, self.status)
+
+    @staticmethod
+    def screening_label(batch: WorkbookBatch) -> str:
+        return screen_label(batch.screening_decision.status)
+
+    @staticmethod
+    def screening_reason(batch: WorkbookBatch) -> str:
+        return batch.screening_decision.reason or batch.review_suggestion
+
+    @staticmethod
+    def color_label(batch: WorkbookBatch) -> str:
+        return color_label(batch.ai_review.display_color)
 
     @property
     def experience_citations(self) -> tuple[tuple[str, ExperienceCitation], ...]:

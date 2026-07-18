@@ -19,6 +19,7 @@ from moisture.adapters.excel.source_parser import (  # noqa: E402
     SampleLimitExceeded,
     SourceFileModified,
     WorkbookStructureError,
+    record_requires_default_year,
 )
 from moisture.infrastructure.hashing import sha256_file  # noqa: E402
 
@@ -140,7 +141,7 @@ def test_legacy_monthly_layout_uses_parent_year_and_title_metadata(
     assert len(record.samples) == 8
 
 
-def test_legacy_monthly_layout_without_year_context_stays_invalid(
+def test_legacy_monthly_layout_without_year_context_preserves_record_for_confirmation(
     tmp_path: Path, workbook_factory
 ) -> None:
     path = workbook_factory(
@@ -149,8 +150,14 @@ def test_legacy_monthly_layout_without_year_context_stays_invalid(
         legacy_title="脱敏供应方竹丝水分检测",
     )
 
-    with pytest.raises(WorkbookStructureError, match="default_year"):
-        ExcelSourceParser().parse(path)
+    record = ExcelSourceParser().parse(path)
+
+    assert record.arrival_date is None
+    assert record.test_date is None
+    assert record.arrival_date_raw == "4.7"
+    assert record.test_date_raw == "4.8"
+    assert len(record.samples) == 1
+    assert record_requires_default_year(record)
 
 
 def test_conflicting_parent_year_contexts_are_rejected(

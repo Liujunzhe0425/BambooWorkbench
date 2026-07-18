@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ LAUNCHER = MODULE_ROOT / "run_module.bat"
 sys.path.insert(0, str(MODULE_ROOT / "src"))
 sys.path.insert(0, str(MODULE_ROOT / "tests"))
 
+from moisture.application.deterministic_pipeline import DeterministicPipeline  # noqa: E402
 from moisture.application.draft_orchestrator import run_draft  # noqa: E402
 from moisture.contract.job_models import JobRequest  # noqa: E402
 
@@ -120,7 +122,7 @@ def test_module_config_default_year_enables_month_day_workbook(
     }
 
 
-def test_missing_module_config_keeps_ambiguous_year_as_file_failure(
+def test_missing_module_config_requests_one_batch_year_without_discarding_record(
     tmp_path: Path, workbook_factory
 ) -> None:
     source = workbook_factory(
@@ -133,8 +135,14 @@ def test_missing_module_config_keeps_ambiguous_year_as_file_failure(
     assert run_draft(_job(source, output_dir)) == 0
 
     payload = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
-    assert payload["status"] == "failed"
-    assert payload["summary"]["failed_count"] == 1
+    assert payload["status"] == "needs_confirmation"
+    assert payload["summary"]["processed_count"] == 1
+    assert payload["summary"]["failed_count"] == 0
+    assert len(payload["confirmations"]) == 1
+    prompt = payload["confirmations"][0]
+    assert prompt["field"] == "default_year"
+    assert prompt["options"] == []
+    assert prompt["batch_applicable"] is True
 
 
 @pytest.mark.parametrize(
@@ -208,3 +216,31 @@ def test_formal_launcher_consumes_default_year_without_modifying_input(
     payload = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
     assert payload["status"] == "success"
     assert source.read_bytes() == before
+
+
+def test_high_low_normal_use_rule_snapshot_bounds_and_distinct_suggestions(
+    tmp_path: Path, workbook_factory
+) -> None:
+    sources = (
+        workbook_factory(tmp_path / "high.xlsx", moisture_values=(0.56,) * 6),
+        workbook_factory(tmp_path / "low.xlsx", moisture_values=(0.46,) * 8),
+        workbook_factory(tmp_path / "normal.xlsx", moisture_values=(0.50,) * 6),
+    )
+
+    outcome = DeterministicPipeline(MODULE_ROOT).run(sources, default_year=2026)
+
+    assert outcome.processed_count == 3
+    assert [batch.screening_decision.status.value for batch in outcome.batches] == [
+        "high",
+        "low",
+        "normal",
+    ]
+    assert all(batch.lower_threshold == Decimal("0.47") for batch in outcome.batches)
+    assert all(batch.upper_threshold == Decimal("0.55") for batch in outcome.batches)
+    assert "高于55.00%" in outcome.batches[0].review_suggestion
+    assert "低于47.00%" in outcome.batches[1].review_suggestion
+    assert outcome.batches[2].review_suggestion == "未命中已确认筛查规则"
+    assert all(batch.rule_version == "default-v1-approved" for batch in outcome.batches)
+    assert all(batch.rule_hash == outcome.rule_package.rules_sha256 for batch in outcome.batches)
+    assert all(batch.rule_applicable_scope == "竹丝/原竹丝；全年" for batch in outcome.batches)
+    assert all(batch.rule_confirmation_status == "confirmed" for batch in outcome.batches)

@@ -8,6 +8,7 @@ from pathlib import Path
 from moisture.application.confirmation_applier import (
     ConfirmationApplicationError,
     apply_confirmations,
+    extract_default_year_answer,
 )
 from moisture.application.confirmation_builder import build_confirmations
 from moisture.application.deterministic_pipeline import DeterministicPipeline
@@ -86,15 +87,41 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
             root_job_id=job.root_job_id,
             expected_confirmation_ids=expected_ids,
             require_complete=False,
+            ignored_confirmation_id_prefixes=("service-consent:",),
         )
         if read_result.errors or read_result.bundle is None:
             return _write_failed(job, started_at, "CONFIRMATION_PROTOCOL_INVALID")
         try:
-            applied = apply_confirmations(outcome, prompts, read_result.bundle)
+            confirmed_year, remaining_prompts, remaining_bundle = extract_default_year_answer(
+                prompts, read_result.bundle
+            )
+            if confirmed_year is not None:
+                outcome = (pipeline or DeterministicPipeline()).run(
+                    job.input_files, default_year=confirmed_year
+                )
+                rebuilt = build_confirmations(job.root_job_id, _confirmation_issues(outcome))
+                if {
+                    str(prompt["confirmation_id"]) for prompt in rebuilt
+                } != {
+                    str(prompt["confirmation_id"]) for prompt in remaining_prompts
+                }:
+                    raise ConfirmationApplicationError(
+                        "confirmation set changed after resolving the default year"
+                    )
+                remaining_prompts = rebuilt
+            if remaining_prompts:
+                applied = apply_confirmations(
+                    outcome, remaining_prompts, remaining_bundle
+                )
+                batches = applied.batches
+                anomalies = applied.anomalies
+            elif remaining_bundle.answers:
+                raise ConfirmationApplicationError("unexpected confirmation answer")
+            else:
+                batches = outcome.batches
+                anomalies = outcome.anomalies
         except ConfirmationApplicationError:
             return _write_failed(job, started_at, "CONFIRMATION_ANSWER_INVALID")
-        batches = applied.batches
-        anomalies = applied.anomalies
     else:
         batches = outcome.batches
         anomalies = outcome.anomalies
@@ -170,6 +197,7 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
                     rule_version=package.rule_version,
                     rule_hash=package.rules_sha256,
                     rule_source=package.source,
+                    rule_applicable_scope=package.applicable_scope,
                     rule_confirmation_status=package.customer_confirmation_status,
                     candidate_total=ai_request.candidate_total,
                     candidate_sent=ai_request.candidate_sent,

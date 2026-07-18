@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+# ruff: noqa: E402, I001
+
 import json
 import sys
 from pathlib import Path
@@ -25,12 +27,20 @@ class KnowledgeOnlyPipeline:
         return SimpleNamespace(**values)
 
 
-def test_knowledge_only_request_preserves_success_and_contains_no_identity(tmp_path: Path, workbook_factory) -> None:
+def test_knowledge_only_request_preserves_success_and_contains_no_identity(
+    tmp_path: Path, workbook_factory
+) -> None:
     source = workbook_factory(tmp_path / "secret-supplier.xlsx", departments={"客户部门": 1})
     output = tmp_path / "output"
     job = JobRequest(
-        "1.0", "draft-root", ModuleId.MOISTURE, JobPhase.DRAFT, RunMode.SINGLE,
-        (source,), output, allowed_knowledge_scopes=("shared", "moisture"),
+        "1.0",
+        "draft-root",
+        ModuleId.MOISTURE,
+        JobPhase.DRAFT,
+        RunMode.SINGLE,
+        (source,),
+        output,
+        allowed_knowledge_scopes=("shared", "moisture"),
     )
 
     assert run_draft(job, KnowledgeOnlyPipeline()) == 0

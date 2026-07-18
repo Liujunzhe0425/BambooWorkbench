@@ -51,13 +51,13 @@ JSON Lines 写入 stdout，普通诊断写入 stderr。任务输出目录中包�
 打开 PowerShell，执行：
 
 ```powershell
-cd "D:\codexprogram\竹丝水分检测框架适配开发\BambooWorkbench"
+# 从 BambooWorkbench 仓库根目录执行
 .\.venv\Scripts\python.exe -c "import sys; print(sys.executable); print(sys.version)"
 .\.venv\Scripts\python.exe -m app
 ```
 
-普通启动默认发现并调用正式 `modules/moisture`；只有显式传入 `--mock-modules`
-时才使用 `mock_modules`。正式调用链为：
+普通启动默认发现并调用正式 `modules/moisture`；只有显式传入 `--demo`
+时才使用演示模块。正式调用链为：
 
 ```text
 Registry 扫描 modules/moisture
@@ -70,17 +70,13 @@ Registry 扫描 modules/moisture
 
 1. 在主框架中选择 `moisture` 模块；
 2. 选择一个或多个 `.xlsx` 文件；不要选择 Excel 自动生成的 `~$` 临时文件；
-3. 在“默认业务年份”中填写数据对应年份，例如 `2026`。如果工作簿日期已经包含完整
-   年月日，该值不会覆盖 Excel 中的可靠年份；
-4. 创建任务并等待处理完成；
+3. 创建 draft 任务；若工作簿日期只有月/日，待确认页会为整批显示一个“默认业务年份”
+   确认项；已有完整年月日的文件不会被该答案覆盖；
+4. 输入四位业务年份并提交确认，由主框架创建 finalize 任务；
 5. 在结果中心打开 `moisture_summary.xlsx` 和 `analysis_report.md`；
 6. 检查汇总表、颜色和趋势图，并确认原始 Excel 未被修改。
 
-可直接选择仓库外的真实样本目录，例如：
-
-```text
-D:\codexprogram\竹丝水分检测框架适配开发\2026年4月份
-```
+可直接选择仓库外的业务样本目录；真实样本不得提交到 Git。
 
 批量中存在损坏文件时，正常文件仍会处理，任务通常显示 `partial_success`。相同内容的
 重复文件只计算一次。
@@ -90,7 +86,7 @@ D:\codexprogram\竹丝水分检测框架适配开发\2026年4月份
 不属于源码提交。成功批次应生成五张工作表，以及来料平均含水率和区间值趋势图。
 
 `0.55/0.47` 阈值及“竹丝/原竹丝”材料范围已由负责人于 2026-07-17 批准，命中后
-分别形成橙色/绿色确定性筛查提示。普通启动与 Mock 启动的区别仍由主框架配置控制。
+分别形成橙色/绿色确定性筛查提示。普通启动与演示启动的区别由主框架 `--demo` 参数控制。
 
 ## draft、finalize 与辅助证据
 

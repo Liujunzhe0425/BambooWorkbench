@@ -247,11 +247,13 @@ def evaluate_rules(
     context = RuleContext(record=record, statistics=compute_batch_statistics(record))
     decisions: list[ScreeningDecision] = []
     pending: list[PendingRuleMatch] = []
+    applicable: list[RuleDefinition] = []
     for definition in snapshot.definitions:
         evaluator = active_registry.get(definition.rule_type)
         if not _applies(context, definition):
             context.hit_states[definition.rule_id] = False
             continue
+        applicable.append(definition)
         hits = evaluator.evaluate(context, definition)
         context.hit_states[definition.rule_id] = bool(hits)
         if (
@@ -261,4 +263,8 @@ def evaluate_rules(
             decisions.extend(_decision(hit, definition) for hit in hits)
         else:
             pending.extend(_pending(hit, definition, snapshot.rules_sha256) for hit in hits)
-    return RuleEvaluationResult(decisions=tuple(decisions), pending_matches=tuple(pending))
+    return RuleEvaluationResult(
+        decisions=tuple(decisions),
+        pending_matches=tuple(pending),
+        applicable_definitions=tuple(applicable),
+    )

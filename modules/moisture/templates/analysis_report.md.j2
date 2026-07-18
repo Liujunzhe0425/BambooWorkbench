@@ -3,13 +3,13 @@
 ## 数据范围和处理概况
 
 - 开始时间：`{{ report.started_at.isoformat() }}`
-- 处理状态：`{{ report.status }}`
+- 处理状态：{{ report.status_label }}
 - 批次记录数：{{ report.batches | length }}。
 
 ## 确定性分析结果
 
 {% for batch in report.batches %}
-- `{{ batch.record.record_id }}`：均值 {{ batch.statistics.mean }}，样本数 {{ batch.statistics.sample_count }}，确定性初筛为 {{ batch.screening_decision.display_color.value }}；{{ batch.screening_decision.reason }}。
+- `{{ batch.record.record_id }}`：均值 {{ batch.statistics.mean }}，样本数 {{ batch.statistics.sample_count }}，确定性初筛为{{ report.screening_label(batch) }}；{{ report.screening_reason(batch) }}。
 {% else %}
 - 无可报告的确定性分析结果。
 {% endfor %}
@@ -19,10 +19,11 @@
 - 版本：`{{ report.rule_version }}`
 - SHA-256：`{{ report.rule_hash }}`
 - 来源：`{{ report.rule_source }}`
+- 材料适用范围：{{ report.rule_applicable_scope }}
 - 适用状态：{{ report.rule_confirmation_label }}
 
 {% for batch in report.batches %}
-- `{{ batch.record.record_id }}`：下限 {{ batch.lower_threshold if batch.lower_threshold is not none else "未配置" }}，上限 {{ batch.upper_threshold if batch.upper_threshold is not none else "未配置" }}。
+- `{{ batch.record.record_id }}`：下限 {{ batch.lower_threshold if batch.lower_threshold is not none else "无适用规则" }}，上限 {{ batch.upper_threshold if batch.upper_threshold is not none else "无适用规则" }}。
 {% endfor %}
 
 ## 已审核经验引用
@@ -42,7 +43,7 @@
 - 无 Knowledge 报告引用。
 {% endfor %}
 {% for batch in report.reviewed_batches %}
-- `{{ batch.record.record_id }}`：{{ batch.ai_review.rationale }}；辅助颜色 {{ batch.ai_review.display_color.value }}。
+- `{{ batch.record.record_id }}`：{{ batch.ai_review.rationale }}；辅助颜色{{ report.color_label(batch) }}。
 {% else %}
 - 无辅助服务复判记录。
 {% endfor %}

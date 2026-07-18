@@ -185,9 +185,23 @@ def _parse_date(value: object | None, fallback_year: int | None) -> date | None:
         match = pattern.match(text)
         if match:
             if fallback_year is None:
-                raise WorkbookStructureError("default_year is required for month/day dates")
+                return None
             return date(fallback_year, int(match.group("month")), int(match.group("day")))
     raise WorkbookStructureError(f"unsupported date value: {text!r}")
+
+
+def record_requires_default_year(record: BatchRecord) -> bool:
+    """Return whether a parsed record contains unresolved month/day dates."""
+
+    return any(
+        parsed is None
+        and raw is not None
+        and any(pattern.fullmatch(raw.strip()) is not None for pattern in _PARTIAL_DATE_PATTERNS)
+        for raw, parsed in (
+            (record.arrival_date_raw, record.arrival_date),
+            (record.test_date_raw, record.test_date),
+        )
+    )
 
 
 def _parse_weight_kg(value: object | None) -> Decimal | None:

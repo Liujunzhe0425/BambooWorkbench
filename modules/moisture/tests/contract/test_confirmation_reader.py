@@ -88,6 +88,38 @@ def test_confirmation_reader_rejects_duplicate_and_unknown_ids(tmp_path: Path) -
     }
 
 
+def test_confirmation_reader_can_ignore_framework_owned_service_consent(
+    tmp_path: Path,
+) -> None:
+    module_answer = {
+        "confirmation_id": "confirm-001",
+        "value": "2026",
+        "apply_to_batch": True,
+        "remember_mapping": False,
+    }
+    service_answer = {
+        "confirmation_id": "service-consent:ai-request-001",
+        "value": "拒绝",
+        "apply_to_batch": False,
+        "remember_mapping": False,
+    }
+    path = _write_bundle(
+        tmp_path / "confirmation.json",
+        answers=[module_answer, service_answer],
+    )
+
+    result = read_confirmation_bundle(
+        path,
+        root_job_id="draft-job-001",
+        expected_confirmation_ids={"confirm-001"},
+        ignored_confirmation_id_prefixes=("service-consent:",),
+    )
+
+    assert result.errors == ()
+    assert result.bundle is not None
+    assert [answer.confirmation_id for answer in result.bundle.answers] == ["confirm-001"]
+
+
 def test_confirmation_reader_returns_protocol_errors_for_invalid_or_missing_file(
     tmp_path: Path,
 ) -> None:

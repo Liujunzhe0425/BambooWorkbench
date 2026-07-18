@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 
 from moisture.adapters.rules.builtin_evaluators import evaluate_rules
 from moisture.application.run_result import InternalAnomaly, ReviewState
+from moisture.application.screening_presentation import (
+    screening_bounds,
+    screening_suggestion,
+)
 from moisture.contract.confirmation_reader import ConfirmationBundle
 from moisture.domain.enums import DisplayColor, ScreenStatus
 from moisture.domain.models import RuleHit, ScreeningDecision
@@ -24,6 +29,49 @@ class ConfirmationApplicationError(ValueError):
 class ConfirmationApplication:
     batches: tuple[WorkbookBatch, ...]
     anomalies: tuple[InternalAnomaly, ...]
+
+
+def extract_default_year_answer(
+    prompts: tuple[Mapping[str, object], ...],
+    bundle: ConfirmationBundle,
+) -> tuple[int | None, tuple[Mapping[str, object], ...], ConfirmationBundle]:
+    """Extract one strict job-level year answer and remove it from normal replay."""
+
+    year_prompts = tuple(prompt for prompt in prompts if prompt.get("field") == "default_year")
+    if not year_prompts:
+        return None, prompts, bundle
+    if len(year_prompts) != 1:
+        raise ConfirmationApplicationError("default year confirmation is ambiguous")
+    year_id = str(year_prompts[0].get("confirmation_id", ""))
+    matches = tuple(answer for answer in bundle.answers if answer.confirmation_id == year_id)
+    if len(matches) != 1:
+        raise ConfirmationApplicationError("default year answer is missing or duplicated")
+    answer = matches[0]
+    if answer.remember_mapping:
+        raise ConfirmationApplicationError("default year cannot be remembered as a mapping")
+    source = year_prompts[0].get("source")
+    source_file = source.get("source_file", "") if isinstance(source, Mapping) else ""
+    count_match = re.fullmatch(r"批量输入（(\d+) 个文件）", str(source_file))
+    if count_match is not None and int(count_match.group(1)) > 1 and not answer.apply_to_batch:
+        raise ConfirmationApplicationError("default year must be applied to the whole batch")
+    value = answer.value
+    if isinstance(value, bool):
+        raise ConfirmationApplicationError("default year must be a four digit year")
+    if isinstance(value, int):
+        year = value
+    elif isinstance(value, str) and len(value.strip()) == 4 and value.strip().isdigit():
+        year = int(value.strip())
+    else:
+        raise ConfirmationApplicationError("default year must be a four digit year")
+    if not 1900 <= year <= 2100:
+        raise ConfirmationApplicationError("default year is outside the supported range")
+    remaining_prompts = tuple(prompt for prompt in prompts if prompt.get("field") != "default_year")
+    remaining_bundle = ConfirmationBundle(
+        schema_version=bundle.schema_version,
+        job_id=bundle.job_id,
+        answers=tuple(item for item in bundle.answers if item.confirmation_id != year_id),
+    )
+    return year, remaining_prompts, remaining_bundle
 
 
 def _source(prompt: Mapping[str, object]) -> str:
@@ -173,6 +221,7 @@ def apply_confirmations(
             )
 
         decision = decisions[0] if decisions else ScreeningDecision(status=ScreenStatus.NORMAL)
+        lower_threshold, upper_threshold = screening_bounds(evaluation)
         for item in decisions:
             for hit in item.rule_hits:
                 identity = hashlib.sha256(
@@ -200,9 +249,13 @@ def apply_confirmations(
                 statistics=statistics,
                 screening_decision=decision,
                 final_display_color=decision.display_color,
-                review_suggestion=(
-                    "已按人工确认重算确定性结果" if decisions else "人工确认后未发现适用规则异常"
+                review_suggestion=screening_suggestion(
+                    decision.status,
+                    lower_threshold,
+                    upper_threshold,
                 ),
+                lower_threshold=lower_threshold,
+                upper_threshold=upper_threshold,
             )
         )
 

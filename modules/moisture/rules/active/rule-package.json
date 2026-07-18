@@ -5,7 +5,7 @@
   "rules_file": "rules.yaml",
   "rules_sha256": "15f9b33c8a46bb0576e0b9a9432711a3e36742d3966d7abed6a21d3d862c4bee",
   "source": "legacy d98433b defaults; owner and business approval recorded 2026-07-17",
-  "applicable_scope": "竹丝 and 原竹丝; all seasons",
+  "applicable_scope": "竹丝/原竹丝；全年",
   "customer_confirmation_status": "confirmed",
   "released_at": "2026-07-17T00:00:00+08:00",
   "module_version": "0.1.0"

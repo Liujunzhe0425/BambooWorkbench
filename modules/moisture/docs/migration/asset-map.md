@@ -2,7 +2,7 @@
 
 ## 1. 审计基线与覆盖证据
 
-- 旧仓库只读来源：`D:\codexprogram\竹丝水分检测`。
+- 旧仓库只读来源：`<旧仓库>`。
 - 固定提交：`d98433b489feafea7e19b0a4392e11a25c6b31b2`（`docs: record experience llm and review checkpoint`）。
 - 固定命令：`git -C <旧仓库> ls-tree -r --name-only d98433b489feafea7e19b0a4392e11a25c6b31b2`。
 - 全树共 113 个文件：本清单逐项审计 46 个 `moisture/src/**` 运行文件、24 个 `moisture/tests/**` 测试/fixture 文件和 14 个模块包资产，共 84 项；其余为 21 份客户原始 XLSX 和 8 份仓库说明/图片/忽略文件。

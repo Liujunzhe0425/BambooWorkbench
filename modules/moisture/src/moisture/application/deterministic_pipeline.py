@@ -7,7 +7,10 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 
-from moisture.adapters.excel.source_parser import ExcelSourceParser
+from moisture.adapters.excel.source_parser import (
+    ExcelSourceParser,
+    record_requires_default_year,
+)
 from moisture.adapters.experience.local_approved_repository import (
     ExperienceRepositoryError,
     LocalApprovedExperienceRepository,
@@ -16,13 +19,21 @@ from moisture.adapters.rules.builtin_evaluators import evaluate_rules
 from moisture.adapters.rules.package_loader import RulePackageLoader
 from moisture.application.ai_request_builder import candidates_from_batches
 from moisture.application.run_result import InternalAnomaly, ReviewState
+from moisture.application.screening_presentation import (
+    screening_bounds,
+    screening_suggestion,
+)
 from moisture.domain.enums import (
     ConfirmationState,
     DisplayColor,
     ReviewStatus,
     ScreenStatus,
 )
-from moisture.domain.models import AIReviewDecision, ScreeningDecision
+from moisture.domain.models import (
+    AIReviewDecision,
+    BusinessConfirmationIssue,
+    ScreeningDecision,
+)
 from moisture.domain.review import AIReviewCandidate
 from moisture.domain.rules import PendingRuleMatch, RulePackageSnapshot
 from moisture.domain.statistics import compute_batch_statistics
@@ -46,6 +57,7 @@ class DeterministicPipelineResult:
     ai_review_candidates: tuple[AIReviewCandidate, ...] = ()
     anomalies: tuple[InternalAnomaly, ...] = ()
     errors: tuple[str, ...] = ()
+    confirmation_issues: tuple[BusinessConfirmationIssue, ...] = ()
 
 
 def _module_root() -> Path:
@@ -94,9 +106,7 @@ class DeterministicPipeline:
         experience_root = self.module_root / "experience"
         if self._experience_repository is None and experience_root.is_dir():
             try:
-                self._experience_repository = LocalApprovedExperienceRepository(
-                    experience_root
-                )
+                self._experience_repository = LocalApprovedExperienceRepository(experience_root)
             except ExperienceRepositoryError:
                 self._experience_repository = None
 
@@ -146,6 +156,7 @@ class DeterministicPipeline:
         pending_matches: list[PendingRuleMatch] = []
         anomalies: list[InternalAnomaly] = []
         errors: list[str] = []
+        confirmation_issues: list[BusinessConfirmationIssue] = []
         seen: dict[str, int] = {}
         processed = skipped = failed = 0
 
@@ -208,6 +219,18 @@ class DeterministicPipeline:
                     lambda path: self._parser.parse(path, default_year=default_year),
                 )
                 record = checked.value
+                if default_year is None and record_requires_default_year(record):
+                    confirmation_issues.append(
+                        BusinessConfirmationIssue(
+                            kind="default_year",
+                            fingerprint=checked.identity.fingerprint,
+                            field="default_year",
+                            candidates=(),
+                            source_file=source,
+                            sheet=record.source_sheet,
+                            cell_or_range="arrival_date/test_date",
+                        )
+                    )
                 statistics = compute_batch_statistics(record)
                 evaluation = evaluate_rules(record, snapshot)
                 pending_matches.extend(evaluation.pending_matches)
@@ -237,6 +260,7 @@ class DeterministicPipeline:
                     if evaluation.decisions
                     else ScreeningDecision(status=ScreenStatus.NORMAL)
                 )
+                lower_threshold, upper_threshold = screening_bounds(evaluation)
                 display_color = decision.display_color
                 experience_references, experience_error = self._experience_citations(record)
                 if experience_error is not None and experience_error not in errors:
@@ -253,11 +277,17 @@ class DeterministicPipeline:
                     final_display_color=display_color,
                     confirmation_state=ConfirmationState.NOT_REQUIRED,
                     rule_version=snapshot.rule_version,
-                    review_suggestion=(
-                        "待业务确认规则未自动判定"
-                        if evaluation.pending_matches
-                        else "未发现已确认规则异常"
+                    review_suggestion=screening_suggestion(
+                        decision.status,
+                        lower_threshold,
+                        upper_threshold,
+                        pending=bool(evaluation.pending_matches),
                     ),
+                    rule_hash=snapshot.rules_sha256,
+                    rule_applicable_scope=snapshot.applicable_scope,
+                    rule_confirmation_status=snapshot.customer_confirmation_status,
+                    lower_threshold=lower_threshold,
+                    upper_threshold=upper_threshold,
                     experience_references=experience_references,
                 )
                 batches.append(batch)
@@ -300,4 +330,5 @@ class DeterministicPipeline:
             ai_review_candidates=candidates_from_batches(frozen_batches, snapshot),
             anomalies=tuple(anomalies),
             errors=tuple(errors),
+            confirmation_issues=tuple(confirmation_issues),
         )

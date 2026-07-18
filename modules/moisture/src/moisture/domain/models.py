@@ -47,6 +47,7 @@ ConfirmationKind = Literal[
     "department_mapping",
     "formula_conflict",
     "rule_scope",
+    "default_year",
 ]
 
 
@@ -70,7 +71,7 @@ class BusinessConfirmationIssue:
             raise ValueError("fingerprint must not be empty")
         if not self.field:
             raise ValueError("field must not be empty")
-        if not self.candidates:
+        if not self.candidates and self.kind != "default_year":
             raise ValueError("candidates must contain at least one item")
 
 
