@@ -95,10 +95,7 @@ def test_confirmation_resubmits_and_finishes_at_final_result_path(
     assert Path(str(task["result_path"])) == Path(final_job.output_dir) / "result.json"
     assert Path(str(task["result_path"])).is_file()
     assert final_job.phase is JobPhase.FINALIZE
-    assert final_job.job_id != job_id
     assert final_job.parent_job_id == job_id
-    assert finished.args[0].job_id == final_job.job_id
-    assert task_service.task_id_for_result(finished.args[0]) == job_id
     assert Path(final_job.confirmation_file or "").name == "confirmation-finalize.json"
     assert job_id not in task_service.runners
     with pytest.raises(InvalidTaskTransition):

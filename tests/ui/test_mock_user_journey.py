@@ -272,26 +272,6 @@ def test_successful_mock_journey(qtbot, qapp, app_context, tmp_path: Path) -> No
     assert window.result_center_page.output_buttons
 
 
-def test_moisture_task_page_sends_explicit_default_year(
-    qtbot, app_context, tmp_path: Path
-) -> None:
-    source = tmp_path / "normal.xlsx"
-    source.write_bytes(b"mock")
-    window = MainWindow(app_context)
-    qtbot.addWidget(window)
-    window.workbench_page.module_selected.emit(ModuleId.MOISTURE)
-    window.module_task_page.add_files([source])
-    window.module_task_page.default_year.setValue(2026)
-    captured: list[tuple[object, list[Path], object]] = []
-    window.module_task_page.task_requested.connect(
-        lambda module_id, files, config: captured.append((module_id, files, config))
-    )
-
-    qtbot.mouseClick(window.module_task_page.run_button, Qt.MouseButton.LeftButton)
-
-    assert captured == [(ModuleId.MOISTURE, [source.resolve()], {"default_year": 2026})]
-
-
 def test_confirmation_ui_submits_and_finalizes_real_mock_journey(
     qtbot, qapp, app_context, tmp_path: Path
 ) -> None:

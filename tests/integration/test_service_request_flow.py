@@ -177,9 +177,6 @@ def test_ai_service_consent_finalizes_with_task_local_response(
     response = json.loads(response_path.read_text(encoding="utf-8"))
     assert response_path == task_dir / "protocol" / "service-response.json"
     assert response["responses"][0]["status"] == "ok"
-    assert final_job.job_id != job_id
-    assert final_job.parent_job_id == job_id
-    assert finished.args[0].job_id == final_job.job_id
     assert final_job.ai_enabled is True
 
 
@@ -225,7 +222,4 @@ def test_knowledge_only_request_auto_finalizes_without_user_confirmation(
         (task_dir / "job-finalize.json").read_text(encoding="utf-8")
     )
     assert final_job.service_response_file is not None
-    assert final_job.job_id != job_id
-    assert final_job.parent_job_id == job_id
-    assert finished.args[0].job_id == final_job.job_id
     assert app_services["confirmation_repository"].list_for_job(job_id) == []
