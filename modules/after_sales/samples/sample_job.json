@@ -5,7 +5,7 @@
   "phase": "draft",
   "run_mode": "batch",
   "input_files": [
-    "D:\\BambooWorkbench\\modules\\after_sales\\samples\\input\\sample_after_sales.xlsx"
+    "D:\\BambooWorkbench\\modules\\after_sales\\tests\\fixtures\\samples\\input\\sample_after_sales.xlsx"
   ],
   "output_dir": "D:\\BambooWorkbench\\tasks\\sample-after-sales",
   "module_config_file": null,

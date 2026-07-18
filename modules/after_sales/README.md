@@ -89,6 +89,8 @@ run_module.bat self-check
 
 ## 验证
 
+模块自带的虚构 Excel 样例位于 `modules/after_sales/tests/fixtures/`，不包含真实企业数据。
+
 在仓库根目录运行：
 
 ```powershell
