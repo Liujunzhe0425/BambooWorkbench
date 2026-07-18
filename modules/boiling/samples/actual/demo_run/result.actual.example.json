@@ -22,7 +22,7 @@
       "message": "平均密度超出当前暂存阈值；该规则尚未获客户确认，不能作为正式合格判定。",
       "suggestion": "复核原始测量值，并由有权限人员确认密度阈值后再作正式判断。",
       "source": {
-        "source_file": "samples/input/02_density_observation.xlsx",
+        "source_file": "tests/fixtures/boiling/samples/input/02_density_observation.xlsx",
         "sheet": "水煮实验",
         "cell_or_range": null
       }
@@ -36,7 +36,7 @@
       "message": "平均膨胀率超出当前产品用途对应的暂存阈值；规则尚未获客户确认。",
       "suggestion": "复核产品用途及测量值，并由有权限人员确认正式阈值。",
       "source": {
-        "source_file": "samples/input/03_expansion_observation.xlsx",
+        "source_file": "tests/fixtures/boiling/samples/input/03_expansion_observation.xlsx",
         "sheet": "水煮实验",
         "cell_or_range": null
       }
@@ -50,7 +50,7 @@
       "message": "原表记录浸渍剥离检测不合格。",
       "suggestion": "保留原表结论并转人工复核；本模块不替代检测人员作正式判定。",
       "source": {
-        "source_file": "samples/input/04_peel_fail.xlsx",
+        "source_file": "tests/fixtures/boiling/samples/input/04_peel_fail.xlsx",
         "sheet": "水煮实验",
         "cell_or_range": null
       }
@@ -64,7 +64,7 @@
       "message": "缺少关键字段 samples，该文件未进入正常汇总统计。",
       "suggestion": "复核空表、未完成表或模板结构变化，并补齐原始记录。",
       "source": {
-        "source_file": "samples/input/07_empty_incomplete.xlsx",
+        "source_file": "tests/fixtures/boiling/samples/input/07_empty_incomplete.xlsx",
         "sheet": "水煮实验",
         "cell_or_range": null
       }
@@ -81,7 +81,7 @@
       "message": "样1 的原表值与模块复算值不一致。",
       "suggestion": "核对公式、单位和原始测量记录；在确认前同时保留两个值。",
       "source": {
-        "source_file": "samples/input/08_calculation_conflict.xlsx",
+        "source_file": "tests/fixtures/boiling/samples/input/08_calculation_conflict.xlsx",
         "sheet": "水煮实验",
         "cell_or_range": "F12"
       }
@@ -98,7 +98,7 @@
       "message": "样1 的原表值与模块复算值不一致。",
       "suggestion": "核对公式、单位和原始测量记录；在确认前同时保留两个值。",
       "source": {
-        "source_file": "samples/input/08_calculation_conflict.xlsx",
+        "source_file": "tests/fixtures/boiling/samples/input/08_calculation_conflict.xlsx",
         "sheet": "水煮实验",
         "cell_or_range": "H12"
       }
@@ -119,7 +119,7 @@
       "batch_applicable": false,
       "rememberable": false,
       "source": {
-        "source_file": "samples/input/08_calculation_conflict.xlsx",
+        "source_file": "tests/fixtures/boiling/samples/input/08_calculation_conflict.xlsx",
         "sheet": "水煮实验",
         "cell_or_range": "F12"
       }
@@ -138,7 +138,7 @@
       "batch_applicable": false,
       "rememberable": false,
       "source": {
-        "source_file": "samples/input/08_calculation_conflict.xlsx",
+        "source_file": "tests/fixtures/boiling/samples/input/08_calculation_conflict.xlsx",
         "sheet": "水煮实验",
         "cell_or_range": "H12"
       }
@@ -147,7 +147,7 @@
   "outputs": [
     {
       "type": "summary_excel",
-      "path": "samples/actual/demo_run/boiling_summary.xlsx",
+      "path": "tests/fixtures/boiling/samples/actual/demo_run/boiling_summary.xlsx",
       "label": "水煮实验汇总",
       "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     },
@@ -160,7 +160,7 @@
   ],
   "file_results": [
     {
-      "source_file": "samples/input/01_all_pass.xlsx",
+      "source_file": "tests/fixtures/boiling/samples/input/01_all_pass.xlsx",
       "fingerprint": "045fc91d4ed45461b89681927878c7ad2a6962e2de4a8efeef638a5c66c1ccb8",
       "status": "success",
       "extracted_records": 1,
@@ -169,7 +169,7 @@
       "error": null
     },
     {
-      "source_file": "samples/input/02_density_observation.xlsx",
+      "source_file": "tests/fixtures/boiling/samples/input/02_density_observation.xlsx",
       "fingerprint": "09900c8d5db89501d0e2e937dc05dd54e4acc0cf4b3750c6ebb762205dc85298",
       "status": "needs_confirmation",
       "extracted_records": 1,
@@ -178,7 +178,7 @@
       "error": null
     },
     {
-      "source_file": "samples/input/03_expansion_observation.xlsx",
+      "source_file": "tests/fixtures/boiling/samples/input/03_expansion_observation.xlsx",
       "fingerprint": "2c406684b97f171d9eb05d8dbb5e4b00663f0648eb118e134a7ad7f648e58054",
       "status": "needs_confirmation",
       "extracted_records": 1,
@@ -187,7 +187,7 @@
       "error": null
     },
     {
-      "source_file": "samples/input/04_peel_fail.xlsx",
+      "source_file": "tests/fixtures/boiling/samples/input/04_peel_fail.xlsx",
       "fingerprint": "9bf2d8d374c8c0fa6490fe5e57d78d3d5f2a5db71511e116a72d110622a71438",
       "status": "needs_confirmation",
       "extracted_records": 1,
@@ -196,7 +196,7 @@
       "error": null
     },
     {
-      "source_file": "samples/input/05_retest.xlsx",
+      "source_file": "tests/fixtures/boiling/samples/input/05_retest.xlsx",
       "fingerprint": "e2fe361d3eeb721f07dada965b4ee81d9f7abb68f87c1c534e10d999d96ea67b",
       "status": "success",
       "extracted_records": 1,
@@ -205,7 +205,7 @@
       "error": null
     },
     {
-      "source_file": "samples/input/06_three_samples.xlsx",
+      "source_file": "tests/fixtures/boiling/samples/input/06_three_samples.xlsx",
       "fingerprint": "60ded2d2f6ff9bc8b2bf56233585a50e2ed553fde5e43d5e00e51556db512690",
       "status": "success",
       "extracted_records": 1,
@@ -214,7 +214,7 @@
       "error": null
     },
     {
-      "source_file": "samples/input/07_empty_incomplete.xlsx",
+      "source_file": "tests/fixtures/boiling/samples/input/07_empty_incomplete.xlsx",
       "fingerprint": "c19d705372d253281150577038e3a0164495755ebab6ee7670d98cdda6965fb8",
       "status": "needs_confirmation",
       "extracted_records": 0,
@@ -229,7 +229,7 @@
       "error": null
     },
     {
-      "source_file": "samples/input/08_calculation_conflict.xlsx",
+      "source_file": "tests/fixtures/boiling/samples/input/08_calculation_conflict.xlsx",
       "fingerprint": "603761a3a3d38b127bf7bb46052958b375e3ac79e02ae020a44e4f57dd3933a4",
       "status": "needs_confirmation",
       "extracted_records": 1,
