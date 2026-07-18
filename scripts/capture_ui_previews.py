@@ -23,7 +23,7 @@ def main() -> int:
     output.mkdir(parents=True, exist_ok=True)
     application = create_application(["capture-ui-previews"])
     with tempfile.TemporaryDirectory(prefix="bamboo-ui-") as data_root:
-        context = build_context(Path(data_root))
+        context = build_context(Path(data_root), use_mocks=True)
         try:
             application.setStyleSheet(context.stylesheet)
             window = MainWindow(context)

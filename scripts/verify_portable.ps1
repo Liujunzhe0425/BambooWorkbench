@@ -23,6 +23,16 @@ foreach ($Item in $Required) {
     }
 }
 
+$SourceModules = Join-Path $Root 'modules'
+if (Test-Path -LiteralPath $SourceModules -PathType Container) {
+    Get-ChildItem -LiteralPath $SourceModules -Directory | ForEach-Object {
+        $Manifest = "modules\$($_.Name)\module.json"
+        if (-not (Test-Path -LiteralPath (Join-Path $Bundle $Manifest) -PathType Leaf)) {
+            throw "Missing packaged real module: $Manifest"
+        }
+    }
+}
+
 $Executable = Join-Path $Bundle 'BambooWorkbench.exe'
 $Process = Start-Process -FilePath $Executable -ArgumentList '--smoke-test' `
     -PassThru -WindowStyle Hidden
