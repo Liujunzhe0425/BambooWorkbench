@@ -10,6 +10,8 @@ DATAS = [
     (str(ROOT / "resources"), "resources"),
     (str(ROOT / "mock_modules"), "mock_modules"),
 ]
+if (ROOT / "modules").is_dir():
+    DATAS.append((str(ROOT / "modules"), "modules"))
 HIDDEN = collect_submodules("keyring.backends")
 APP_ICON = str(ROOT / "logo" / "BambooWorkbench.ico")
 

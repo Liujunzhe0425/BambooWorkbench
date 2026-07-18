@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import Qt, QTimer
 
-from app.bootstrap import build_context, create_application, resolve_resource_root
+from app.bootstrap import (
+    build_context,
+    create_application,
+    resolve_real_modules_root,
+    resolve_resource_root,
+)
 from core.contracts.enums import ModuleId
 from core.modules.registry import ModuleRegistry
 from ui.main_window import MainWindow
@@ -134,6 +139,92 @@ def test_resource_root_uses_pyinstaller_bundle_when_frozen(
     monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path / "bundle"), raising=False)
 
     assert resolve_resource_root() == (tmp_path / "bundle").resolve()
+
+
+def test_real_modules_root_prefers_bundled_modules(tmp_path: Path) -> None:
+    from core.platform.paths import AppPaths
+
+    resource_root = tmp_path / "bundle"
+    bundled_modules = resource_root / "modules"
+    bundled_modules.mkdir(parents=True)
+    paths = AppPaths.for_root(tmp_path / "data")
+
+    assert resolve_real_modules_root(resource_root, paths) == bundled_modules
+
+
+def test_real_modules_root_falls_back_to_local_modules(tmp_path: Path) -> None:
+    from core.platform.paths import AppPaths
+
+    resource_root = tmp_path / "bundle"
+    paths = AppPaths.for_root(tmp_path / "data")
+
+    assert resolve_real_modules_root(resource_root, paths) == paths.modules
+
+
+def test_build_context_defaults_to_real_modules(tmp_path: Path) -> None:
+    context = build_context(tmp_path / "production-default")
+    try:
+        assert context.registry.use_mocks is False
+    finally:
+        context.close()
+
+
+def test_main_uses_real_modules_by_default_and_mock_only_for_demo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.__main__ as entrypoint
+
+    selected_modes: list[bool] = []
+    application_arguments: list[list[str]] = []
+
+    class SignalProbe:
+        def connect(self, callback) -> None:
+            self.callback = callback
+
+        def disconnect(self, callback) -> None:
+            pass
+
+    class ApplicationProbe:
+        aboutToQuit = SignalProbe()
+
+        def setStyleSheet(self, stylesheet: str) -> None:
+            pass
+
+        def exec(self) -> int:
+            return 0
+
+    class ContextProbe:
+        stylesheet = "QMainWindow {}"
+
+        def close(self) -> None:
+            pass
+
+    class WindowProbe:
+        def __init__(self, context) -> None:
+            pass
+
+        def show(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        entrypoint,
+        "create_application",
+        lambda argv: application_arguments.append(argv) or ApplicationProbe(),
+    )
+    monkeypatch.setattr(
+        entrypoint,
+        "build_context",
+        lambda *args, **kwargs: selected_modes.append(kwargs["use_mocks"]) or ContextProbe(),
+    )
+    monkeypatch.setattr(entrypoint, "MainWindow", WindowProbe)
+
+    assert entrypoint.main(["bamboo-workbench"]) == 0
+    assert entrypoint.main(["bamboo-workbench", "--demo"]) == 0
+    assert selected_modes == [False, True]
+    assert application_arguments == [["bamboo-workbench"], ["bamboo-workbench"]]
 
 
 def test_theme_applies_approved_visual_identity(qapp, app_context) -> None:

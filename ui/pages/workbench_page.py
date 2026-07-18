@@ -18,6 +18,11 @@ class WorkbenchPage(QWidget):
 
     def __init__(self, registry: object) -> None:
         super().__init__()
+        installed_modules = tuple(registry.all())
+        installed_count = len(installed_modules)
+        real_count = sum(not module.is_mock for module in installed_modules)
+        mock_count = installed_count - real_count
+        missing_count = max(3 - installed_count, 0)
         self.setObjectName("page-workbench")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 24, 30, 28)
@@ -50,9 +55,13 @@ class WorkbenchPage(QWidget):
         self.product_label.setAccessibleName("产品名称：竹简工作台")
         hero_title = QLabel("让品质数据沿着竹节自然生长")
         hero_title.setObjectName("heroTitle")
-        hero_subtitle = QLabel(
-            "统一入口承载三个业务模块；当前为空框架，模块接入后即可直接处理文件并生成成果。"
-        )
+        if mock_count:
+            hero_message = "当前为显式演示模式，模拟模块仅用于界面与流程演示。"
+        elif real_count:
+            hero_message = f"已加载 {real_count} 个正式业务模块，可直接处理文件并生成成果。"
+        else:
+            hero_message = "当前未检测到正式业务模块，三个入口将保留为未安装占位状态。"
+        hero_subtitle = QLabel(f"统一入口承载三个业务模块；{hero_message}")
         hero_subtitle.setProperty("subtle", True)
         hero_subtitle.setWordWrap(True)
         hero_layout.addWidget(self.product_label)
@@ -94,16 +103,18 @@ class WorkbenchPage(QWidget):
         readiness_header = QHBoxLayout()
         readiness_title = QLabel("框架准备度")
         readiness_title.setProperty("metricTitle", True)
-        readiness_value = QLabel("基础界面 100%")
+        readiness_value = QLabel(f"模块接入 {installed_count}/3")
         readiness_value.setProperty("metricValue", True)
         readiness_header.addWidget(readiness_title)
         readiness_header.addStretch()
         readiness_header.addWidget(readiness_value)
         self.readiness_bar = QProgressBar()
         self.readiness_bar.setRange(0, 100)
-        self.readiness_bar.setValue(100)
+        self.readiness_bar.setValue(round(installed_count / 3 * 100))
         self.readiness_bar.setTextVisible(False)
-        badges = QLabel("三个模块占位   ·   统一接口   ·   本地闭环")
+        badges = QLabel(
+            f"正式 {real_count}   ·   演示 {mock_count}   ·   待接入 {missing_count}"
+        )
         badges.setProperty("smallPill", True)
         readiness_layout.addLayout(readiness_header)
         readiness_layout.addWidget(self.readiness_bar)
@@ -114,7 +125,7 @@ class WorkbenchPage(QWidget):
         today_header = QHBoxLayout()
         today_title = QLabel("今日任务")
         today_title.setProperty("metricTitle", True)
-        today_value = QLabel("等待模块接入")
+        today_value = QLabel("模块可用" if installed_count else "等待模块接入")
         today_value.setProperty("metricValue", True)
         today_header.addWidget(today_title)
         today_header.addStretch()
