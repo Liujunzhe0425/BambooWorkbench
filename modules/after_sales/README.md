@@ -111,9 +111,11 @@ Excel 还包含“分析图表”工作表，展示月度案件趋势、多标�
 
 模块自带的虚构 Excel 样例位于 `modules/after_sales/tests/fixtures/`，不包含真实企业数据。
 
-PR #16 的脱敏复验材料位于 `samples/acceptance/`，包含人工构造输入、模块生成的
-Excel、Markdown、结构化 JSON、脱敏 `result.json` 和“分析图表”工作表截图。该样例
-预期直接返回 `success`，三类金额分别为 1000、200、300 元，人工确认项为 0。
+PR #16 的人工构造脱敏输入位于
+`tests/fixtures/acceptance/pr16_acceptance_sample.xlsx`；`samples/acceptance/` 只保留
+Markdown、结构化 JSON、脱敏 `result.json` 和“分析图表”截图等非电子表格证据。
+运行生成的 Excel 只在本地或 CI 临时目录验证，不提交进 Git。该样例预期直接返回
+`success`，三类金额分别为 1000、200、300 元，人工确认项为 0。
 
 在仓库根目录运行：
 

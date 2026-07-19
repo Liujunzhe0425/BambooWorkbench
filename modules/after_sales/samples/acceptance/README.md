@@ -4,12 +4,13 @@
 
 ## 内容
 
-- `input/pr16_acceptance_sample.xlsx`：人工构造的脱敏售后申请表。
-- `output/after_sales_summary.xlsx`：模块生成的统计表，包含“分析图表”工作表。
+- `../../tests/fixtures/acceptance/pr16_acceptance_sample.xlsx`：人工构造的脱敏售后申请表；按仓库规则只存放在测试夹具目录。
 - `output/after_sales_analysis.md`：与 Excel 使用同一结构化统计结果生成的分析报告。
 - `output/after_sales_records.json`：可外发的脱敏结构化记录。
 - `output/result.json`：路径字段已脱敏为文件名的任务结果。
-- `output/analysis_charts.png`：Excel“分析图表”工作表的复验截图。
+- `output/analysis_charts.png`：本地临时生成 Excel 后取得的“分析图表”工作表复验截图。
+
+运行生成的 `after_sales_summary.xlsx` 不跟踪进 Git；本地测试或 CI 会在临时目录生成并验证它。
 
 ## 预期结果
 
@@ -17,6 +18,6 @@
 - 品牌：桃花江；报修日期：2026-05-10；问题类型：性能、加工；案件总数：1。
 - 企业售后成本：1000 元；内部责任扣款：200 元；外部承担金额：300 元，三类金额互不混加。
 - 已解决 1 个；Excel、Markdown 与 JSON 数字一致。
-- 工作簿包含 6 个工作表和 3 个原生图表；公式错误扫描结果为 0。
+- 临时生成的工作簿包含 6 个工作表和 3 个原生图表；公式错误扫描结果为 0。
 
 样例只用于验证模块合同、统计口径、图表和输出脱敏，不作为责任认定、财务入账、赔偿审批或正式结案依据。

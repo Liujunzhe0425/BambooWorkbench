@@ -9,6 +9,9 @@ from zipfile import ZipFile
 import openpyxl
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
+PR16_ACCEPTANCE_FIXTURE = (
+    MODULE_ROOT / "tests" / "fixtures" / "acceptance" / "pr16_acceptance_sample.xlsx"
+)
 sys.path.insert(0, str(MODULE_ROOT / "src"))
 
 from after_sales_agent.analysis import build_analysis_metrics  # noqa: E402
@@ -88,6 +91,35 @@ def test_offline_complete_file_succeeds_without_api_confirmation(tmp_path: Path)
     )
     assert records[0]["analysis_status"] == "离线规则分析完成"
     assert records[0]["enterprise_cost_amount"] == 1000
+
+
+def test_pr16_sanitized_fixture_preserves_second_round_baseline(tmp_path: Path) -> None:
+    output = tmp_path / "pr16-fixture-output"
+    result = _run(tmp_path, _job([PR16_ACCEPTANCE_FIXTURE], output))
+    records = json.loads((output / "after_sales_records.json").read_text(encoding="utf-8"))
+    record = records[0]
+
+    assert result["status"] == "success"
+    assert result["summary"] == {
+        "input_count": 1,
+        "processed_count": 1,
+        "skipped_count": 0,
+        "failed_count": 0,
+        "anomaly_count": 0,
+        "confirmation_count": 0,
+    }
+    assert {item["type"] for item in result["outputs"]} == {
+        "summary_excel",
+        "records_json",
+        "analysis_markdown",
+    }
+    assert record["brand"] == "桃花江"
+    assert record["complaint_date"] == "2026-05-10"
+    assert record["issue_types"] == ["性能", "加工"]
+    assert record["enterprise_cost_amount"] == 1000
+    assert record["internal_accountability_amount"] == 200
+    assert record["external_borne_amount"] == 300
+    assert record["resolution_status"] == "已解决"
 
 
 def test_offline_batch_never_creates_api_config_confirmations(tmp_path: Path) -> None:
