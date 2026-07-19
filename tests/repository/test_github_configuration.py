@@ -18,6 +18,10 @@ def test_quality_workflow_runs_windows_repository_gate() -> None:
         encoding="utf-8"
     )
     assert "Get-ChildItem -Path modules -Filter requirements.txt" in run_steps
+    assert "-m venv .venv" in run_steps
+    assert ".\\.venv\\Scripts\\python.exe" in run_steps
+    assert "BAMBOO_PYTHON=$RepoPython" in run_steps
+    assert "BAMBOO_MODULE_PYTHON=$RepoPython" in run_steps
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["jobs"]["quality"]["env"]["PYTHONUTF8"] == "1"
 
@@ -49,6 +53,11 @@ def test_package_workflow_is_manual_or_tag_only() -> None:
         "scripts/prepare_release.ps1",
     ):
         assert command in run_steps
+    assert "-m venv .venv" in run_steps
+    assert ".\\.venv\\Scripts\\python.exe" in run_steps
+    assert "BAMBOO_PYTHON=$RepoPython" in run_steps
+    assert "BAMBOO_MODULE_PYTHON=$RepoPython" in run_steps
+    assert "Get-ChildItem -Path modules -Filter requirements.txt" in run_steps
 
 
 def test_workflows_pin_only_github_owned_actions() -> None:
