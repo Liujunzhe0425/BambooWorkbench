@@ -33,8 +33,8 @@ modules\boiling\run_module.bat run --job D:\absolute\path\job.json
 
 ## 任务阶段
 
-- `draft`：执行解析、复算和观察；产品用途缺失或原表/复算冲突时返回人工确认项。
-- `finalize`：从 `confirmation_file` 读取确认答案；产品用途支持一次确认后批量应用。
+- `draft`：执行解析、复算和观察，一次性返回当前可确定的人工确认项。
+- `finalize`：完整消费 `confirmation_file`；产品用途支持一次确认后批量应用，依赖该答案新派生且不阻断成果的事项转为异常/观察项，不再发起第二轮确认。
 
 规则版本为 `2026.07.18-v0.1`：每个有效试件密度须在 `1.1～1.3 g/cm³`（含边界），密度差须 `≤0.1 g/cm³`（含边界）；膨胀率按产品用途执行。墙板/栏杆 `>6.5% 且 <8%` 在本版转人工复核，不自动标色。具体规则和权限边界见 `docs/`。
 
@@ -49,6 +49,8 @@ modules\boiling\run_module.bat run --job D:\absolute\path\job.json
 - `boiling_analysis.md`：便于人工复核的文字摘要。
 - `boiling_records.json`：包含四类业务状态、原表值、复算值、规则观察和冲突信息的机器可读记录。
 
+三类正式业务成果只记录来源文件名、工作表和单元格，不记录用户电脑绝对路径；`result.json` 仍按框架合同保留输入和输出绝对路径。
+
 ## 验证
 
 在仓库根目录执行：
@@ -59,4 +61,4 @@ python -m pytest modules/boiling/tests -q
 powershell -ExecutionPolicy Bypass -File scripts/verify_repo.ps1
 ```
 
-脱敏样例位于仓库 `modules/boiling/tests/fixtures/samples/input/`，对应机器预期位于 `samples/expected/`。测试还会动态构造 41 份脱敏历史结构回归样本并校验输入 SHA-256 未变化。正式交付不包含真实企业 Excel、运行日志、数据库、密钥、客户路径或接口响应。
+脱敏样例位于仓库 `modules/boiling/tests/fixtures/samples/input/`，对应机器预期位于 `samples/expected/`。测试还会动态构造 41 份脱敏历史结构回归样本（39 份纳入统计、2 份信息不足），校验 processed/failed/skipped 总数守恒及输入 SHA-256 未变化，并通过真实 `TaskService` 验证一次确认闭环。正式交付不包含真实企业 Excel、运行日志、数据库、密钥、客户路径或接口响应。

@@ -72,10 +72,10 @@ SAMPLE_PATTERN = re.compile(
 MISSING_PLACEHOLDERS = {"", "/", "／", "-", "—"}
 
 
-def emit(message, percent=0, event_type="progress"):
+def emit(message, percent=0):
     print(
         json.dumps(
-            {"type": event_type, "percent": percent, "message": message},
+            {"type": "progress", "percent": percent, "message": message},
             ensure_ascii=False,
         ),
         flush=True,
@@ -88,6 +88,33 @@ def sha256_file(path):
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def stable_input_scope(input_files):
+    """Return a path-independent identifier shared by draft and finalize snapshots."""
+    fingerprints = []
+    for raw_path in input_files:
+        path = Path(raw_path)
+        try:
+            token = sha256_file(path) if path.is_file() else f"missing:{path.name}"
+        except OSError:
+            token = f"unreadable:{path.name}"
+        fingerprints.append(token)
+    material = "\n".join(sorted(fingerprints)).encode("utf-8")
+    return hashlib.sha256(material).hexdigest()[:16]
+
+
+def sanitize_business_value(value, key=None):
+    """Remove machine-local paths from formal business deliverables."""
+    if isinstance(value, dict):
+        return {
+            item_key: sanitize_business_value(item, item_key) for item_key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [sanitize_business_value(item, key) for item in value]
+    if key == "source_file" and isinstance(value, str):
+        return Path(value).name
+    return value
 
 
 def as_number(value):
@@ -1463,8 +1490,8 @@ def write_business_records(records, excluded_records, output_path, rules):
             "信息不足": "空表、未完成表或无可计算试件，未纳入正常统计。",
             "待确认": "产品用途或数据/结论冲突需要人工确认。",
         },
-        "records": records,
-        "excluded_records": excluded_records,
+        "records": sanitize_business_value(records),
+        "excluded_records": sanitize_business_value(excluded_records),
     }
     Path(output_path).write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
@@ -1604,6 +1631,22 @@ def product_usage_confirmation(record, scope_id):
     }
 
 
+def unresolved_finalize_anomaly(record, fingerprint, confirmation):
+    confirmation_id = confirmation["confirmation_id"]
+    stable_suffix = hashlib.sha256(confirmation_id.encode("utf-8")).hexdigest()[:12]
+    return {
+        "anomaly_id": f"A-FINALIZE-{stable_suffix}",
+        "severity": "warning",
+        "field": confirmation.get("field", "manual_review"),
+        "value": confirmation.get("suggested_value"),
+        "rule_id": "BOILING-FINALIZE-NONBLOCKING-001",
+        "message": confirmation.get("reason", "最终阶段出现需要人工复核的观察项。"),
+        "suggestion": "本次结果已保留为非阻断观察项；如需调整业务结论，请在业务复核流程中处理。",
+        "source": confirmation.get("source")
+        or source_ref(record["source_file"], record["source_sheet"]),
+    }
+
+
 def run_job(job_path):
     try:
         job = load_json(job_path, "任务JSON")
@@ -1634,7 +1677,8 @@ def run_job(job_path):
     excluded_records = []
     seen = set()
     usage_prompt_added = False
-    scope_id = as_text(job.get("parent_job_id")) or job["job_id"]
+    is_finalize = job["phase"] == "finalize"
+    scope_id = stable_input_scope(job["input_files"])
     answer_map = answers["by_id"]
     batch_usage = answers["batch_usage"]
     emit("任务开始", 0)
@@ -1682,6 +1726,7 @@ def run_job(job_path):
                     extracted_records = 1
                     result["summary"]["processed_count"] += 1
                 else:
+                    finalize_anomalies = []
                     if is_missing_value(record["product_usage"]):
                         record["product_usage"] = ""
                     batch_confirmation_id = f"C-PRODUCT-USAGE-BATCH-{scope_id}"
@@ -1698,19 +1743,33 @@ def run_job(job_path):
                             field for field in record["missing_fields"] if field != "product_usage"
                         ]
                     elif is_missing_value(record["product_usage"]):
-                        if not usage_prompt_added:
+                        if not is_finalize and not usage_prompt_added:
                             result["confirmations"].append(
                                 product_usage_confirmation(record, scope_id)
                             )
                             usage_prompt_added = True
-                        usage_confirmation_pending = True
+                        if is_finalize:
+                            missing_usage = product_usage_confirmation(record, scope_id)
+                            finalize_anomalies.append(
+                                unresolved_finalize_anomaly(record, fingerprint, missing_usage)
+                            )
+                        else:
+                            usage_confirmation_pending = True
                     anomalies, confirmations = evaluate_record(record, rules, fingerprint)
-                    result["anomalies"].extend(anomalies)
-                    anomaly_count += len(anomalies)
                     pending_confirmations = [
                         item for item in confirmations if item["confirmation_id"] not in answer_map
                     ]
-                    result["confirmations"].extend(pending_confirmations)
+                    if is_finalize:
+                        finalize_anomalies.extend(
+                            unresolved_finalize_anomaly(record, fingerprint, item)
+                            for item in pending_confirmations
+                        )
+                        pending_confirmations = []
+                    else:
+                        result["confirmations"].extend(pending_confirmations)
+                    anomalies.extend(finalize_anomalies)
+                    result["anomalies"].extend(anomalies)
+                    anomaly_count += len(anomalies)
                     if usage_confirmation_pending or pending_confirmations:
                         record["business_status"] = "待确认"
                     elif anomalies:
@@ -1815,7 +1874,7 @@ def run_job(job_path):
     except OSError as exc:
         print(f"无法写入 result.json: {exc}", file=sys.stderr)
         return 3
-    emit(f"任务完成: {result['status']}", 100, "complete")
+    emit(f"任务完成: {result['status']}", 100)
     return 3 if result["status"] == "failed" else 0
 
 
@@ -1865,7 +1924,7 @@ def self_check():
         if record["product"] != "脱敏测试产品" or len(record["samples"]) != 1:
             print("self-check failed", file=sys.stderr)
             return 4
-    emit("self-check passed", 100, "self-check")
+    emit("self-check passed", 100)
     return 0
 
 
@@ -1878,7 +1937,7 @@ def main():
     run_parser.add_argument("--job", required=True)
     args = parser.parse_args()
     if args.command == "version":
-        emit(f"{MODULE_ID} {MODULE_VERSION}", 100, "version")
+        emit(f"{MODULE_ID} {MODULE_VERSION}", 100)
         return 0
     if args.command == "self-check":
         return self_check()

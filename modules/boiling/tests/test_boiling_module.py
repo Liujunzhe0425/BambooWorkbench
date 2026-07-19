@@ -2,11 +2,25 @@ import datetime as dt
 import hashlib
 import importlib.util
 import json
+import os
+import re
+import subprocess
+import sys
 from pathlib import Path
 
 import openpyxl
 
+from core.confirmations.service import ConfirmationService
+from core.contracts.confirmation import ConfirmationAnswer
+from core.contracts.enums import ModuleId
+from core.contracts.manifest import ModuleManifest
 from core.contracts.result import ModuleResult
+from core.modules.registry import ModuleRegistry, RegisteredModule
+from core.platform.paths import AppPaths
+from core.storage.database import Database
+from core.storage.repositories.confirmations import ConfirmationRepository
+from core.storage.repositories.tasks import TaskRepository
+from core.tasks.service import TaskService
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 MODULE_SPEC = importlib.util.spec_from_file_location(
@@ -151,6 +165,18 @@ def make_labeled_sample(
 
 def load_result(output):
     return json.loads((Path(output) / "result.json").read_text(encoding="utf-8"))
+
+
+def excel_values(path):
+    workbook = openpyxl.load_workbook(path, data_only=False)
+    try:
+        return [
+            [cell.value for cell in row]
+            for sheet in workbook.worksheets
+            for row in sheet.iter_rows()
+        ]
+    finally:
+        workbook.close()
 
 
 def test_extract_sample(tmp_path):
@@ -525,6 +551,9 @@ def test_product_usage_confirmation_is_created_once_and_applied_to_batch(tmp_pat
     assert boiling_module.run_job(final_job_path) == 0
     records = json.loads((final_output / "boiling_records.json").read_text(encoding="utf-8"))
     assert {record["product_usage"] for record in records["records"]} == {"家具"}
+    result = load_result(final_output)
+    assert result["status"] in {"success", "partial_success", "failed"}
+    assert result["confirmations"] == []
 
 
 def test_normal_and_incomplete_files_share_one_batch(tmp_path):
@@ -561,7 +590,7 @@ def test_41_file_sanitized_history_regression_and_source_hashes(tmp_path):
     source_dir = tmp_path / "history"
     source_dir.mkdir()
     paths = []
-    for index in range(33):
+    for index in range(37):
         path = source_dir / f"FIVE-{index:02d}.xlsx"
         make_labeled_sample(
             path,
@@ -570,7 +599,7 @@ def test_41_file_sanitized_history_regression_and_source_hashes(tmp_path):
             batch_no=f"FIVE-{index:02d}",
         )
         paths.append(path)
-    for index in range(7):
+    for index in range(2):
         path = source_dir / f"FOUR-{index:02d}.xlsx"
         make_labeled_sample(
             path,
@@ -579,9 +608,14 @@ def test_41_file_sanitized_history_regression_and_source_hashes(tmp_path):
             batch_no=f"FOUR-{index:02d}",
         )
         paths.append(path)
-    incomplete = source_dir / "INCOMPLETE.xlsx"
-    make_sample(incomplete, include_samples=False)
-    paths.append(incomplete)
+    for index in range(2):
+        incomplete = source_dir / f"INCOMPLETE-{index + 1}.xlsx"
+        make_sample(incomplete, include_samples=False)
+        incomplete_book = openpyxl.load_workbook(incomplete)
+        incomplete_book.active["A2"] = f"INCOMPLETE-{index + 1}"
+        incomplete_book.save(incomplete)
+        incomplete_book.close()
+        paths.append(incomplete)
     before = {path.name: digest(path) for path in paths}
     output = tmp_path / "output"
     job_path = tmp_path / "job.json"
@@ -593,9 +627,13 @@ def test_41_file_sanitized_history_regression_and_source_hashes(tmp_path):
     result = load_result(output)
     assert result["summary"]["input_count"] == 41
     assert len(result["file_results"]) == 41
+    assert result["summary"]["input_count"] == sum(
+        result["summary"][key] for key in ("processed_count", "skipped_count", "failed_count")
+    )
     records = json.loads((output / "boiling_records.json").read_text(encoding="utf-8"))
     assert sum(len(record["samples"]) for record in records["records"]) == 193
-    assert len(records["excluded_records"]) == 1
+    assert len(records["records"]) == 39
+    assert len(records["excluded_records"]) == 2
     assert before == {path.name: digest(path) for path in paths}
 
 
@@ -635,3 +673,241 @@ def test_all_sanitized_samples_match_machine_expected_results(tmp_path):
         }
         for key, value in actual.items():
             assert expected[key] == value, f"{sample.name}: {key}"
+
+
+def test_stdout_contains_only_progress_protocol_events(tmp_path):
+    sample = tmp_path / "protocol.xlsx"
+    output = tmp_path / "output"
+    job_path = tmp_path / "job.json"
+    make_labeled_sample(sample)
+    job_path.write_text(json.dumps(make_job(sample, output), ensure_ascii=False), encoding="utf-8")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            str(MODULE_ROOT / "src" / "boiling_module.py"),
+            "run",
+            "--job",
+            str(job_path),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONUTF8": "1"},
+    )
+
+    assert completed.returncode == 0
+    assert completed.stderr == ""
+    events = [json.loads(line) for line in completed.stdout.splitlines()]
+    assert events
+    assert all(event["type"] == "progress" for event in events)
+    assert events[-1]["percent"] == 100
+
+
+def test_finalize_closes_usage_and_dependent_conclusion_conflicts_in_one_round(tmp_path):
+    sample = tmp_path / "combined-conflicts.xlsx"
+    make_labeled_sample(
+        sample,
+        density=1.45,
+        expansion=0.10,
+        product_usage="",
+        conclusion="密度检测合格，2h膨胀率检测合格，浸渍剥离检测合格",
+    )
+    draft_output = tmp_path / "draft"
+    draft_job_path = tmp_path / "draft-job.json"
+    draft_job_path.write_text(
+        json.dumps(make_job(sample, draft_output), ensure_ascii=False), encoding="utf-8"
+    )
+    assert boiling_module.run_job(draft_job_path) == 0
+    draft_result = load_result(draft_output)
+    assert {item["field"] for item in draft_result["confirmations"]} >= {
+        "product_usage",
+        "密度",
+    }
+
+    answers = []
+    for prompt in draft_result["confirmations"]:
+        value = "家具" if prompt["field"] == "product_usage" else prompt["options"][0]
+        answers.append(
+            {
+                "confirmation_id": prompt["confirmation_id"],
+                "value": value,
+                "apply_to_batch": prompt["field"] == "product_usage",
+                "remember_mapping": False,
+            }
+        )
+    confirmation_path = tmp_path / "confirmation.json"
+    confirmation_path.write_text(
+        json.dumps({"job_id": "TEST-JOB-001", "answers": answers}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    final_output = tmp_path / "final"
+    final_job = make_job(
+        sample,
+        final_output,
+        phase="finalize",
+        parent_job_id="TEST-JOB-001",
+        confirmation_file=str(confirmation_path),
+    )
+    final_job["job_id"] = "TEST-JOB-002"
+    final_job_path = tmp_path / "final-job.json"
+    final_job_path.write_text(json.dumps(final_job, ensure_ascii=False), encoding="utf-8")
+    assert boiling_module.run_job(final_job_path) == 0
+    result = load_result(final_output)
+
+    assert result["status"] == "partial_success"
+    assert result["confirmations"] == []
+    assert {item["field"] for item in result["anomalies"]} >= {"密度", "膨胀率"}
+
+
+def test_repeated_input_and_answers_have_stable_ids_and_business_outputs(tmp_path):
+    sample = tmp_path / "stable.xlsx"
+    make_labeled_sample(sample, product_usage="")
+    draft_results = []
+    for index in (1, 2):
+        output = tmp_path / f"draft-{index}"
+        job = make_job(sample, output)
+        job["job_id"] = f"DRAFT-{index}"
+        job_path = tmp_path / f"draft-{index}.json"
+        job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+        assert boiling_module.run_job(job_path) == 0
+        draft_results.append(load_result(output))
+    assert [item["confirmation_id"] for item in draft_results[0]["confirmations"]] == [
+        item["confirmation_id"] for item in draft_results[1]["confirmations"]
+    ]
+
+    confirmation_id = draft_results[0]["confirmations"][0]["confirmation_id"]
+    confirmation_path = tmp_path / "stable-confirmation.json"
+    confirmation_path.write_text(
+        json.dumps(
+            {
+                "job_id": "DRAFT-1",
+                "answers": [
+                    {
+                        "confirmation_id": confirmation_id,
+                        "value": "家具",
+                        "apply_to_batch": True,
+                        "remember_mapping": False,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    final_results = []
+    final_outputs = []
+    for index in (1, 2):
+        output = tmp_path / f"final-{index}"
+        job = make_job(
+            sample,
+            output,
+            phase="finalize",
+            parent_job_id="DRAFT-1",
+            confirmation_file=str(confirmation_path),
+        )
+        job["job_id"] = f"FINAL-{index}"
+        job_path = tmp_path / f"final-{index}.json"
+        job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+        assert boiling_module.run_job(job_path) == 0
+        final_results.append(load_result(output))
+        final_outputs.append(output)
+
+    assert final_results[0]["status"] == final_results[1]["status"]
+    assert [item["anomaly_id"] for item in final_results[0]["anomalies"]] == [
+        item["anomaly_id"] for item in final_results[1]["anomalies"]
+    ]
+    assert (final_outputs[0] / "boiling_records.json").read_text(encoding="utf-8") == (
+        final_outputs[1] / "boiling_records.json"
+    ).read_text(encoding="utf-8")
+    assert (final_outputs[0] / "boiling_analysis.md").read_text(encoding="utf-8") == (
+        final_outputs[1] / "boiling_analysis.md"
+    ).read_text(encoding="utf-8")
+    assert excel_values(final_outputs[0] / "boiling_summary.xlsx") == excel_values(
+        final_outputs[1] / "boiling_summary.xlsx"
+    )
+
+
+def test_formal_business_outputs_do_not_leak_absolute_windows_paths(tmp_path):
+    sample = tmp_path / "path-scan.xlsx"
+    output = tmp_path / "output"
+    job_path = tmp_path / "job.json"
+    make_labeled_sample(sample)
+    job_path.write_text(json.dumps(make_job(sample, output), ensure_ascii=False), encoding="utf-8")
+    assert boiling_module.run_job(job_path) == 0
+    absolute_path = re.compile(r"(?i)[a-z]:[\\/]")
+
+    for path in (output / "boiling_analysis.md", output / "boiling_records.json"):
+        assert not absolute_path.search(path.read_text(encoding="utf-8")), path.name
+    workbook = openpyxl.load_workbook(output / "boiling_summary.xlsx", data_only=False)
+    try:
+        leaked = [
+            cell.value
+            for sheet in workbook.worksheets
+            for row in sheet.iter_rows()
+            for cell in row
+            if isinstance(cell.value, str) and absolute_path.search(cell.value)
+        ]
+    finally:
+        workbook.close()
+    assert leaked == []
+
+
+def test_real_task_service_closes_after_one_confirmation_round(qtbot, tmp_path):
+    sample = tmp_path / "task-service.xlsx"
+    make_labeled_sample(sample, product_usage="")
+    paths = AppPaths.for_root(tmp_path / "app-data")
+    database = Database.open(paths)
+    database.migrate()
+    task_repository = TaskRepository(database)
+    confirmation_repository = ConfirmationRepository(database)
+    registry = ModuleRegistry(MODULE_ROOT.parent, tmp_path / "unused-mocks", use_mocks=False)
+    manifest = ModuleManifest.model_validate_json(
+        (MODULE_ROOT / "module.json").read_text(encoding="utf-8")
+    )
+    registry._modules[ModuleId.BOILING] = RegisteredModule(
+        manifest=manifest,
+        path=MODULE_ROOT,
+        is_mock=False,
+        health="healthy",
+    )
+    service = TaskService(
+        paths=paths,
+        registry=registry,
+        task_repository=task_repository,
+        confirmation_repository=confirmation_repository,
+    )
+    try:
+        with qtbot.waitSignal(service.needs_confirmation, timeout=30_000) as waiting:
+            job_id = service.create_and_start(ModuleId.BOILING, [sample])
+        draft_result = waiting.args[1]
+        prompt = next(item for item in draft_result.confirmations if item.field == "product_usage")
+        confirmation_service = ConfirmationService(
+            paths,
+            confirmation_repository,
+            task_repository,
+        )
+        bundle_path = confirmation_service.submit(
+            job_id,
+            [
+                ConfirmationAnswer(
+                    confirmation_id=prompt.confirmation_id,
+                    value="家具",
+                    apply_to_batch=True,
+                )
+            ],
+        )
+        with qtbot.waitSignal(service.finished, timeout=30_000) as finished:
+            service.finalize(job_id, bundle_path)
+        final_result = finished.args[0]
+        assert final_result.status.value == "success"
+        assert final_result.confirmations == []
+        assert {item.type for item in final_result.outputs} == {
+            "summary_excel",
+            "analysis_report",
+            "business_records",
+        }
+    finally:
+        service.shutdown()
+        database.close()
