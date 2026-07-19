@@ -6,6 +6,7 @@ from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
+from moisture.adapters.rules import package_loader
 from moisture.adapters.rules.package_loader import (
     RulePackageIntegrityError,
     RulePackageLoader,
@@ -14,6 +15,14 @@ from moisture.adapters.rules.package_loader import (
 
 FIXTURES = Path(__file__).parents[2] / "fixtures" / "rule_packages"
 ACTIVE = Path(__file__).parents[3] / "rules" / "active"
+
+
+def test_default_schema_uses_runtime_module_root(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(package_loader, "runtime_module_root", lambda: tmp_path)
+
+    loader = RulePackageLoader()
+
+    assert loader.schema_path == tmp_path / "schemas" / "rule-package.schema.json"
 
 
 def test_loader_validates_exact_rules_file_bytes_and_freezes_snapshot() -> None:

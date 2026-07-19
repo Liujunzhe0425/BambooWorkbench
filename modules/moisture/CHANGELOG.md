@@ -2,6 +2,23 @@
 
 ## 0.1.0
 
+### 第三轮整改 — 独立便携运行时（进行中）
+
+- 新增 `build_portable_runtime.ps1`：使用仓库 `.venv` 中 PyInstaller onedir 构建
+  `BambooMoistureModule.exe`，包含 schemas、rules、experience、templates 及 CLI 依赖。
+- `run_module.bat` 新增 `BAMBOO_MODULE_EXECUTABLE` 最高优先级，并自动发现
+  `runtime\BambooMoistureModule.exe`（随模块交付的本地冻结程序）。
+- `runtime_paths.py` 支持 frozen 模式：`sys.frozen` 时从 `sys._MEIPASS` 解析资产根目录。
+- 构建钩子实施仓库边界检查（Assert-RepositoryPath）、安全删除（Remove-SafeTree）
+  和原子替换（`.runtime.incoming` / `.runtime.previous`），失败时回滚。
+- 新增便携运行时构建边界测试 `test_portable_runtime_build.py`（34 项）。
+- BAT 继续禁止裸 `python`、`py` 和系统 Python 回退；源码开发模式不退化。
+
+> 真实 portable 构建验证和无 Python 环境 draft/finalize 闭环待 Codex 在 R3-C3 执行。
+> 以上为已实施的代码变更，不声称 portable 端到端验收已通过。
+
+### 初始版本
+
 - 新增 BambooWorkbench 模块合同、`version`、`self-check` 与 `run --job`。
 - 迁移已验证的水分公式、统计、Excel 解析、规则评估、经验检索和报告生成语义。
 - 新增确定性批处理、去重、失败隔离、XLSX/Markdown/result 原子输出。

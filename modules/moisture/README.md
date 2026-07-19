@@ -5,7 +5,17 @@ BambooWorkbench 竹丝水分检测模块 v0.1.0。模块通过主框架 Registry
 业务确认项以及受控的 knowledge/AI service request。模块不直接访问网络、
 Provider、数据库或凭据。
 
-## 环境与安装
+## 运行方式
+
+模块支持两种运行模式：
+
+### 客户便携版 / 安装版（不需要 Python）
+
+客户电脑上通过 BambooWorkbench 安装器或便携包分发的版本包含冻结的
+`runtime/BambooMoistureModule.exe`，`run_module.bat` 自动发现并使用，
+客户无需安装 Python 或任何依赖。
+
+### 源码开发环境
 
 - Windows
 - Python 3.11 或更高版本（当前仓库同时在 Python 3.12 验证）
@@ -18,9 +28,21 @@ Provider、数据库或凭据。
 .\.venv\Scripts\python.exe -m pip install -r modules\moisture\requirements.txt
 ```
 
-不得使用裸 `python`、`py`、系统 Python 或全局安装的依赖。启动器选择解释器的
-顺序为 `BAMBOO_MODULE_PYTHON`、已激活的 `VIRTUAL_ENV`、仓库 `.venv`、模块
-本地 `.venv`；不会从 PATH 盲选系统 Python。
+不得使用裸 `python`、`py`、系统 Python 或全局安装的依赖。
+
+### 启动器解释器选择顺序
+
+`run_module.bat` 按以下优先级选择运行时：
+
+1. `BAMBOO_MODULE_EXECUTABLE`（显式指定冻结 EXE，最高优先级）；
+2. `runtime\BambooMoistureModule.exe`（随模块交付的本地冻结程序）；
+3. `BAMBOO_MODULE_PYTHON`（显式指定 Python 解释器）；
+4. 已激活的 `VIRTUAL_ENV`；
+5. 仓库 `.venv`；
+6. 模块本地 `.venv`。
+
+启动器不会从 PATH 盲选系统 Python。冻结运行时内部包含 schemas、rules、experience、
+templates 及模块 CLI 及其 Python 依赖。
 
 `jsonschema` 是模块的 Schema 校验依赖；紧随其后的 `requirements.txt` 安装命令会安装该依赖。
 
@@ -122,6 +144,34 @@ finalize 使用 `parent_job_id` 重建 draft 根身份，重新运行完整确�
 .\.venv\Scripts\python.exe -m app.tools.module_contract_cli validate modules/moisture
 .\.venv\Scripts\python.exe -m pytest modules\moisture\tests -q
 ```
+
+## 构建便携运行时
+
+模块提供 `build_portable_runtime.ps1`，使用仓库 `.venv` 中的 PyInstaller 以
+**onedir** 方式构建 `BambooMoistureModule.exe`。该钩子由主框架构建链调用，
+要求：
+
+- 仓库 `.venv` 存在且包含 Python 3.11+ 和 PyInstaller；
+- 主框架已通过 `scripts/build_portable.ps1` 生成
+  `dist/BambooWorkbench/modules/moisture/` 目录及 `module.json`。
+
+构建产物安装到：
+
+```text
+dist/BambooWorkbench/modules/moisture/runtime/
+```
+
+钩子以原子替换方式更新运行时（`.runtime.incoming` → `runtime`，失败时回滚），
+只清理本模块的构建工作目录和 portable 内的 `runtime/`，不触碰其他模块、用户目录
+或整个 `dist/`。每次构建后自动清理 `build/moisture-portable-runtime/`。
+
+构建命令（由主框架 `scripts/build_real_module_runtimes.ps1` 调用）：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File modules\moisture\build_portable_runtime.ps1
+```
+
+**不得提交**：`.exe`、`runtime/`、`build/`、`dist/`、`.venv` 中的任何文件。
 
 ## 已知限制
 

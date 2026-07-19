@@ -100,15 +100,15 @@ def test_version_writes_only_semver_to_stdout(monkeypatch) -> None:
     assert completed.stderr == ""
 
 
-def test_self_check_uses_stderr_for_diagnostics(monkeypatch) -> None:
+def test_successful_self_check_writes_ok_only_to_stdout(monkeypatch) -> None:
     monkeypatch.setenv("BAMBOO_MODULE_PYTHON", "missing-explicit-python.exe")
     monkeypatch.setenv("VIRTUAL_ENV", "missing-virtual-environment")
 
     completed = run_cli("self-check")
 
     assert completed.returncode == 0
-    assert completed.stdout == ""
-    assert "self-check: ok" in completed.stderr
+    assert completed.stdout == "ok\n"
+    assert completed.stderr == ""
 
 
 def test_unknown_command_returns_cli_error() -> None:
@@ -283,6 +283,18 @@ def test_launcher_prefers_active_environment_before_repository_and_module_venvs(
     assert active_environment < repository_environment < module_environment
 
 
+def test_launcher_prefers_bundled_runtime_before_development_python() -> None:
+    launcher_text = LAUNCHER.read_text(encoding="utf-8")
+
+    explicit_executable = launcher_text.index("if defined BAMBOO_MODULE_EXECUTABLE")
+    bundled_executable = launcher_text.index(
+        r'if exist "%~dp0runtime\BambooMoistureModule.exe"'
+    )
+    explicit_python = launcher_text.index("if defined BAMBOO_MODULE_PYTHON")
+    assert explicit_executable < bundled_executable < explicit_python
+    assert r'"%~dp0runtime\BambooMoistureModule.exe" %*' in launcher_text
+
+
 def test_isolated_launcher_without_dependency_ready_python_returns_4(
     tmp_path: Path,
 ) -> None:
@@ -396,8 +408,8 @@ def test_active_repository_environment_runs_all_contract_commands(tmp_path: Path
     assert version.stdout == "0.1.0\n"
     assert version.stderr == ""
     assert self_check.returncode == 0
-    assert self_check.stdout == ""
-    assert "self-check: ok" in self_check.stderr
+    assert self_check.stdout == "ok\n"
+    assert self_check.stderr == ""
     assert run.returncode == 0
     assert run.stderr == ""
     assert (output_dir / "result.json").is_file()

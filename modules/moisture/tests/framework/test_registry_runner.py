@@ -36,7 +36,7 @@ def test_real_registry_discovers_and_health_checks_formal_module() -> None:
     assert registry.get(ModuleId.MOISTURE).health == "healthy"
     healthy, detail = registry.check_health(ModuleId.MOISTURE)
     assert healthy is True
-    assert detail.endswith("self-check: ok")
+    assert detail == "ok"
 
 
 def test_real_runner_accepts_progress_result_and_existing_outputs(

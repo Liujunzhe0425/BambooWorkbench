@@ -108,7 +108,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
             sys.stderr.write(f"moisture self-check: {issue}\n")
         return 4
 
-    sys.stderr.write("moisture self-check: ok\n")
+    sys.stdout.write("ok\n")
     return 0
 
 

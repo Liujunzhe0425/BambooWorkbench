@@ -12,6 +12,7 @@ import yaml
 from jsonschema import Draft202012Validator
 from moisture.domain.enums import DisplayColor
 from moisture.domain.rules import RuleDefinition, RulePackageSnapshot
+from moisture.runtime_paths import module_root as runtime_module_root
 
 
 class RulePackageValidationError(ValueError):
@@ -130,7 +131,7 @@ def _definition(payload: object) -> RuleDefinition:
 
 class RulePackageLoader:
     def __init__(self, schema_path: Path | None = None) -> None:
-        default_schema = Path(__file__).parents[4] / "schemas" / "rule-package.schema.json"
+        default_schema = runtime_module_root() / "schemas" / "rule-package.schema.json"
         self.schema_path = schema_path or default_schema
 
     def load(self, package_dir: Path) -> RulePackageSnapshot:

@@ -11,6 +11,7 @@ if defined PYTHONPATH (
 )
 
 if defined BAMBOO_MODULE_EXECUTABLE goto packaged_executable
+if exist "%~dp0runtime\BambooMoistureModule.exe" goto bundled_executable
 if defined BAMBOO_MODULE_PYTHON goto explicit_python
 if defined VIRTUAL_ENV goto active_environment
 
@@ -35,6 +36,10 @@ exit /b %ERRORLEVEL%
 :packaged_executable_missing
 >&2 echo BAMBOO_MODULE_EXECUTABLE does not identify the packaged moisture runtime.
 exit /b 4
+
+:bundled_executable
+"%~dp0runtime\BambooMoistureModule.exe" %*
+exit /b %ERRORLEVEL%
 
 :explicit_python
 if not exist "%BAMBOO_MODULE_PYTHON%" goto explicit_python_missing
