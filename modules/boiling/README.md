@@ -17,6 +17,23 @@
 
 模块不包含独立 GUI、定时运行或目录扫描功能；不修改输入文件、不联网、不调用 AI、不创建子进程，只写任务声明的 `output_dir`。
 
+## 免环境便携运行
+
+仓库便携版构建会调用 `modules/boiling/build_portable_runtime.ps1`，在
+`dist/BambooWorkbench/modules/boiling/runtime/` 生成独立运行时。生成物只用于交付，
+不得提交到 Git。便携目录中的 `run_module.bat` 会优先运行本模块的
+`runtime/boiling_module.exe`，目标电脑无需安装 Python。
+
+单独重复构建及验证本模块运行时：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File modules/boiling/build_portable_runtime.ps1
+```
+
+构建脚本会在无 Python 的隔离 `PATH` 下验证 `version`、`self-check` 以及一次
+`draft -> confirmation -> finalize` 业务闭环。找不到便携运行时和 Python 时，
+`run_module.bat` 固定返回退出码 `4`；便携运行时存在时，子进程退出码会原样返回。
+
 ## 安装依赖
 
 ```powershell

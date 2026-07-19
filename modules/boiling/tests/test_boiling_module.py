@@ -4,11 +4,13 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 import openpyxl
+import pytest
 
 from core.confirmations.service import ConfirmationService
 from core.contracts.confirmation import ConfirmationAnswer
@@ -177,6 +179,80 @@ def excel_values(path):
         ]
     finally:
         workbook.close()
+
+
+def isolated_windows_environment(tmp_path, **extra):
+    system_root = Path(os.environ.get("SYSTEMROOT", r"C:\Windows"))
+    environment = {
+        "SystemRoot": str(system_root),
+        "ComSpec": str(system_root / "System32" / "cmd.exe"),
+        "PATH": str(system_root / "System32"),
+        "PATHEXT": ".COM;.EXE;.BAT;.CMD",
+        "TEMP": str(tmp_path),
+        "TMP": str(tmp_path),
+    }
+    environment.update(extra)
+    return environment
+
+
+def run_batch(launcher, arguments, environment):
+    command_processor = environment["ComSpec"]
+    command = subprocess.list2cmdline([str(launcher), *arguments])
+    return subprocess.run(
+        [command_processor, "/d", "/s", "/c", command],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=environment,
+    )
+
+
+@pytest.fixture(scope="module")
+def fake_portable_runtime(tmp_path_factory):
+    folder = tmp_path_factory.mktemp("fake-boiling-runtime")
+    source = folder / "FakeRuntime.cs"
+    executable = folder / "boiling_module.exe"
+    source.write_text(
+        """
+using System;
+public static class FakeRuntime {
+    public static int Main(string[] args) {
+        int exitCode = int.Parse(Environment.GetEnvironmentVariable("FAKE_RUNTIME_EXIT") ?? "0");
+        if (exitCode == 0) {
+            Console.WriteLine(
+                "{\\\"type\\\":\\\"progress\\\",\\\"percent\\\":100," +
+                "\\\"message\\\":\\\"boiling 0.1.0\\\"}"
+            );
+        } else {
+            Console.Error.WriteLine("forced portable runtime failure");
+        }
+        return exitCode;
+    }
+}
+""".strip(),
+        encoding="utf-8",
+    )
+    escaped_source = str(source).replace("'", "''")
+    escaped_executable = str(executable).replace("'", "''")
+    completed = subprocess.run(
+        [
+            "powershell",
+            "-NoProfile",
+            "-Command",
+            (
+                f"Add-Type -Path '{escaped_source}' -OutputAssembly "
+                f"'{escaped_executable}' -OutputType ConsoleApplication"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert executable.is_file()
+    return executable
 
 
 def test_extract_sample(tmp_path):
@@ -911,3 +987,100 @@ def test_real_task_service_closes_after_one_confirmation_round(qtbot, tmp_path):
     finally:
         service.shutdown()
         database.close()
+
+
+def test_batch_without_python_or_portable_runtime_returns_four(tmp_path):
+    module_dir = tmp_path / "boiling"
+    module_dir.mkdir()
+    launcher = module_dir / "run_module.bat"
+    shutil.copy2(MODULE_ROOT / "run_module.bat", launcher)
+
+    completed = run_batch(launcher, ["version"], isolated_windows_environment(tmp_path))
+
+    assert completed.returncode == 4
+    assert completed.stdout == ""
+    error = json.loads(completed.stderr.strip())
+    assert error == {"type": "error", "message": "Python 3.12 was not found"}
+
+
+def test_batch_prefers_successful_portable_runtime(tmp_path, fake_portable_runtime):
+    module_dir = tmp_path / "boiling"
+    runtime_dir = module_dir / "runtime"
+    runtime_dir.mkdir(parents=True)
+    launcher = module_dir / "run_module.bat"
+    shutil.copy2(MODULE_ROOT / "run_module.bat", launcher)
+    shutil.copy2(fake_portable_runtime, runtime_dir / "boiling_module.exe")
+
+    completed = run_batch(
+        launcher,
+        ["version"],
+        isolated_windows_environment(tmp_path, FAKE_RUNTIME_EXIT="0"),
+    )
+
+    assert completed.returncode == 0
+    assert "boiling 0.1.0" in completed.stdout
+    assert completed.stderr == ""
+
+
+def test_batch_preserves_portable_runtime_failure_exit_code(tmp_path, fake_portable_runtime):
+    module_dir = tmp_path / "boiling"
+    runtime_dir = module_dir / "runtime"
+    runtime_dir.mkdir(parents=True)
+    launcher = module_dir / "run_module.bat"
+    shutil.copy2(MODULE_ROOT / "run_module.bat", launcher)
+    shutil.copy2(fake_portable_runtime, runtime_dir / "boiling_module.exe")
+
+    completed = run_batch(
+        launcher,
+        ["self-check"],
+        isolated_windows_environment(tmp_path, FAKE_RUNTIME_EXIT="7"),
+    )
+
+    assert completed.returncode == 7
+    assert completed.stdout == ""
+    assert "forced portable runtime failure" in completed.stderr
+
+
+def test_frozen_runtime_resolves_module_root_and_rules(monkeypatch, tmp_path):
+    executable = tmp_path / "modules" / "boiling" / "runtime" / "boiling_module.exe"
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(executable))
+
+    module_root = boiling_module.resolve_module_root()
+
+    assert module_root == executable.parent.parent
+    assert module_root / "rules" / "default_rules.yaml" == (
+        executable.parent.parent / "rules" / "default_rules.yaml"
+    )
+
+
+def test_portable_builder_is_repeatable_and_path_bounded():
+    script = (MODULE_ROOT / "build_portable_runtime.ps1").read_text(encoding="utf-8")
+
+    assert "Assert-RepositoryChild" in script
+    assert "Portable runtime path escaped repository" in script
+    assert "build\\boiling-runtime" in script
+    assert "build\\boiling-runtime-verification" in script
+    assert "dist\\BambooWorkbench\\modules\\boiling" in script
+    assert "Remove-BuildTarget $RuntimeRoot" in script
+    assert "--clean --noconfirm --onefile" in script
+    assert "Boiling standalone portable runtime built and verified." in script
+
+
+def test_generated_portable_artifacts_are_not_tracked():
+    tracked = subprocess.run(
+        ["git", "ls-files", "modules/boiling"],
+        cwd=MODULE_ROOT.parents[1],
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    ).stdout.splitlines()
+
+    forbidden = [
+        path
+        for path in tracked
+        if Path(path).suffix.lower() == ".exe"
+        or any(part in {"runtime", "build", "dist"} for part in Path(path).parts)
+    ]
+    assert forbidden == []

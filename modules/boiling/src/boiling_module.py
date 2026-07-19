@@ -20,7 +20,15 @@ except ImportError as exc:  # pragma: no cover - exercised in a clean environmen
 
 MODULE_ID = "boiling"
 MODULE_VERSION = "0.1.0"
-MODULE_ROOT = Path(__file__).resolve().parents[1]
+
+
+def resolve_module_root():
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent.parent
+    return Path(__file__).resolve().parents[1]
+
+
+MODULE_ROOT = resolve_module_root()
 DEFAULT_RULES_FILE = MODULE_ROOT / "rules" / "default_rules.yaml"
 ALLOWED_JOB_FIELDS = {
     "schema_version",
