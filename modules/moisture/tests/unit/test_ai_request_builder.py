@@ -47,3 +47,30 @@ def test_candidate_limit_and_utf8_payload_budget_keep_omission_counts() -> None:
         "utf-8"
     )
     assert len(encoded) <= MAX_PAYLOAD_BYTES
+
+
+def test_request_identity_is_stable_when_governed_evidence_is_added_after_confirmation() -> None:
+    draft_candidate = candidate("same-business-candidate", "0.10")
+    finalized_candidate = AIReviewCandidate(
+        candidate_id=draft_candidate.candidate_id,
+        target_field=draft_candidate.target_field,
+        observed_value=draft_candidate.observed_value,
+        reference_value=draft_candidate.reference_value,
+        relative_deviation=draft_candidate.relative_deviation,
+        evidence_refs=("rule:HIGH_DEFAULT", "experience:EXP-GENERIC-001@1.0.0"),
+    )
+
+    draft = build_ai_request(
+        root_job_id="draft-root",
+        candidates=(draft_candidate,),
+        rule_hash="c" * 64,
+    )
+    finalized = build_ai_request(
+        root_job_id="draft-root",
+        candidates=(finalized_candidate,),
+        rule_hash="c" * 64,
+    )
+
+    assert draft.request is not None and finalized.request is not None
+    assert draft.request["payload"] != finalized.request["payload"]
+    assert draft.request["request_id"] == finalized.request["request_id"]

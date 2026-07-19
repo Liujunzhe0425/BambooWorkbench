@@ -23,6 +23,7 @@ from core.storage.repositories.confirmations import ConfirmationRepository
 from core.storage.repositories.modules import ModuleRepository
 from core.storage.repositories.tasks import TaskRepository
 from core.tasks.service import TaskService
+from app.bootstrap import build_context
 
 pytest_plugins = ("fixtures.workbooks.workbook_factory",)
 
@@ -157,3 +158,76 @@ def test_real_task_service_completes_one_batch_year_confirmation(
     assert {source: source.read_bytes() for source in sources} == before
     assert service.runners == {}
     database.close()
+
+
+def test_real_task_service_reuses_draft_ai_request_after_year_confirmation(
+    qtbot, tmp_path: Path, workbook_factory
+) -> None:
+    context = build_context(tmp_path / "app-data", use_mocks=False)
+    try:
+        service = context.task_service
+        source = workbook_factory(
+            tmp_path / "high-month-day.xlsx",
+            departments={"品质": 1},
+            moisture_values=(0.56,),
+            mass_values=((100, 46.24, 4),),
+            material_type="原竹丝",
+            arrival_date="4月8日",
+            test_date="4月9日",
+        )
+        before = source.read_bytes()
+        needs_confirmation = QSignalSpy(service.needs_confirmation)
+        finished = QSignalSpy(service.finished)
+        failed = QSignalSpy(service.failed)
+
+        job_id = service.create_and_start(ModuleId.MOISTURE, [source])
+        qtbot.waitUntil(
+            lambda: needs_confirmation.count() + failed.count() == 1,
+            timeout=30_000,
+        )
+
+        assert failed.count() == 0
+        task_dir = context.paths.tasks / job_id
+        draft = json.loads(
+            (task_dir / "output-draft" / "result.json").read_text(encoding="utf-8")
+        )
+        request = next(item for item in draft["service_requests"] if item["service"] == "ai")
+        pending = dict(service.pending_confirmations())[job_id]
+        assert {prompt.field for prompt in pending.confirmations} == {
+            "default_year",
+            "AI联网授权：复核水分规则候选摘要",
+        }
+        answers = [
+            ConfirmationAnswer(
+                confirmation_id=prompt.confirmation_id,
+                value="2026" if prompt.field == "default_year" else "拒绝",
+                apply_to_batch=prompt.field == "default_year",
+                remember_mapping=False,
+            )
+            for prompt in pending.confirmations
+        ]
+        confirmation = context.confirmation_service.submit(job_id, answers)
+
+        service.finalize(job_id, confirmation)
+        qtbot.waitUntil(lambda: finished.count() + failed.count() == 1, timeout=30_000)
+
+        assert failed.count() == 0
+        final = json.loads(
+            (task_dir / "output-final" / "result.json").read_text(encoding="utf-8")
+        )
+        response = json.loads(
+            (task_dir / "protocol" / "service-response.json").read_text(encoding="utf-8")
+        )
+        assert final["status"] == "success"
+        assert response["responses"][0]["request_id"] == request["request_id"]
+        assert response["responses"][0]["status"] == "denied"
+        assert "SERVICE_RESPONSE_DEGRADED: ai_denied" in final["errors"]
+        assert "SERVICE_RESPONSE_DEGRADED: invalid_or_missing" not in final["errors"]
+        assert {Path(item["path"]).name for item in final["outputs"]} == {
+            "moisture_summary.xlsx",
+            "analysis_report.md",
+        }
+        assert source.read_bytes() == before
+        assert service.runners == {}
+    finally:
+        context.close()

@@ -162,9 +162,6 @@ def build_ai_request(
         "candidate_sent": sent,
         "candidate_omitted": omitted,
     }
-    candidate_digest = hashlib.sha256(
-        json.dumps(summaries, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ).hexdigest()
     identity = hashlib.sha256(
         json.dumps(
             {
@@ -172,7 +169,6 @@ def build_ai_request(
                 "module": "moisture",
                 "service": "ai",
                 "rule_hash": rule_hash,
-                "candidate_digest": candidate_digest,
             },
             sort_keys=True,
             separators=(",", ":"),
