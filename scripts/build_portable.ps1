@@ -37,5 +37,11 @@ if ($LASTEXITCODE -ne 0) {
     --workpath $Build --distpath $Dist packaging\BambooWorkbench.spec
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed with exit code $LASTEXITCODE" }
 
+& powershell -NoProfile -ExecutionPolicy Bypass -File `
+    (Join-Path $PSScriptRoot 'build_real_module_runtimes.ps1')
+if ($LASTEXITCODE -ne 0) {
+    throw "Real-module runtime build failed with exit code $LASTEXITCODE"
+}
+
 & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'verify_portable.ps1')
 if ($LASTEXITCODE -ne 0) { throw "Portable verification failed with exit code $LASTEXITCODE" }
