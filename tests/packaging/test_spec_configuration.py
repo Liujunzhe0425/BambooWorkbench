@@ -49,4 +49,4 @@ def test_portable_verifier_runs_real_modules_without_development_python() -> Non
 
     assert "StartInfo.Environment.Clear()" in verifier
     assert "@('version', 'self-check')" in verifier
-    assert "ModuleData.version" in verifier
+    assert "ModuleData.module_version" in verifier

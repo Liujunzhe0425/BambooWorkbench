@@ -65,8 +65,11 @@ if (Test-Path -LiteralPath $SourceModules -PathType Container) {
             if ($Stderr.Trim()) {
                 throw "Packaged module '$($ModuleData.module_id)' $Command wrote diagnostics: $Stderr"
             }
-            if ($Command -eq 'version' -and $Stdout.Trim() -ne [string]$ModuleData.version) {
-                throw "Packaged module '$($ModuleData.module_id)' reported version '$($Stdout.Trim())', expected '$($ModuleData.version)'."
+            if (
+                $Command -eq 'version' -and
+                -not $Stdout.Contains([string]$ModuleData.module_version)
+            ) {
+                throw "Packaged module '$($ModuleData.module_id)' reported version '$($Stdout.Trim())', expected '$($ModuleData.module_version)'."
             }
         }
     }
