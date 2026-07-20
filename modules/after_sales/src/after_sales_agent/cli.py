@@ -22,6 +22,15 @@ from after_sales_agent.report import write_summary_workbook
 from after_sales_agent.rules import load_rules
 
 
+def _configure_standard_streams() -> None:
+    """Make the frozen CLI protocol independent from the Windows code page."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def _module_root() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent.parent
@@ -29,6 +38,7 @@ def _module_root() -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _configure_standard_streams()
     parser = argparse.ArgumentParser(prog="after_sales")
     subparsers = parser.add_subparsers(dest="command")
     subparsers.add_parser("version")
