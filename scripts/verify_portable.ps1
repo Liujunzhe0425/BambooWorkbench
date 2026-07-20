@@ -39,7 +39,7 @@ if (Test-Path -LiteralPath $SourceModules -PathType Container) {
         }
 
         foreach ($Command in @('version', 'self-check')) {
-            $StartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+            $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
             $StartInfo.FileName = Join-Path $env:SystemRoot 'System32\cmd.exe'
             $StartInfo.Arguments = "/d /s /c `"`"$Launcher`" $Command`""
             $StartInfo.WorkingDirectory = Split-Path -Parent $Launcher
@@ -47,7 +47,7 @@ if (Test-Path -LiteralPath $SourceModules -PathType Container) {
             $StartInfo.CreateNoWindow = $true
             $StartInfo.RedirectStandardOutput = $true
             $StartInfo.RedirectStandardError = $true
-            $StartInfo.Environment.Clear()
+            # PS 5.1: 不调用 Clear() — UseShellExecute=$false 时子进程仅继承显式设置的变量
             $StartInfo.Environment['SystemRoot'] = $env:SystemRoot
             $StartInfo.Environment['ComSpec'] = Join-Path $env:SystemRoot 'System32\cmd.exe'
             $StartInfo.Environment['PATH'] = Join-Path $env:SystemRoot 'System32'
