@@ -23,6 +23,58 @@ foreach ($Item in $Required) {
     }
 }
 
+$SourceModules = Join-Path $Root 'modules'
+if (Test-Path -LiteralPath $SourceModules -PathType Container) {
+    Get-ChildItem -LiteralPath $SourceModules -Directory | ForEach-Object {
+        $Manifest = "modules\$($_.Name)\module.json"
+        $PackagedManifest = Join-Path $Bundle $Manifest
+        if (-not (Test-Path -LiteralPath $PackagedManifest -PathType Leaf)) {
+            throw "Missing packaged real module: $Manifest"
+        }
+
+        $ModuleData = Get-Content -LiteralPath $PackagedManifest -Raw -Encoding UTF8 | ConvertFrom-Json
+        $Launcher = Join-Path (Split-Path -Parent $PackagedManifest) $ModuleData.entrypoint
+        if (-not (Test-Path -LiteralPath $Launcher -PathType Leaf)) {
+            throw "Missing packaged module launcher: $Launcher"
+        }
+
+        foreach ($Command in @('version', 'self-check')) {
+            $StartInfo = New-Object System.Diagnostics.ProcessStartInfo
+            $StartInfo.FileName = Join-Path $env:SystemRoot 'System32\cmd.exe'
+            $StartInfo.Arguments = "/d /s /c `"`"$Launcher`" $Command`""
+            $StartInfo.WorkingDirectory = Split-Path -Parent $Launcher
+            $StartInfo.UseShellExecute = $false
+            $StartInfo.CreateNoWindow = $true
+            $StartInfo.RedirectStandardOutput = $true
+            $StartInfo.RedirectStandardError = $true
+            # PS 5.1: 不调用 Clear() — UseShellExecute=$false 时子进程仅继承显式设置的变量
+            $StartInfo.Environment['SystemRoot'] = $env:SystemRoot
+            $StartInfo.Environment['ComSpec'] = Join-Path $env:SystemRoot 'System32\cmd.exe'
+            $StartInfo.Environment['PATH'] = Join-Path $env:SystemRoot 'System32'
+            $StartInfo.Environment['PATHEXT'] = '.COM;.EXE;.BAT;.CMD'
+            $StartInfo.Environment['TEMP'] = $env:TEMP
+            $StartInfo.Environment['TMP'] = $env:TMP
+
+            $Process = [System.Diagnostics.Process]::Start($StartInfo)
+            $Stdout = $Process.StandardOutput.ReadToEnd()
+            $Stderr = $Process.StandardError.ReadToEnd()
+            $Process.WaitForExit()
+            if ($Process.ExitCode -ne 0) {
+                throw "Packaged module '$($ModuleData.module_id)' $Command failed with exit code $($Process.ExitCode): $Stderr"
+            }
+            if ($Stderr.Trim()) {
+                throw "Packaged module '$($ModuleData.module_id)' $Command wrote diagnostics: $Stderr"
+            }
+            if (
+                $Command -eq 'version' -and
+                -not $Stdout.Contains([string]$ModuleData.module_version)
+            ) {
+                throw "Packaged module '$($ModuleData.module_id)' reported version '$($Stdout.Trim())', expected '$($ModuleData.module_version)'."
+            }
+        }
+    }
+}
+
 $Executable = Join-Path $Bundle 'BambooWorkbench.exe'
 $Process = Start-Process -FilePath $Executable -ArgumentList '--smoke-test' `
     -PassThru -WindowStyle Hidden

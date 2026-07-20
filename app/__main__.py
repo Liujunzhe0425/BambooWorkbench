@@ -25,8 +25,14 @@ def main(
     command_arguments = list(sys.argv[1:] if argv is None else argv)
     if command_arguments == ["--smoke-test"]:
         return smoke_test()
-    application = create_application(list(argv) if argv is not None else None)
-    context = build_context(data_root, use_mocks=use_mocks)
+    application_arguments = list(sys.argv if argv is None else argv)
+    demo_requested = "--demo" in command_arguments
+    application_arguments = [
+        argument for argument in application_arguments if argument != "--demo"
+    ]
+    selected_use_mocks = demo_requested if use_mocks is None else use_mocks
+    application = create_application(application_arguments)
+    context = build_context(data_root, use_mocks=selected_use_mocks)
     window: MainWindow | None = None
     close_context = context.close
     connected = False

@@ -68,7 +68,13 @@ def resolve_resource_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
-def build_context(data_root: Path | None = None, use_mocks: bool = True) -> AppContext:
+def resolve_real_modules_root(resource_root: Path, paths: AppPaths) -> Path:
+    """Prefer modules shipped with the application, then local installed modules."""
+    bundled_modules = resource_root / "modules"
+    return bundled_modules if bundled_modules.is_dir() else paths.modules
+
+
+def build_context(data_root: Path | None = None, use_mocks: bool = False) -> AppContext:
     resource_root = resolve_resource_root()
     paths = AppPaths.for_root(data_root)
     logger = configure_logging(paths)
@@ -96,7 +102,7 @@ def build_context(data_root: Path | None = None, use_mocks: bool = True) -> AppC
             model=settings.get("ai_model", "mock-model") or "mock-model",
         )
         registry = ModuleRegistry(
-            paths.modules,
+            resolve_real_modules_root(resource_root, paths),
             resource_root / "mock_modules",
             use_mocks=use_mocks,
             repository=module_repository,

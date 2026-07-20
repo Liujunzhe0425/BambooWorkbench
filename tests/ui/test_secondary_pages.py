@@ -299,6 +299,31 @@ def test_module_card_renders_unknown_health_explicitly(app_context) -> None:
     assert "状态未知" in card.state_label.text()
 
 
+def test_missing_real_modules_remain_visible_disabled_placeholders(
+    tmp_path, qtbot, monkeypatch
+) -> None:
+    from app.bootstrap import build_context
+    from ui.pages.workbench_page import WorkbenchPage
+
+    empty_modules = tmp_path / "empty-real-modules"
+    empty_modules.mkdir()
+    monkeypatch.setattr(
+        "app.bootstrap.resolve_real_modules_root",
+        lambda resource_root, paths: empty_modules,
+    )
+    context = build_context(tmp_path / "app-data")
+    try:
+        page = WorkbenchPage(context.registry)
+        qtbot.addWidget(page)
+
+        assert set(page.cards) == set(ModuleId)
+        assert all("暂未安装" in card.state_label.text() for card in page.cards.values())
+        assert all(not card.open_button.isEnabled() for card in page.cards.values())
+        assert page.readiness_bar.value() == 0
+    finally:
+        context.close()
+
+
 def test_output_click_rechecks_missing_file_and_never_opens(
     qtbot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

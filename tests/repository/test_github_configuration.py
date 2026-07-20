@@ -14,8 +14,26 @@ def test_quality_workflow_runs_windows_repository_gate() -> None:
         step.get("run", "") for step in workflow["jobs"]["quality"]["steps"]
     )
     assert "scripts/verify_repo.ps1" in run_steps
+    assert "modules/*/requirements.txt" in (ROOT / ".github/workflows/quality.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "Get-ChildItem -Path modules -Filter requirements.txt" in run_steps
+    assert "-m venv .venv" in run_steps
+    assert ".\\.venv\\Scripts\\python.exe" in run_steps
+    assert "BAMBOO_PYTHON=$RepoPython" in run_steps
+    assert "BAMBOO_MODULE_PYTHON=$RepoPython" in run_steps
     assert workflow["permissions"] == {"contents": "read"}
     assert workflow["jobs"]["quality"]["env"]["PYTHONUTF8"] == "1"
+
+
+def test_repository_gate_discovers_real_module_code_tests_and_contracts() -> None:
+    gate = (ROOT / "scripts/verify_repo.ps1").read_text(encoding="utf-8")
+
+    assert "$RuffTargets += 'modules'" in gate
+    assert "$ModuleTestTargets" in gate
+    assert "python -m pytest" not in gate
+    assert "-m pytest -q @ModuleTestTargets" in gate
+    assert "module_contract_cli validate $_.FullName" in gate
 
 
 def test_package_workflow_is_manual_or_tag_only() -> None:
@@ -35,6 +53,11 @@ def test_package_workflow_is_manual_or_tag_only() -> None:
         "scripts/prepare_release.ps1",
     ):
         assert command in run_steps
+    assert "-m venv .venv" in run_steps
+    assert ".\\.venv\\Scripts\\python.exe" in run_steps
+    assert "BAMBOO_PYTHON=$RepoPython" in run_steps
+    assert "BAMBOO_MODULE_PYTHON=$RepoPython" in run_steps
+    assert "Get-ChildItem -Path modules -Filter requirements.txt" in run_steps
 
 
 def test_workflows_pin_only_github_owned_actions() -> None:

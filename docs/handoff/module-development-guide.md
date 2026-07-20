@@ -40,6 +40,7 @@ Copy-Item -Recurse mock_modules/moisture modules/moisture
 modules/<module_id>/
 ├─ module.json
 ├─ run_module.bat
+├─ build_portable_runtime.ps1
 ├─ README.md
 ├─ CHANGELOG.md
 ├─ requirements.txt
@@ -87,6 +88,12 @@ modules\<module_id>\run_module.bat run --job D:\absolute\path\job.json
 ```
 
 退出码：`0` 表示协议结果已生成；`2` 表示任务输入不合法；`3` 表示运行失败；`4` 表示依赖或运行环境缺失。标准输出只能逐行输出 JSON 进度；诊断文字写标准错误。
+
+源码开发可以使用仓库 `.venv`，但正式便携版和安装版不能依赖客户另装 Python。
+`build_portable_runtime.ps1` 会在主程序便携包生成后由框架自动调用，负责把本模块的独立
+运行时写入 `dist/BambooWorkbench/modules/<module_id>/`。构建钩子必须可重复执行，并在
+隔离掉 `PATH` Python、`VIRTUAL_ENV` 和开发环境变量后通过入口脚本的 `version`、
+`self-check` 与端到端任务。
 
 ```json
 {"type":"progress","percent":40,"message":"正在处理第 4 个文件"}
@@ -174,6 +181,7 @@ AI 被拒绝是正常业务状态，模块必须继续生成不依赖 AI 的本�
 8. 原始文件哈希在运行前后保持一致；
 9. 同一输入重复运行不会错误重复统计；
 10. 所有业务样本都有脱敏输入与可机读预期结果。
+11. 无 Python 的便携包中通过 `version`、`self-check` 和至少一次端到端任务。
 
 业务核心字段、公式和判定样本必须 100% 符合负责人提供的预期结果。框架测试只验证协议，不能替负责人证明业务计算正确。
 
@@ -191,15 +199,18 @@ powershell -ExecutionPolicy Bypass -File scripts/verify_repo.ps1
 
 只运行本人模块对应的第一条合同命令。提交时附上命令输出、测试日志、输入与预期结果对应表，以及成功/异常/人工确认三个界面截图。
 
+模块 PR 触发 GitHub `quality` 工作流时，框架会自动发现并安装 `modules/*/requirements.txt`；模块成员无需修改根目录 `pyproject.toml` 或公共工作流来声明业务依赖。
+
 ## 10. 数据脱敏与交付清单
 
 - 使用虚构客户、订单、电话、地址和人员；
 - 移除 Excel 元数据、隐藏表、批注、外链和历史作者；
+- 模块专用脱敏 Excel 夹具统一放在 `modules/<module_id>/tests/fixtures/`，公共夹具才放在根目录 `tests/fixtures/`；
 - 不交付真实企业原表、运行日志、SQLite、`.env`、密钥或 API 响应；
 - 每个样本写明其覆盖场景，但不得通过文件名泄露客户信息；
 - ZIP 之外另附 SHA-256 校验值。
 
-正式交付包括模块 ZIP、源代码、规则与模板、依赖清单、自动测试、脱敏样本、预期结果、示例输出、字段/公式/规则/人工边界文档、测试日志和已知限制。
+正式交付包括模块 ZIP、源代码、规则与模板、依赖清单、可重复执行的便携运行时构建钩子、自动测试、脱敏样本、预期结果、示例输出、字段/公式/规则/人工边界文档、测试日志和已知限制。
 
 ## 11. 提交与评审
 
