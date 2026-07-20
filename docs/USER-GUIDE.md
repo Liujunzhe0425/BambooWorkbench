@@ -1,8 +1,8 @@
-# 竹简工作台 (BambooWorkbench) 使用说明
+# 竹简工作台（BambooWorkbench）v0.2.1 使用说明
 
 ## 快速开始
 
-1. 下载并安装 BambooWorkbench-Setup.exe
+1. 下载并安装 `BambooWorkbench-Setup-0.2.1.exe`
 2. 双击桌面"竹简工作台"图标启动
 3. 首次使用会显示三个业务模块卡片
 
@@ -40,8 +40,17 @@
 - 首次使用建议用小样本测试，确认结果符合预期
 - 如遇异常提示，检查 Excel 格式是否与历史模板一致
 
+## DeepSeek（可选）
+
+1. 打开“系统设置”，将 AI 提供商选择为 `DeepSeek`；
+2. 保持默认 API 地址 `https://api.deepseek.com`，模型为 `deepseek-v4-flash`，或按管理员要求修改；
+3. 粘贴 API 密钥，勾选“允许在逐次确认后联网”，保存设置；
+4. 当模块提出 AI 服务请求时，先检查脱敏预览，再选择是否允许发送。
+
+密钥只保存在 Windows 安全凭据中。关闭联网开关、拒绝本次发送或不填写密钥，都不会阻止离线规则处理。
+
 ## 支持
 
 - 仓库：https://github.com/Liujunzhe0425/BambooWorkbench
-- 团队：湖大智竹实践团队
+- 团队：湖南大学智创未来团队
 - 对接企业：湖南桃花江竹材科技股份有限公司

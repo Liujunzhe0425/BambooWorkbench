@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "job_id": "example-finalize-001",
+  "module_id": "moisture",
+  "phase": "finalize",
+  "run_mode": "single",
+  "input_files": ["${INPUT_XLSX}"],
+  "output_dir": "${OUTPUT_DIR}",
+  "parent_job_id": "example-draft-001",
+  "confirmation_file": "${CONFIRMATION_FILE}",
+  "service_response_file": "${SERVICE_RESPONSE_FILE}",
+  "ai_enabled": false,
+  "allowed_knowledge_scopes": ["moisture"]
+}

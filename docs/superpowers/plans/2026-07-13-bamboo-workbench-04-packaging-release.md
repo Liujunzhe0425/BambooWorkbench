@@ -502,7 +502,7 @@ Expected: FAIL because the demo package is absent.
 
 The script uses only bundled anonymized fixtures and fixes the sequence:
 
-1. identify 湖南桃花江竹材科技股份有限公司 and “湖大智竹实践团队” branding;
+1. identify 湖南桃花江竹材科技股份有限公司 and “湖南大学智创未来团队” branding;
 2. show all three installed mock-module cards and their versions;
 3. run a successful moisture task and open its generated workbook/report placeholders;
 4. run a boiling task that pauses for confirmation, explain the human boundary, then finalize;

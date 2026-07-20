@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "job_id": "example-draft-001",
+  "answers": [
+    {
+      "confirmation_id": "msr-confirm-replace-with-draft-id",
+      "value": "适用",
+      "apply_to_batch": false,
+      "remember_mapping": false
+    }
+  ]
+}

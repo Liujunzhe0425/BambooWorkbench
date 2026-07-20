@@ -1,0 +1,14 @@
+{
+  "schema_version": "1.0",
+  "task_id": "example-draft-001",
+  "module_id": "moisture",
+  "responses": [
+    {
+      "request_id": "msr-ai-0123456789abcdef01234567",
+      "service": "ai",
+      "status": "denied",
+      "text": null,
+      "error": "user consent denied"
+    }
+  ]
+}
