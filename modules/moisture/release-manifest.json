@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "artifact": "BambooWorkbench-moisture-0.1.0.zip",
+  "module_id": "moisture",
+  "module_version": "0.1.0",
+  "runtime_commit": "9d55676",
+  "built_on": "2026-07-17",
+  "python_tested": "3.12.7",
+  "entrypoint": "run_module.bat",
+  "allowlist": [
+    "CHANGELOG.md",
+    "README.md",
+    "docs/",
+    "experience/",
+    "module.json",
+    "pyproject.toml",
+    "release-manifest.json",
+    "requirements.txt",
+    "rules/",
+    "run_module.bat",
+    "samples/",
+    "schemas/",
+    "src/",
+    "templates/",
+    "tests/",
+    "tools/"
+  ],
+  "excluded": [
+    ".venv/",
+    "__pycache__/",
+    ".pytest_cache/",
+    "cache/",
+    "customer_data/",
+    "dist/",
+    "logs/",
+    "private_samples/",
+    "temp/",
+    "*.pyc",
+    "~$*"
+  ],
+  "gate_d": {
+    "contract_validation": "passed",
+    "module_tests": "282 passed",
+    "repository_tests": "315 passed, 8 skipped",
+    "repository_verification": "passed"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0",
+  "sample_file": "07_empty_incomplete.xlsx",
+  "expected_status": "partial_success",
+  "expected_processed_count": 1,
+  "expected_failed_count": 0,
+  "expected_anomaly_fields": [
+    "workbook_completion"
+  ],
+  "expected_confirmation_fields": [],
+  "expected_sample_count": 0,
+  "expected_retest_count": 0,
+  "expected_immersion_peel_result": "",
+  "expected_average_density_g_cm3": null,
+  "expected_average_expansion_ratio": null,
+  "expected_conflict_count": 0,
+  "notes": "脱敏空表机器预期；空表或无可计算试件不进入正常统计，且不伪造确认项。"
+}

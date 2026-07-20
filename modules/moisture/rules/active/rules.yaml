@@ -1,0 +1,19 @@
+definitions:
+  - rule_id: HIGH_DEFAULT
+    rule_type: numeric_threshold
+    field: total_average
+    operator: ">"
+    threshold: "0.55"
+    color: orange
+    applicable_materials: [竹丝, 原竹丝]
+    applicable_seasons: [all]
+    customer_confirmation_status: confirmed
+  - rule_id: LOW_DEFAULT
+    rule_type: numeric_threshold
+    field: total_average
+    operator: "<"
+    threshold: "0.47"
+    color: green
+    applicable_materials: [竹丝, 原竹丝]
+    applicable_seasons: [all]
+    customer_confirmation_status: confirmed

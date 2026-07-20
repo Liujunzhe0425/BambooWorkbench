@@ -1,0 +1,26 @@
+{
+  "request_id": "msr-ai-0123456789abcdef01234567",
+  "service": "ai",
+  "scope": null,
+  "purpose": "复核水分规则候选摘要",
+  "payload": {
+    "schema_version": "1.0",
+    "rule_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "candidates": [
+      {
+        "candidate_id": "candidate-0123456789abcdef",
+        "direction": "high",
+        "field": "mean",
+        "observed_value": "0.60",
+        "threshold": "0.55",
+        "relative_deviation": "0.090909",
+        "evidence_refs": ["rule:RULE-HIGH"]
+      }
+    ],
+    "candidate_total": 1,
+    "candidate_sent": 1,
+    "candidate_omitted": 0,
+    "instruction": "仅基于规范化候选摘要提供竹丝水分复核建议"
+  },
+  "requires_user_consent": true
+}
