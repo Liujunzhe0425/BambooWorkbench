@@ -310,6 +310,10 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
     workbook = openpyxl.load_workbook(final_output / "after_sales_summary.xlsx", data_only=True)
     detail = workbook["售后明细"]
     headers = {detail.cell(1, col).value: col for col in range(1, detail.max_column + 1)}
+    master = workbook["售后汇总明细"]
+    master_headers = {
+        master.cell(3, col).value: col for col in range(1, master.max_column + 1)
+    }
 
     assert final["status"] == "success"
     assert final["summary"]["confirmation_count"] == 0
@@ -319,6 +323,9 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
     assert detail.cell(2, headers["企业售后成本"]).value == 1200
     assert detail.cell(2, headers["内部责任扣款"]).value == 200
     assert detail.cell(2, headers["外部承担金额"]).value == 300
+    assert master.cell(4, master_headers["最终售后费用（企业承担）"]).value == 1200
+    assert master.cell(4, master_headers["内部责任扣款"]).value == 200
+    assert master.cell(4, master_headers["外部承担金额"]).value == 300
     assert "企业售后成本合计：1200.00 元" in report
     assert "内部责任扣款合计：200.00 元" in report
     assert "外部承担金额合计：300.00 元" in report

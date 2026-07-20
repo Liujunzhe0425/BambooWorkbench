@@ -601,7 +601,8 @@ def test_all_summary_includes_records_from_every_year():
         output = Path(tmp) / "all-years.xlsx"
         write_summary_workbook(records, output, load_rules(MODULE_ROOT))
         workbook = openpyxl.load_workbook(output, data_only=False)
-        assert workbook.sheetnames[0] == "全部统计"
+        assert workbook.sheetnames[0] == "售后汇总明细"
+        assert "全部统计" in workbook.sheetnames
         sheet = workbook["全部统计"]
         label_rows = {sheet.cell(row, 2).value: row for row in range(1, sheet.max_row + 1)}
         assert sheet.cell(2, 4).value == "2025年"
@@ -615,6 +616,131 @@ def test_all_summary_includes_records_from_every_year():
             "=SUM("
         )
         assert str(sheet.cell(label_rows["处理中数量"], sheet.max_column).value).startswith("=SUM(")
+
+
+def test_master_detail_keeps_every_input_and_sorts_by_full_complaint_date():
+    records = [
+        {
+            "input_index": 1,
+            "source_file": "2026年一月.xlsx",
+            "sheet": "售后申请表",
+            "included_in_summary": True,
+            "analysis_status": "智能分析完成",
+            "complaint_date": "2026-01-10",
+            "complaint_date_raw": "2026年1月10日",
+            "year": 2026,
+            "month": 1,
+            "customer": "甲项目",
+            "brand": "桃花江",
+            "feedback": "板材安装后开裂",
+            "investigation": "板材收缩并且开片尺寸存在偏差",
+            "application": "申请重新加工",
+            "solution": "重新生产并补发",
+            "responsibility": "已落实生产复核",
+            "issue_reason_summary": "板材收缩与开片尺寸偏差共同导致无法安装",
+            "issue_types": ["性能", "加工"],
+            "primary_issue_type": "加工",
+            "selected_solution": "重新生产并补发",
+            "enterprise_cost_amount": 3200,
+            "enterprise_cost_status": "exact",
+            "enterprise_cost_evidence": "最终方案明确合计3200元",
+            "internal_accountability_amount": 200,
+            "external_borne_amount": 300,
+            "resolution_status": "已解决",
+        },
+        {
+            "input_index": 2,
+            "source_file": "2025年十二月.xlsx",
+            "included_in_summary": True,
+            "analysis_status": "离线规则分析完成",
+            "complaint_date": "2025-12-20",
+            "complaint_date_raw": "2025-12-20",
+            "year": 2025,
+            "month": 12,
+            "brand": "未知",
+            "issue_types": ["外观"],
+            "primary_issue_type": "外观",
+            "issue_reason_summary": "表面存在明显色差",
+            "enterprise_cost_amount": 360,
+            "resolution_status": "处理中",
+        },
+        {
+            "input_index": 5,
+            "source_file": "2026年一月较早.xlsx",
+            "included_in_summary": True,
+            "analysis_status": "离线规则分析完成",
+            "complaint_date": "2026-01-02",
+            "complaint_date_raw": "2026年1月2日",
+            "year": 2026,
+            "month": 1,
+            "brand": "桃花江",
+            "issue_types": ["性能"],
+            "primary_issue_type": "性能",
+            "issue_reason_summary": "板材开裂",
+            "enterprise_cost_amount": 100,
+            "resolution_status": "已解决",
+        },
+        {
+            "input_index": 3,
+            "source_file": "年份不明.xlsx",
+            "included_in_summary": True,
+            "analysis_status": "离线规则分析完成",
+            "complaint_date": "2月5日",
+            "complaint_date_raw": "2月5日",
+            "year": None,
+            "month": 2,
+            "brand": "竹语堂",
+            "issue_types": ["加工"],
+            "primary_issue_type": "加工",
+            "issue_reason_summary": "加工尺寸错误",
+            "enterprise_cost_amount": None,
+            "resolution_status": "未解决",
+        },
+        {
+            "input_index": 4,
+            "source_file": "损坏.xlsx",
+            "included_in_summary": False,
+            "analysis_status": "分析失败",
+            "analysis_error": "工作簿损坏",
+            "complaint_date": None,
+            "complaint_date_raw": "",
+            "year": None,
+            "month": None,
+            "brand": "未知",
+            "issue_types": ["其他"],
+            "primary_issue_type": "其他",
+            "issue_reason_summary": "文件未能完成分析",
+            "enterprise_cost_amount": None,
+            "resolution_status": "未解决",
+        },
+    ]
+    with tempfile.TemporaryDirectory() as tmp:
+        output = Path(tmp) / "master-detail.xlsx"
+        write_summary_workbook(records, output, load_rules(MODULE_ROOT))
+        workbook = openpyxl.load_workbook(output, data_only=True)
+        sheet = workbook["售后汇总明细"]
+        headers = {sheet.cell(3, col).value: col for col in range(1, sheet.max_column + 1)}
+
+        assert sheet.max_row == 8
+        assert [sheet.cell(row, headers["来源文件"]).value for row in range(4, 9)] == [
+            "2025年十二月.xlsx",
+            "2026年一月较早.xlsx",
+            "2026年一月.xlsx",
+            "年份不明.xlsx",
+            "损坏.xlsx",
+        ]
+        assert sheet.cell(6, headers["客户反馈内容"]).value == "板材安装后开裂"
+        assert "分析结论：板材收缩与开片尺寸偏差共同导致无法安装" in sheet.cell(
+            6, headers["售后问题分析"]
+        ).value
+        assert sheet.cell(6, headers["原因分类（性能/外观/加工）"]).value == "性能、加工"
+        assert sheet.cell(6, headers["性能"]).value == "是"
+        assert sheet.cell(6, headers["外观"]).value == "否"
+        assert sheet.cell(6, headers["加工"]).value == "是"
+        assert sheet.cell(6, headers["最终售后费用（企业承担）"]).value == 3200
+        assert sheet.cell(6, headers["最终费用状态"]).value == "已确认"
+        assert sheet.cell(6, headers["是否已解决"]).value == "是"
+        assert sheet.cell(8, headers["纳入业务汇总"]).value == "否"
 
 
 def test_arbitrary_excel_layout_is_sent_to_ai_and_new_brand_is_preserved():
