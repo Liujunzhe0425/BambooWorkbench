@@ -39,6 +39,21 @@ class MockProvider:
         return "MockProvider(offline=True)"
 
 
+class UnavailableProvider:
+    """Keep the desktop usable while making an invalid online setup explicit."""
+
+    def __init__(self, provider_id: str, reason: str) -> None:
+        self.provider_id = provider_id
+        self.reason = reason
+
+    def complete(self, request: AIRequest) -> AIResponse:
+        del request
+        raise ProviderConfigurationError(self.reason)
+
+    def __repr__(self) -> str:
+        return f"UnavailableProvider(provider_id={self.provider_id!r})"
+
+
 class OpenAICompatibleProvider:
     provider_id = "openai-compatible"
 
@@ -85,3 +100,17 @@ class OpenAICompatibleProvider:
             f"OpenAICompatibleProvider(base_url={self.base_url!r}, "
             "api_key=<redacted>)"
         )
+
+
+class DeepSeekProvider(OpenAICompatibleProvider):
+    """DeepSeek's official OpenAI Chat Completions compatible endpoint."""
+
+    provider_id = "deepseek"
+
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = "https://api.deepseek.com",
+        client: httpx.Client | None = None,
+    ) -> None:
+        super().__init__(base_url, api_key, client)

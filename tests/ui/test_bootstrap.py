@@ -11,6 +11,7 @@ from app.bootstrap import (
     resolve_real_modules_root,
     resolve_resource_root,
 )
+from core.ai.providers import DeepSeekProvider
 from core.contracts.enums import ModuleId
 from core.modules.registry import ModuleRegistry
 from ui.main_window import MainWindow
@@ -165,6 +166,30 @@ def test_build_context_defaults_to_real_modules(tmp_path: Path) -> None:
     context = build_context(tmp_path / "production-default")
     try:
         assert context.registry.use_mocks is False
+    finally:
+        context.close()
+
+
+def test_context_reloads_deepseek_configuration_without_restart(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context = build_context(tmp_path / "deepseek-reload", use_mocks=True)
+    try:
+        context.settings.set("ai_provider", "deepseek")
+        context.settings.set("ai_base_url", "https://api.deepseek.com")
+        context.settings.set("ai_model", "deepseek-v4-flash")
+        context.settings.set("ai_network_enabled", "true")
+        monkeypatch.setattr(
+            context.credential_store,
+            "get_secret",
+            lambda provider_id: "secret" if provider_id == "deepseek" else None,
+        )
+
+        context.reload_ai_configuration()
+
+        assert isinstance(context.ai_gateway.provider, DeepSeekProvider)
+        assert context.service_orchestrator.provider_id == "deepseek"
+        assert context.service_orchestrator.model == "deepseek-v4-flash"
     finally:
         context.close()
 

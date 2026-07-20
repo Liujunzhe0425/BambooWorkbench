@@ -47,13 +47,15 @@ if (Test-Path -LiteralPath $SourceModules -PathType Container) {
             $StartInfo.CreateNoWindow = $true
             $StartInfo.RedirectStandardOutput = $true
             $StartInfo.RedirectStandardError = $true
-            # PS 5.1: 不调用 Clear() — UseShellExecute=$false 时子进程仅继承显式设置的变量
-            $StartInfo.Environment['SystemRoot'] = $env:SystemRoot
-            $StartInfo.Environment['ComSpec'] = Join-Path $env:SystemRoot 'System32\cmd.exe'
-            $StartInfo.Environment['PATH'] = Join-Path $env:SystemRoot 'System32'
-            $StartInfo.Environment['PATHEXT'] = '.COM;.EXE;.BAT;.CMD'
-            $StartInfo.Environment['TEMP'] = $env:TEMP
-            $StartInfo.Environment['TMP'] = $env:TMP
+            # Windows PowerShell 5.1 exposes EnvironmentVariables, not Environment.
+            # Clear inherited Python/development variables before testing frozen runtimes.
+            $StartInfo.EnvironmentVariables.Clear()
+            $StartInfo.EnvironmentVariables['SystemRoot'] = $env:SystemRoot
+            $StartInfo.EnvironmentVariables['ComSpec'] = Join-Path $env:SystemRoot 'System32\cmd.exe'
+            $StartInfo.EnvironmentVariables['PATH'] = Join-Path $env:SystemRoot 'System32'
+            $StartInfo.EnvironmentVariables['PATHEXT'] = '.COM;.EXE;.BAT;.CMD'
+            $StartInfo.EnvironmentVariables['TEMP'] = $env:TEMP
+            $StartInfo.EnvironmentVariables['TMP'] = $env:TMP
 
             $Process = [System.Diagnostics.Process]::Start($StartInfo)
             $Stdout = $Process.StandardOutput.ReadToEnd()
@@ -75,17 +77,19 @@ if (Test-Path -LiteralPath $SourceModules -PathType Container) {
     }
 }
 
-$Executable = Join-Path $Bundle 'BambooWorkbench.exe'
-$Process = Start-Process -FilePath $Executable -ArgumentList '--smoke-test' `
-    -PassThru -WindowStyle Hidden
-try {
-    Wait-Process -Id $Process.Id -Timeout 90 -ErrorAction Stop
-} catch {
-    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
-    throw 'Packaged smoke test timed out'
-}
-$Process.Refresh()
-if ($Process.ExitCode -ne 0) {
-    throw "Packaged smoke test failed: $($Process.ExitCode)"
+foreach ($SmokeMode in @('--smoke-test', '--demo-smoke-test')) {
+    $Executable = Join-Path $Bundle 'BambooWorkbench.exe'
+    $Process = Start-Process -FilePath $Executable -ArgumentList $SmokeMode `
+        -PassThru -WindowStyle Hidden
+    try {
+        Wait-Process -Id $Process.Id -Timeout 90 -ErrorAction Stop
+    } catch {
+        Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+        throw "Packaged $SmokeMode timed out"
+    }
+    $Process.Refresh()
+    if ($Process.ExitCode -ne 0) {
+        throw "Packaged $SmokeMode failed: $($Process.ExitCode)"
+    }
 }
 Write-Host 'Portable bundle verification passed.' -ForegroundColor Green
