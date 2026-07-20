@@ -14,6 +14,7 @@
 ## A. 包完整性
 
 - [ ] `module.json`、入口脚本、README、CHANGELOG、依赖清单齐全
+- [ ] `build_portable_runtime.ps1` 可重复构建独立运行时
 - [ ] `src/`、`tests/`、`samples/`、`docs/` 齐全
 - [ ] 规则、模板、脱敏样本、预期结果和示例输出齐全
 - [ ] ZIP 解压后没有额外嵌套层级或绝对路径依赖
@@ -25,6 +26,7 @@
 - [ ] 单文件和批量 `run --job` 可无交互执行
 - [ ] 进度输出、退出码、`result.json` 和成果路径符合合同
 - [ ] draft、人工确认/公共服务、finalize 全流程可运行
+- [ ] 清空 Python/虚拟环境变量后，便携包内 `version`、`self-check` 返回正确结果
 
 ## C. 模块负责人拥有的业务正确性证据
 
