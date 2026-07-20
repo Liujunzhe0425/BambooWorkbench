@@ -17,6 +17,7 @@ MODULE_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = MODULE_ROOT.parent
 sys.path.insert(0, str(MODULE_ROOT / "src"))
 
+from after_sales_agent.annual_rollup import write_annual_rollup_workbook  # noqa: E402
 from after_sales_agent.deepseek_gateway import (  # noqa: E402
     chat_completions_url,
     create_model_response,
@@ -601,7 +602,7 @@ def test_all_summary_includes_records_from_every_year():
         output = Path(tmp) / "all-years.xlsx"
         write_summary_workbook(records, output, load_rules(MODULE_ROOT))
         workbook = openpyxl.load_workbook(output, data_only=False)
-        assert workbook.sheetnames[0] == "售后汇总明细"
+        assert workbook.sheetnames[0] == "全部统计"
         assert "全部统计" in workbook.sheetnames
         sheet = workbook["全部统计"]
         label_rows = {sheet.cell(row, 2).value: row for row in range(1, sheet.max_row + 1)}
@@ -618,7 +619,7 @@ def test_all_summary_includes_records_from_every_year():
         assert str(sheet.cell(label_rows["处理中数量"], sheet.max_column).value).startswith("=SUM(")
 
 
-def test_master_detail_keeps_every_input_and_sorts_by_full_complaint_date():
+def test_annual_rollup_keeps_every_input_and_sorts_by_full_complaint_date():
     records = [
         {
             "input_index": 1,
@@ -715,32 +716,35 @@ def test_master_detail_keeps_every_input_and_sorts_by_full_complaint_date():
         },
     ]
     with tempfile.TemporaryDirectory() as tmp:
-        output = Path(tmp) / "master-detail.xlsx"
-        write_summary_workbook(records, output, load_rules(MODULE_ROOT))
+        output = Path(tmp) / "annual-rollup.xlsx"
+        write_annual_rollup_workbook(records, output, load_rules(MODULE_ROOT))
         workbook = openpyxl.load_workbook(output, data_only=True)
-        sheet = workbook["售后汇总明细"]
-        headers = {sheet.cell(3, col).value: col for col in range(1, sheet.max_column + 1)}
+        assert workbook.sheetnames == [
+            "汇总表",
+            "25年售后统计表",
+            "26年售后统计表",
+            "年份未注明售后统计表",
+            "输入文件对账",
+        ]
+        sheet_2025 = workbook["25年售后统计表"]
+        sheet_2026 = workbook["26年售后统计表"]
+        sheet_unknown = workbook["年份未注明售后统计表"]
 
-        assert sheet.max_row == 8
-        assert [sheet.cell(row, headers["来源文件"]).value for row in range(4, 9)] == [
-            "2025年十二月.xlsx",
+        assert sheet_2025["U3"].value == "2025年十二月.xlsx"
+        assert [sheet_2026.cell(row, 21).value for row in range(3, 5)] == [
             "2026年一月较早.xlsx",
             "2026年一月.xlsx",
+        ]
+        assert [sheet_unknown.cell(row, 21).value for row in range(3, 5)] == [
             "年份不明.xlsx",
             "损坏.xlsx",
         ]
-        assert sheet.cell(6, headers["客户反馈内容"]).value == "板材安装后开裂"
-        assert "分析结论：板材收缩与开片尺寸偏差共同导致无法安装" in sheet.cell(
-            6, headers["售后问题分析"]
-        ).value
-        assert sheet.cell(6, headers["原因分类（性能/外观/加工）"]).value == "性能、加工"
-        assert sheet.cell(6, headers["性能"]).value == "是"
-        assert sheet.cell(6, headers["外观"]).value == "否"
-        assert sheet.cell(6, headers["加工"]).value == "是"
-        assert sheet.cell(6, headers["最终售后费用（企业承担）"]).value == 3200
-        assert sheet.cell(6, headers["最终费用状态"]).value == "已确认"
-        assert sheet.cell(6, headers["是否已解决"]).value == "是"
-        assert sheet.cell(8, headers["纳入业务汇总"]).value == "否"
+        assert sheet_2026["J4"].value == "板材安装后开裂"
+        assert sheet_2026["K4"].value == "板材收缩与开片尺寸偏差共同导致无法安装"
+        assert sheet_2026["Q4"].value == "加工"
+        assert sheet_2026["N4"].value == 3200
+        assert sheet_2026["R4"].value == "是"
+        assert sheet_unknown["V4"].value == "否"
 
 
 def test_arbitrary_excel_layout_is_sent_to_ai_and_new_brand_is_preserved():

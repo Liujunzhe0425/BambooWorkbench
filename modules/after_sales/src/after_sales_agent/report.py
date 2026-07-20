@@ -31,10 +31,6 @@ def write_summary_workbook(
     chronological_summary_records = [
         record for record in chronological_records if record.get("included_in_summary", True)
     ]
-    # 用户先看到逐案原始内容，再看到统计结果。每份输入文件固定保留一行，
-    # 分析失败的文件同样进入本表，避免批量处理中静默漏件。
-    master_detail = wb.create_sheet("售后汇总明细")
-    _write_master_detail(master_detail, chronological_records)
     # 第一张表按“年份 -> 月份”连续排列，年份不明的数据单独列示，绝不把不同年份的同月混算。
     all_ws = wb.create_sheet("全部统计")
     _write_chronological_summary(all_ws, chronological_summary_records, rules)
