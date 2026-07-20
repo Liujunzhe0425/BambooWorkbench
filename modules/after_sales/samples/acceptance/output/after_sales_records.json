@@ -1,0 +1,126 @@
+[
+  {
+    "source_file": "pr16_acceptance_sample.xlsx",
+    "sheet": "售后单",
+    "file_sha256": "f76db5b3f931751f3dc7e3bf20586d9746573526317701affa1995765f4cbc6b",
+    "customer": "示例客户",
+    "location": "示例地点",
+    "salesperson": "示例销售",
+    "product": "桃花江竹地板",
+    "spec": "1860×139×18",
+    "order_no": "FZ-SAMPLE-20260501-001N",
+    "delivery_date": "",
+    "complaint_date": "2026-05-10",
+    "complaint_date_raw": "2026-05-10",
+    "year": 2026,
+    "month": 5,
+    "date_analysis_source": "rules",
+    "brand": "桃花江",
+    "brand_confidence": 0.95,
+    "brand_evidence": "桃花江",
+    "brand_reason": "",
+    "issue_types": [
+      "性能",
+      "加工"
+    ],
+    "primary_issue_type": "性能",
+    "issue_reason_summary": "现场复核确认含水率变化导致收缩开裂，部分加工尺寸偏差",
+    "issue_confidence": 0.85,
+    "issue_analysis_source": "rules",
+    "analysis_note": "离线规则分析完成",
+    "issue_evidence": {
+      "性能": [
+        "开裂",
+        "收缩"
+      ],
+      "加工": [
+        "尺寸",
+        "规格",
+        "加工"
+      ]
+    },
+    "api_analysis": null,
+    "cost": 1000.0,
+    "fee_amount": 1000.0,
+    "enterprise_cost_amount": 1000.0,
+    "enterprise_cost_status": "exact",
+    "enterprise_cost_evidence": "售后解决方案·企业售后成本：识别到明确费用 1000 元",
+    "enterprise_cost_reviewed": false,
+    "internal_accountability_amount": 200.0,
+    "internal_accountability_status": "exact",
+    "internal_accountability_evidence": "售后解决方案·内部责任扣款：识别到明确费用 200 元",
+    "internal_accountability_reviewed": false,
+    "external_borne_amount": 300.0,
+    "external_borne_status": "exact",
+    "external_borne_evidence": "售后解决方案·外部承担金额：识别到明确费用 300 元",
+    "external_borne_reviewed": false,
+    "fee_currency": "CNY",
+    "fee_status": "exact",
+    "cost_included": true,
+    "cost_status": "exact",
+    "cost_items": [
+      {
+        "name": "售后费用",
+        "amount": 1000.0,
+        "evidence": "合计1000元"
+      }
+    ],
+    "internal_accountability_items": [
+      {
+        "name": "售后费用",
+        "amount": 200.0,
+        "evidence": "内部责任扣款200元"
+      }
+    ],
+    "external_borne_items": [
+      {
+        "name": "售后费用",
+        "amount": 300.0,
+        "evidence": "供应商承担300元"
+      }
+    ],
+    "cost_rule_amount": 1000.0,
+    "cost_rule_evidence": "售后解决方案·企业售后成本：识别到明确费用 1000 元",
+    "api_cost_candidate": null,
+    "api_cost_evidence": "",
+    "cost_evidence": "售后解决方案·企业售后成本：识别到明确费用 1000 元",
+    "cost_analysis_source": "deterministic",
+    "selected_solution": "已完成更换并结案。企业实际承担材料及运费，合计1000元；内部责任扣款200元；供应商承担300元。",
+    "resolution_status": "已解决",
+    "resolution_reason": "原文明确记录问题已经解决或处理完成",
+    "resolution_analysis_source": "rules",
+    "closed": true,
+    "closed_reason": "原文明确记录问题已经解决或处理完成",
+    "closed_analysis_source": "rules",
+    "case_status": "已关闭",
+    "warnings": [],
+    "needs_review": false,
+    "reviewed": false,
+    "reviewed_by": null,
+    "reviewed_at": null,
+    "source_cells": {
+      "customer": "B2",
+      "location": "D2",
+      "salesperson": "B3",
+      "complaint_date": "D3",
+      "product": "B4",
+      "spec": "D4",
+      "order_no": "B5:D5",
+      "feedback": "B6:D6",
+      "investigation": "B7:D7",
+      "application": "B8:D8",
+      "solution": "B9:D9",
+      "responsibility": "B10:D10,B11:D11"
+    },
+    "feedback": "安装后局部竹板开裂，并伴随尺寸偏差。",
+    "application": "批准补发并更换，执行后按实际承担费用结算。",
+    "investigation": "现场复核确认含水率变化导致收缩开裂，部分加工尺寸偏差。",
+    "solution": "已完成更换并结案。企业实际承担材料及运费，合计1000元；内部责任扣款200元；供应商承担300元。",
+    "responsibility": "补发、更换和客户确认均已完成，案件正式结案。\n本文件为人工构造的脱敏验收数据，不含真实客户信息。",
+    "input_index": 1,
+    "case_id": "pr16-artifact-tool-sanitized-1",
+    "analysis_status": "离线规则分析完成",
+    "analysis_error": "",
+    "included_in_summary": true
+  }
+]
