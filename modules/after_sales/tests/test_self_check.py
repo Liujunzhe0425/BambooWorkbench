@@ -11,6 +11,18 @@ sys.path.insert(0, str(MODULE_DIR / "src"))
 from after_sales_agent import cli as module_cli  # noqa: E402
 
 
+def test_cli_reconfigures_cp1252_streams_to_utf8(monkeypatch):
+    raw_output = io.BytesIO()
+    cp1252_stdout = io.TextIOWrapper(raw_output, encoding="cp1252", newline="\n")
+    monkeypatch.setattr(module_cli.sys, "stdout", cp1252_stdout)
+
+    module_cli._configure_standard_streams()
+    print("售后自检通过", file=module_cli.sys.stdout)
+    module_cli.sys.stdout.flush()
+
+    assert raw_output.getvalue().decode("utf-8").strip() == "售后自检通过"
+
+
 def test_progress_protocol_is_utf8_safe_on_gbk_stdout(monkeypatch):
     raw_output = io.BytesIO()
     gbk_stdout = io.TextIOWrapper(raw_output, encoding="gbk", newline="\n")
