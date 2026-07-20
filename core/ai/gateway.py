@@ -38,6 +38,9 @@ class AIGateway:
         self.audit_repository = audit_repository
         self.clock = clock or (lambda: datetime.now().astimezone().isoformat())
 
+    def set_provider(self, provider: AIProvider) -> None:
+        self.provider = provider
+
     def preview(self, request: GatewayRequest) -> RedactionPreview:
         return self.redactor.redact(request.payload)
 

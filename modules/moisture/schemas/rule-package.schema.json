@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bamboo-workbench.local/schemas/moisture-rule-package.schema.json",
+  "title": "Immutable moisture rule package manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "package_id",
+    "rule_version",
+    "rules_file",
+    "rules_sha256",
+    "source",
+    "applicable_scope",
+    "customer_confirmation_status",
+    "released_at",
+    "module_version"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "package_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "rule_version": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+    "rules_file": {"const": "rules.yaml"},
+    "rules_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source": {"type": "string", "minLength": 1},
+    "applicable_scope": {"type": "string", "minLength": 1},
+    "customer_confirmation_status": {
+      "enum": ["confirmed", "pending_confirmation"]
+    },
+    "released_at": {"type": "string", "format": "date-time"},
+    "module_version": {"type": "string", "pattern": "^0\\.1\\.0$"}
+  }
+}

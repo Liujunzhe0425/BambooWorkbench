@@ -1022,7 +1022,7 @@ class Navigation(QWidget):
         super().__init__()
         self.setObjectName("navigation")
         layout = QVBoxLayout(self)
-        self.logo = QLabel("湖大智竹实践团队")
+        self.logo = QLabel("湖南大学智创未来团队")
         self.logo.setObjectName("teamLogo")
         self.logo.setPixmap(QPixmap(str(logo_path)))
         self.logo.setScaledContents(True)
@@ -1043,7 +1043,7 @@ class Navigation(QWidget):
 
 Both `main_window.py` and `navigation.py` import `PageId` from `ui/page_ids.py`; neither imports the other for identifiers.
 
-Create `assets/brand/team-logo.svg` as the approved A-style tender-green team mark on a transparent canvas. It must include the text `湖大智竹实践团队`, use `#2FA47D` and `#294D3C`, remain legible at 150×54 px, and contain no linked external bitmap or font. `app/bootstrap.py` sets `context.resource_root` to the repository root in development and PyInstaller's bundle root when frozen.
+Create `assets/brand/team-logo.svg` as the approved A-style tender-green team mark on a transparent canvas. It must include the text `湖南大学智创未来团队`, use `#2FA47D` and `#294D3C`, remain legible at 150×54 px, and contain no linked external bitmap or font. `app/bootstrap.py` sets `context.resource_root` to the repository root in development and PyInstaller's bundle root when frozen.
 
 ```css
 /* resources/themes/bamboo.qss */

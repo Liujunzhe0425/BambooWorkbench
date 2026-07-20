@@ -47,6 +47,7 @@ def test_portable_build_requires_and_invokes_real_module_runtime_hooks() -> None
 def test_portable_verifier_runs_real_modules_without_development_python() -> None:
     verifier = (ROOT / "scripts/verify_portable.ps1").read_text(encoding="utf-8")
 
-    assert "StartInfo.Environment.Clear()" in verifier
+    assert "StartInfo.EnvironmentVariables.Clear()" in verifier
     assert "@('version', 'self-check')" in verifier
     assert "ModuleData.module_version" in verifier
+    assert "--demo-smoke-test" in verifier
