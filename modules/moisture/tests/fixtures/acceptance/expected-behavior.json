@@ -1,0 +1,24 @@
+{
+  "normal": {
+    "sample_count": 2,
+    "values": ["0.5", "0.52"],
+    "mean": "0.51",
+    "minimum": "0.5",
+    "maximum": "0.52",
+    "range_value": "0.02",
+    "display_color": "none"
+  },
+  "high_suspect": {
+    "sample_count": 1,
+    "mean": "0.6",
+    "display_color": "orange"
+  },
+  "low_suspect": {
+    "sample_count": 1,
+    "mean": "0.4",
+    "display_color": "green"
+  },
+  "eleven_samples": {"status": "failed", "failed_count": 1},
+  "corrupt": {"status": "failed", "failed_count": 1},
+  "duplicate_pair": {"processed_count": 1, "skipped_count": 1}
+}
