@@ -2,6 +2,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 
 from core.ai.audit import ConsentAuditRepository, ConsentDecision
 from core.ai.providers import AIProvider, AIRequest, AIResponse
@@ -23,6 +24,7 @@ class GatewayRequest:
     provider_id: str
     model: str
     payload: dict[str, object]
+    response_format: Literal["text", "json_object"] = "text"
 
 
 class AIGateway:
@@ -61,10 +63,17 @@ class AIGateway:
         if not allowed:
             raise ConsentDenied("user declined the AI request")
         prompt = json.dumps(preview.payload, ensure_ascii=False, sort_keys=True)
+        system = "你是品质数据分析助手。规则和人工确认高于模型通用知识。"
+        if request.response_format == "json_object":
+            system += (
+                "必须严格按照请求中的输出契约，仅返回一个合法 JSON 对象，"
+                "不要输出说明或代码块。"
+            )
         return self.provider.complete(
             AIRequest(
                 model=request.model,
-                system="你是品质数据分析助手。规则和人工确认高于模型通用知识。",
+                system=system,
                 prompt=prompt,
+                response_format=request.response_format,
             )
         )

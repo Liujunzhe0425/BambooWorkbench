@@ -15,6 +15,9 @@ def test_main_window_has_canonical_navigation(qtbot, app_context) -> None:
     assert window.windowIcon().isNull() is False
     assert window.title_bar.objectName() == "windowTitleBar"
     assert window.title_bar.version_label.text() == "BambooWorkbench v0.2.1"
+    assert window.title_bar.layout().spacing() == 10
+    assert window.title_bar.layout().itemAt(0).alignment() & Qt.AlignmentFlag.AlignVCenter
+    assert window.title_bar.layout().itemAt(1).alignment() & Qt.AlignmentFlag.AlignVCenter
     assert window.navigation.logo.objectName() == "teamLogo"
     assert window.navigation.logo.pixmap().isNull() is False
     assert list(window.pages) == [

@@ -41,9 +41,28 @@ def test_task_repository_records_lifecycle(database: Database) -> None:
     assert record["updated_at"] != record["created_at"]
     assert record["error"] == "先前错误"
     assert record["result_path"] == "D:/结果/result.json"
-    assert repository.list_recent() == [record]
+    assert repository.list_recent() == [{"task_number": 1, **record}]
+    assert repository.get_number("job-001") == 1
     with pytest.raises(KeyError):
         repository.get("missing")
+    with pytest.raises(KeyError):
+        repository.get_number("missing")
+
+
+def test_task_numbers_are_base_one_and_stable_in_recent_order(database: Database) -> None:
+    repository = TaskRepository(database)
+    repository.create("job-late", "boiling", "success", "2026-07-13T11:00:00+08:00")
+    repository.create("job-early", "moisture", "success", "2026-07-13T10:00:00+08:00")
+    repository.create("job-latest", "after_sales", "success", "2026-07-13T12:00:00+08:00")
+
+    records = repository.list_recent()
+
+    assert [(item["job_id"], item["task_number"]) for item in records] == [
+        ("job-latest", 3),
+        ("job-late", 2),
+        ("job-early", 1),
+    ]
+    assert repository.get_number("job-early") == 1
 
 
 def test_task_repository_records_files_and_replaces_outputs(database: Database) -> None:

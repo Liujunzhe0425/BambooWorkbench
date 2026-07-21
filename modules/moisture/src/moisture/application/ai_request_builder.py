@@ -11,9 +11,17 @@ from moisture.domain.enums import DisplayColor
 from moisture.domain.review import AIReviewCandidate
 from moisture.domain.rules import RulePackageSnapshot
 from moisture.ports.writers import WorkbookBatch
+from moisture.runtime_paths import module_root
 
 MAX_CANDIDATES = 50
 MAX_PAYLOAD_BYTES = 65_536
+_JSON_INSTRUCTION = (
+    "仅返回符合 response_schema 的 JSON 对象，不要输出 Markdown、代码块或额外说明。"
+    "decisions 必须逐一覆盖 candidates 中的每个候选，并原样复制 rule_hash、candidate_id、"
+    "direction、field、observed_value 和候选已有的 evidence_refs；decision 固定为 escalate；"
+    "confidence 必须不低于 0.80；reason 只说明辅助复核依据，不得修改阈值、替代人工确认"
+    "或形成正式质量责任结论。"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +130,17 @@ def _payload_size(payload: dict[str, object]) -> int:
     )
 
 
+def _response_schema() -> dict[str, object]:
+    payload = json.loads(
+        (module_root() / "schemas" / "ai-review-response.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if not isinstance(payload, dict):
+        raise ValueError("AI review response schema must be an object")
+    return payload
+
+
 def build_ai_request(
     *,
     root_job_id: str,
@@ -135,13 +154,15 @@ def build_ai_request(
     if not ordered:
         return AIRequestBuildResult(None, 0, 0, 0)
 
+    response_schema = _response_schema()
     summaries: list[dict[str, object]] = []
     for candidate in ordered[:MAX_CANDIDATES]:
         proposed = [*summaries, _candidate_summary(candidate)]
         payload = {
             "schema_version": "1.0",
             "rule_hash": rule_hash,
-            "instruction": "仅基于规范化候选摘要提供竹丝水分复核建议",
+            "instruction": _JSON_INSTRUCTION,
+            "response_schema": response_schema,
             "candidates": proposed,
             "candidate_total": total,
             "candidate_sent": len(proposed),
@@ -156,7 +177,8 @@ def build_ai_request(
     payload = {
         "schema_version": "1.0",
         "rule_hash": rule_hash,
-        "instruction": "仅基于规范化候选摘要提供竹丝水分复核建议",
+        "instruction": _JSON_INSTRUCTION,
+        "response_schema": response_schema,
         "candidates": summaries,
         "candidate_total": total,
         "candidate_sent": sent,
@@ -181,5 +203,6 @@ def build_ai_request(
         "purpose": "复核水分规则候选摘要",
         "payload": payload,
         "requires_user_consent": True,
+        "response_format": "json_object",
     }
     return AIRequestBuildResult(request, total, sent, omitted)

@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 from urllib.parse import urlparse
 
 import httpx
@@ -18,6 +18,7 @@ class AIRequest:
     model: str
     system: str
     prompt: str
+    response_format: Literal["text", "json_object"] = "text"
 
 
 @dataclass(frozen=True)
@@ -75,16 +76,19 @@ class OpenAICompatibleProvider:
         self.client = client or httpx.Client(timeout=30)
 
     def complete(self, request: AIRequest) -> AIResponse:
+        payload: dict[str, object] = {
+            "model": request.model,
+            "messages": [
+                {"role": "system", "content": request.system},
+                {"role": "user", "content": request.prompt},
+            ],
+        }
+        if request.response_format == "json_object":
+            payload["response_format"] = {"type": "json_object"}
         response = self.client.post(
             f"{self.base_url}/chat/completions",
             headers={"Authorization": f"Bearer {self._api_key}"},
-            json={
-                "model": request.model,
-                "messages": [
-                    {"role": "system", "content": request.system},
-                    {"role": "user", "content": request.prompt},
-                ],
-            },
+            json=payload,
         )
         response.raise_for_status()
         try:
