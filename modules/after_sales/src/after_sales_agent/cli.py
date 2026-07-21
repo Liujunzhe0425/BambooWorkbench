@@ -19,6 +19,10 @@ from after_sales_agent import MODULE_ID, MODULE_NAME, MODULE_VERSION
 from after_sales_agent.analysis import write_analysis_report
 from after_sales_agent.annual_rollup import write_annual_rollup_workbook
 from after_sales_agent.extractor import file_sha256, process_workbook
+from after_sales_agent.manual_review import (
+    apply_business_review_value,
+    build_required_review_prompts,
+)
 from after_sales_agent.report import write_summary_workbook
 from after_sales_agent.rules import load_rules
 
@@ -143,6 +147,8 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 seen_hashes.setdefault(digest, str(input_file))
 
                 record, anomalies, confirmations = process_workbook(input_file, rules, api_config)
+                if record:
+                    confirmations.extend(build_required_review_prompts(record, rules))
                 result["anomalies"].extend(
                     _normalize_anomalies(anomalies, len(result["anomalies"]))
                 )
@@ -444,6 +450,8 @@ def _apply_confirmation_answers(
 
 
 def _apply_record_value(record: dict[str, Any], field: str, value: Any) -> None:
+    if apply_business_review_value(record, field, value):
+        return
     if field in {"brand", "brand_name"}:
         record["brand"] = str(value or "未知").strip() or "未知"
         record["brand_confidence"] = 1.0

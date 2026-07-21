@@ -13,6 +13,10 @@ from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from after_sales_agent.analysis import ISSUE_ORDER, build_analysis_metrics
+from after_sales_agent.manual_review import (
+    effective_after_sales_fee,
+    effective_responsible_factory,
+)
 
 
 def write_summary_workbook(
@@ -124,7 +128,12 @@ def _write_master_detail(ws: Any, records: list[dict[str, Any]]) -> None:
         ("appearance_flag", "外观"),
         ("processing_flag", "加工"),
         ("primary_issue_type", "主要原因"),
+        ("complaint_type_reviewed_display", "投诉类型复核状态"),
         ("selected_solution", "最终采用方案"),
+        ("after_sales_fee_amount", "售后费用（人工复核口径）"),
+        ("after_sales_fee_reviewed_display", "售后费用复核状态"),
+        ("responsible_factory", "责任工厂（人工复核口径）"),
+        ("responsibility_reviewed_display", "责任工厂复核状态"),
         ("enterprise_cost_amount", "最终售后费用（企业承担）"),
         ("internal_accountability_amount", "内部责任扣款"),
         ("external_borne_amount", "外部承担金额"),
@@ -173,6 +182,7 @@ def _write_master_detail(ws: Any, records: list[dict[str, Any]]) -> None:
     ws.row_dimensions[3].height = 34
 
     amount_keys = {
+        "after_sales_fee_amount",
         "enterprise_cost_amount",
         "internal_accountability_amount",
         "external_borne_amount",
@@ -190,7 +200,18 @@ def _write_master_detail(ws: Any, records: list[dict[str, Any]]) -> None:
             "performance_flag": "是" if "性能" in issue_types else "否",
             "appearance_flag": "是" if "外观" in issue_types else "否",
             "processing_flag": "是" if "加工" in issue_types else "否",
+            "complaint_type_reviewed_display": (
+                "已复核" if record.get("complaint_type_reviewed") else "待复核"
+            ),
             "selected_solution": record.get("selected_solution") or record.get("solution") or "",
+            "after_sales_fee_amount": effective_after_sales_fee(record),
+            "after_sales_fee_reviewed_display": (
+                "已复核" if record.get("after_sales_fee_reviewed") else "待复核"
+            ),
+            "responsible_factory": effective_responsible_factory(record) or "未知",
+            "responsibility_reviewed_display": (
+                "已复核" if record.get("responsibility_reviewed") else "待复核"
+            ),
             "enterprise_cost_amount": _record_amount(
                 record, "enterprise_cost_amount", "fee_amount", "cost"
             ),
@@ -585,6 +606,13 @@ def _write_input_audit(ws: Any, records: list[dict[str, Any]]) -> None:
         ("month", "月份"),
         ("primary_issue_type", "主要原因"),
         ("issue_reason_summary", "产生售后的具体原因"),
+        ("complaint_type_reviewed", "投诉类型已复核"),
+        ("after_sales_fee_amount", "售后费用"),
+        ("after_sales_fee_status", "售后费用复核状态"),
+        ("after_sales_fee_reviewed", "售后费用已复核"),
+        ("responsible_factory", "责任工厂"),
+        ("responsibility_reviewed", "责任工厂已复核"),
+        ("manual_review_completed", "三项人工复核完成"),
         ("enterprise_cost_amount", "企业售后成本"),
         ("enterprise_cost_status", "企业成本状态"),
         ("enterprise_cost_evidence", "企业成本依据"),
@@ -874,6 +902,13 @@ def _write_detail(ws: Any, records: list[dict[str, Any]]) -> None:
         ("issue_analysis_source", "分类来源"),
         ("issue_confidence", "分类置信度"),
         ("issue_reason_summary", "产生售后的具体原因"),
+        ("complaint_type_reviewed", "投诉类型已复核"),
+        ("after_sales_fee_amount", "售后费用"),
+        ("after_sales_fee_status", "售后费用复核状态"),
+        ("after_sales_fee_reviewed", "售后费用已复核"),
+        ("responsible_factory", "责任工厂"),
+        ("responsibility_reviewed", "责任工厂已复核"),
+        ("manual_review_completed", "三项人工复核完成"),
         ("enterprise_cost_amount", "企业售后成本"),
         ("enterprise_cost_status", "企业成本状态"),
         ("enterprise_cost_evidence", "企业成本依据"),
@@ -939,6 +974,8 @@ def _write_review(ws: Any, records: list[dict[str, Any]]) -> None:
         record
         for record in records
         if record.get("needs_review")
+        or record.get("mandatory_review_pending")
+        or record.get("manual_review_completed")
         or record.get("brand") in {"未知", "待确认"}
         or record.get("primary_issue_type") in {"其他", "待确认", None, ""}
         or record.get("enterprise_cost_status", record.get("fee_status"))
@@ -953,6 +990,13 @@ def _write_review(ws: Any, records: list[dict[str, Any]]) -> None:
         ("brand", "品牌"),
         ("complaint_date", "提出质量问题/报修日期"),
         ("primary_issue_type", "主原因"),
+        ("complaint_type_reviewed", "投诉类型已复核"),
+        ("after_sales_fee_amount", "售后费用"),
+        ("after_sales_fee_status", "售后费用状态"),
+        ("after_sales_fee_reviewed", "售后费用已复核"),
+        ("responsible_factory", "责任工厂"),
+        ("responsibility_reviewed", "责任工厂已复核"),
+        ("manual_review_completed", "三项复核完成"),
         ("enterprise_cost_amount", "企业售后成本"),
         ("enterprise_cost_status", "企业成本状态"),
         ("internal_accountability_amount", "内部责任扣款"),
@@ -976,7 +1020,13 @@ def _write_review(ws: Any, records: list[dict[str, Any]]) -> None:
                 value = Path(str(value)).name
             if isinstance(value, (list, dict)):
                 value = str(value)
-            if key == "reviewed":
+            if key in {
+                "reviewed",
+                "complaint_type_reviewed",
+                "after_sales_fee_reviewed",
+                "responsibility_reviewed",
+                "manual_review_completed",
+            }:
                 value = "是" if value else "否"
             ws.cell(row_index, col, value)
     header_fill = PatternFill("solid", fgColor="334E68")
@@ -988,7 +1038,33 @@ def _write_review(ws: Any, records: list[dict[str, Any]]) -> None:
         for cell in row:
             cell.alignment = Alignment(vertical="top", wrap_text=True)
             cell.font = Font(name="微软雅黑", size=9)
-    widths = [9, 36, 12, 20, 12, 15, 18, 15, 18, 15, 18, 12, 42, 46, 44, 32, 30, 12]
+    widths = [
+        9,
+        36,
+        12,
+        20,
+        12,
+        14,
+        14,
+        18,
+        14,
+        14,
+        14,
+        14,
+        15,
+        18,
+        15,
+        18,
+        15,
+        18,
+        12,
+        42,
+        46,
+        44,
+        32,
+        30,
+        12,
+    ]
     for col, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(col)].width = width
     ws.freeze_panes = "C2"

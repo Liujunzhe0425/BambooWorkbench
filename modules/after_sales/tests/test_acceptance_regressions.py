@@ -78,14 +78,17 @@ def _run(tmp_path: Path, payload: dict[str, object], name: str = "job") -> dict[
     return result
 
 
-def test_offline_complete_file_succeeds_without_api_confirmation(tmp_path: Path) -> None:
+def test_offline_complete_file_enters_required_business_review(tmp_path: Path) -> None:
     source = tmp_path / "完整脱敏样表.xlsx"
     _make_workbook(source)
     result = _run(tmp_path, _job([source], tmp_path / "output"))
 
-    assert result["status"] == "success"
-    assert result["summary"]["confirmation_count"] == 0
-    assert result["confirmations"] == []
+    assert result["status"] == "needs_confirmation"
+    assert result["summary"]["confirmation_count"] == 3
+    prompts = {item["field"]: item for item in result["confirmations"]}
+    assert set(prompts) == {"售后费用", "责任工厂", "投诉类型"}
+    assert all(item["blocking"] for item in prompts.values())
+    assert all(not item["batch_applicable"] for item in prompts.values())
     records = json.loads(
         (tmp_path / "output" / "after_sales_records.json").read_text(encoding="utf-8")
     )
@@ -99,14 +102,14 @@ def test_pr16_sanitized_fixture_preserves_second_round_baseline(tmp_path: Path) 
     records = json.loads((output / "after_sales_records.json").read_text(encoding="utf-8"))
     record = records[0]
 
-    assert result["status"] == "success"
+    assert result["status"] == "needs_confirmation"
     assert result["summary"] == {
         "input_count": 1,
         "processed_count": 1,
         "skipped_count": 0,
         "failed_count": 0,
         "anomaly_count": 0,
-        "confirmation_count": 0,
+        "confirmation_count": 3,
     }
     assert {item["type"] for item in result["outputs"]} == {
         "annual_rollup_excel",
@@ -135,7 +138,8 @@ def test_offline_batch_never_creates_api_config_confirmations(tmp_path: Path) ->
         )
     result = _run(tmp_path, _job(files, tmp_path / "batch-output"))
 
-    assert result["status"] == "success"
+    assert result["status"] == "needs_confirmation"
+    assert result["summary"]["confirmation_count"] == 9
     assert not any(item["field"] == "api_config" for item in result["confirmations"])
 
 
@@ -288,9 +292,11 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
                 "schema_version": "1.0",
                 "job_id": "acceptance-draft",
                 "answers": [
-                    {"confirmation_id": prompt["confirmation_id"], "value": values[field]}
+                    {
+                        "confirmation_id": prompt["confirmation_id"],
+                        "value": values.get(field, prompt.get("suggested_value")),
+                    }
                     for field, prompt in prompts.items()
-                    if field in values
                 ],
             },
             ensure_ascii=False,

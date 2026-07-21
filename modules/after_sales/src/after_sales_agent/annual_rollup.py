@@ -12,6 +12,11 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
+from after_sales_agent.manual_review import (
+    effective_after_sales_fee,
+    effective_responsible_factory,
+)
+
 ISSUE_TYPES = ("性能", "外观", "加工")
 TITLE_FILL = PatternFill("solid", fgColor="0F6B55")
 HEADER_FILL = PatternFill("solid", fgColor="DCEFE7")
@@ -463,19 +468,7 @@ def _delivery_date_value(value: Any) -> date | str:
 
 
 def _responsibility_text(record: dict[str, Any]) -> str:
-    explicit = _text(record.get("responsibility"))
-    if explicit:
-        return explicit
-    text = "；".join((record["investigation"], record["solution"]))
-    patterns = (
-        r"责任(?:由|方为|主体为)\s*([^。；，]{2,30})",
-        r"由\s*([^。；，]{2,30})\s*(?:承担|负责)",
-    )
-    for pattern in patterns:
-        match = re.search(pattern, text)
-        if match:
-            return match.group(1).strip(" ：:，,。；;")
-    return ""
+    return effective_responsible_factory(record)
 
 
 def _complaint_type_label(record: dict[str, Any]) -> str:
@@ -530,6 +523,8 @@ def _normalize_record(record: dict[str, Any], fallback_index: int) -> dict[str, 
         "investigation": _text(record.get("investigation")),
         "solution": _text(record.get("selected_solution")) or _text(record.get("solution")),
         "responsibility": _text(record.get("responsibility")),
+        "responsible_factory": effective_responsible_factory(record) or "未知",
+        "responsibility_reviewed": bool(record.get("responsibility_reviewed")),
         "issue_reason": _issue_reason(record),
         "after_sales_fee": _after_sales_fee(record),
         "enterprise_cost": _amount(record, "enterprise_cost_amount", "fee_amount", "cost"),
@@ -1188,46 +1183,7 @@ def _amount(record: dict[str, Any], *keys: str) -> float | None:
 
 
 def _after_sales_fee(record: dict[str, Any]) -> float | None:
-    """Return the selected solution's actual after-sales fee for the reference template.
-
-    The template's ``售后费用`` column is a case-cost total. It is intentionally
-    separate from the three-way accounting split used elsewhere in the module.
-    """
-
-    solution = _text(record.get("selected_solution")) or _text(record.get("solution"))
-    enterprise = _amount(record, "enterprise_cost_amount", "fee_amount", "cost")
-    external = _amount(record, "external_borne_amount")
-
-    total_patterns = (
-        r"(?:合计总费用|总计(?:材料)?费用|预计总费用)[^。；]{0,100}?"
-        r"(?:=|为|约)?\s*(\d+(?:\.\d+)?)\s*元",
-        r"预估[^。；]{0,60}?=\s*(\d+(?:\.\d+)?)\s*元",
-    )
-    totals: list[float] = []
-    for pattern in total_patterns:
-        totals.extend(float(value) for value in re.findall(pattern, solution))
-    if totals:
-        return round(totals[-1], 2)
-
-    if enterprise is not None and external is not None:
-        enterprise_text = f"{enterprise:g}"
-        external_text = f"{external:g}"
-        has_enterprise = enterprise_text in solution
-        has_external = external_text in solution
-        if has_enterprise and has_external:
-            return round(enterprise + external, 2)
-        if has_external:
-            return external
-        return enterprise
-    if external is not None:
-        return external
-    if enterprise is not None:
-        return enterprise
-
-    explicit_results = re.findall(r"=\s*(\d+(?:\.\d+)?)\s*元", solution)
-    if explicit_results:
-        return round(float(explicit_results[-1]), 2)
-    return None
+    return effective_after_sales_fee(record)
 
 
 def _representative_text(values: Iterable[str]) -> str:
