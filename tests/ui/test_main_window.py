@@ -14,6 +14,7 @@ def test_main_window_has_canonical_navigation(qtbot, app_context) -> None:
     assert window.windowFlags() & Qt.WindowType.FramelessWindowHint
     assert window.windowIcon().isNull() is False
     assert window.title_bar.objectName() == "windowTitleBar"
+    assert window.title_bar.version_label.text() == "BambooWorkbench v0.2.1"
     assert window.navigation.logo.objectName() == "teamLogo"
     assert window.navigation.logo.pixmap().isNull() is False
     assert list(window.pages) == [
@@ -49,7 +50,7 @@ def test_navigation_exposes_accessible_names_and_descriptions(qtbot, app_context
 
     assert window.navigation.accessibleName() == "主导航"
     assert "竹简工作台" in window.navigation.accessibleDescription()
-    assert window.navigation.logo.accessibleName() == "湖大智竹实践团队标志"
-    assert "湖大智竹实践团队" in window.navigation.logo.accessibleDescription()
+    assert window.navigation.logo.accessibleName() == "湖南大学智创未来团队标志"
+    assert "湖南大学智创未来团队" in window.navigation.logo.accessibleDescription()
     for button in window.navigation.buttons.values():
         assert button.text().endswith(button.accessibleName())

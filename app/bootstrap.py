@@ -8,7 +8,13 @@ from PySide6.QtWidgets import QApplication
 
 from core.ai.audit import ConsentAuditRepository
 from core.ai.gateway import AIGateway
-from core.ai.providers import MockProvider
+from core.ai.providers import (
+    AIProvider,
+    DeepSeekProvider,
+    MockProvider,
+    OpenAICompatibleProvider,
+    UnavailableProvider,
+)
 from core.confirmations.service import ConfirmationService
 from core.knowledge.models import KnowledgeRecord, KnowledgeSourceKind
 from core.knowledge.repository import KnowledgeRepository
@@ -61,6 +67,16 @@ class AppContext:
             close_logging(self.logger, self.paths)
             self._closed = True
 
+    def reload_ai_configuration(self) -> None:
+        provider, provider_id, model = _configured_ai_provider(
+            self.settings,
+            self.credential_store,
+            self.logger,
+        )
+        self.ai_gateway.set_provider(provider)
+        self.service_orchestrator.provider_id = provider_id
+        self.service_orchestrator.model = model
+
 
 def resolve_resource_root() -> Path:
     if getattr(sys, "frozen", False):
@@ -90,16 +106,21 @@ def build_context(data_root: Path | None = None, use_mocks: bool = False) -> App
         knowledge_repository = KnowledgeRepository(database)
         _seed_framework_knowledge(knowledge_repository)
         credential_store = KeyringCredentialStore()
+        ai_provider, provider_id, model = _configured_ai_provider(
+            settings,
+            credential_store,
+            logger,
+        )
         ai_gateway = AIGateway(
-            MockProvider(),
+            ai_provider,
             RedactionService(),
             consent_audit_repository,
         )
         service_orchestrator = ServiceOrchestrator(
             knowledge_repository,
             ai_gateway,
-            provider_id="mock",
-            model=settings.get("ai_model", "mock-model") or "mock-model",
+            provider_id=provider_id,
+            model=model,
         )
         registry = ModuleRegistry(
             resolve_real_modules_root(resource_root, paths),
@@ -187,12 +208,62 @@ def _seed_framework_knowledge(repository: KnowledgeRepository) -> None:
         repository.add(record)
 
 
+def _configured_ai_provider(
+    settings: SettingsStore,
+    credential_store: CredentialStore,
+    logger: logging.Logger,
+) -> tuple[AIProvider, str, str]:
+    provider_id = settings.get("ai_provider", "mock") or "mock"
+    model = settings.get("ai_model", "mock-model") or "mock-model"
+    if provider_id == "mock":
+        return MockProvider(), provider_id, model
+    if settings.get("ai_network_enabled", "false") != "true":
+        return (
+            UnavailableProvider(provider_id, "AI 联网尚未启用，请在系统设置中开启。"),
+            provider_id,
+            model,
+        )
+    try:
+        api_key = credential_store.get_secret(provider_id)
+    except Exception as error:
+        logger.warning(
+            "AI credential lookup failed provider_id=%s error_type=%s",
+            provider_id,
+            type(error).__name__,
+        )
+        api_key = None
+    if not api_key:
+        return (
+            UnavailableProvider(provider_id, "尚未安全保存所选 AI 提供商的 API 密钥。"),
+            provider_id,
+            model,
+        )
+    base_url = settings.get("ai_base_url", "") or ""
+    if provider_id == "deepseek":
+        return (
+            DeepSeekProvider(api_key, base_url or "https://api.deepseek.com"),
+            provider_id,
+            model,
+        )
+    if provider_id == "openai-compatible":
+        return (
+            OpenAICompatibleProvider(base_url or "https://api.openai.com/v1", api_key),
+            provider_id,
+            model,
+        )
+    return (
+        UnavailableProvider(provider_id, "不支持的 AI 提供商配置。"),
+        provider_id,
+        model,
+    )
+
+
 def create_application(argv: list[str] | None = None) -> QApplication:
     existing = QApplication.instance()
     arguments = sys.argv if argv is None else argv
     application = existing if isinstance(existing, QApplication) else QApplication(arguments)
     application.setApplicationName("竹简工作台")
-    application.setOrganizationName("湖大智竹实践团队")
+    application.setOrganizationName("湖南大学智创未来团队")
     application.setStyle("Fusion")
     application.setFont(QFont("Microsoft YaHei UI", 10))
     palette = QPalette()
