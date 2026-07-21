@@ -33,15 +33,6 @@ MODULE_ID = "boiling"
 MODULE_VERSION = "0.2.0"
 
 
-def configure_standard_streams():
-    """Keep the frozen process protocol UTF-8 on every Windows code page."""
-    for stream_name in ("stdout", "stderr"):
-        stream = getattr(sys, stream_name, None)
-        reconfigure = getattr(stream, "reconfigure", None)
-        if callable(reconfigure):
-            reconfigure(encoding="utf-8", errors="backslashreplace")
-
-
 def resolve_module_root():
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent.parent
@@ -1990,7 +1981,11 @@ def run_job(job_path):
     )
     result["finished_at"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
     try:
-        result_path.write_text(json.dumps(sanitize_business_value(result), ensure_ascii=False, indent=2), encoding="utf-8")
+        sanitized = sanitize_business_value(result)
+        result_path.write_text(
+            json.dumps(sanitized, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
     except OSError as exc:
         print(f"无法写入 result.json: {exc}", file=sys.stderr)
         return 3
@@ -2049,7 +2044,6 @@ def self_check():
 
 
 def main():
-    configure_standard_streams()
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("version")

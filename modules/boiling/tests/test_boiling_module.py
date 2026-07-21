@@ -1,7 +1,6 @@
 ﻿import datetime as dt
 import hashlib
 import importlib.util
-import io
 import json
 import os
 import re
@@ -796,19 +795,6 @@ def test_stdout_contains_only_progress_protocol_events(tmp_path):
     assert events[-1]["percent"] == 100
 
 
-def test_cli_reconfigures_cp1252_streams_to_utf8(monkeypatch):
-    raw_output = io.BytesIO()
-    cp1252_stdout = io.TextIOWrapper(raw_output, encoding="cp1252", newline="\n")
-    monkeypatch.setattr(boiling_module.sys, "stdout", cp1252_stdout)
-
-    boiling_module.configure_standard_streams()
-    boiling_module.emit("水煮进度", 50)
-    boiling_module.sys.stdout.flush()
-
-    event = json.loads(raw_output.getvalue().decode("utf-8"))
-    assert event == {"type": "progress", "percent": 50, "message": "水煮进度"}
-
-
 def test_finalize_closes_usage_and_dependent_conclusion_conflicts_in_one_round(tmp_path):
     sample = tmp_path / "combined-conflicts.xlsx"
     make_labeled_sample(
@@ -990,13 +976,12 @@ def test_outputs_do_not_leak_absolute_paths_even_with_anomalies(tmp_path):
     finally:
         workbook.close()
     assert leaked == []
-    # result.json may contain framework-friendly absolute paths in source,
-    # but those come from the input files (temp dir), not customer dir.
+    # result.json must not leak the input file absolute path
+    input_path = str(sample.absolute())
     result_text = (output / "result.json").read_text(encoding="utf-8")
-    result_leaks = absolute_path.findall(result_text)
-    assert result_leaks, "result.json must contain at least temp-dir paths (intentional source tracking)"
-
-
+    assert input_path not in result_text, (
+        f"result.json leaks input path: {input_path}"
+    )
 def test_real_task_service_closes_after_one_confirmation_round(qtbot, tmp_path):
     sample = tmp_path / "task-service.xlsx"
     make_labeled_sample(sample, product_usage="")
