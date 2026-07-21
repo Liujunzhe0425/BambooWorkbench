@@ -33,6 +33,15 @@ MODULE_ID = "boiling"
 MODULE_VERSION = "0.2.0"
 
 
+def configure_standard_streams():
+    """Keep the frozen process protocol UTF-8 on every Windows code page."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace")
+
+
 def resolve_module_root():
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent.parent
@@ -2040,6 +2049,7 @@ def self_check():
 
 
 def main():
+    configure_standard_streams()
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("version")

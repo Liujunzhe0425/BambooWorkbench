@@ -20,12 +20,20 @@ from core.storage.settings import SettingsStore
 
 PROVIDERS = {
     "离线模拟": "mock",
+    "DeepSeek": "deepseek",
     "OpenAI兼容": "openai-compatible",
+}
+
+PROVIDER_DEFAULTS = {
+    "mock": ("", "mock-model"),
+    "deepseek": ("https://api.deepseek.com", "deepseek-v4-flash"),
+    "openai-compatible": ("https://api.openai.com/v1", ""),
 }
 
 
 class SettingsPage(QWidget):
     action_failed = Signal(str)
+    settings_saved = Signal()
 
     def __init__(
         self,
@@ -69,6 +77,7 @@ class SettingsPage(QWidget):
         configured_provider = settings.get("ai_provider", "mock") or "mock"
         provider_index = self.provider_combo.findData(configured_provider)
         self.provider_combo.setCurrentIndex(max(provider_index, 0))
+        self.provider_combo.currentIndexChanged.connect(self._provider_changed)
         form.addRow("AI提供商", self.provider_combo)
 
         self.base_url_edit = QLineEdit(
@@ -132,8 +141,8 @@ class SettingsPage(QWidget):
         provider_id = str(self.provider_combo.currentData())
         try:
             secret = self.api_key_edit.text()
-            if secret:
-                self.credential_store.set_secret("openai-compatible", secret)
+            if secret and provider_id != "mock":
+                self.credential_store.set_secret(provider_id, secret)
             self.settings.set("output_dir", self.output_dir_edit.text().strip())
             self.settings.set("ai_provider", provider_id)
             self.settings.set("ai_base_url", self.base_url_edit.text().strip())
@@ -150,18 +159,30 @@ class SettingsPage(QWidget):
             self.action_failed.emit(f"设置保存失败：{error}")
             return
         self.api_key_edit.clear()
-        self.credential_status_label.setText(
-            "已安全保存" if self._has_credential() else "未保存（离线模拟不需要）"
-        )
+        self.credential_status_label.setText(self._credential_status())
+        self.settings_saved.emit()
 
     def _has_credential(self) -> bool:
+        provider_id = str(self.provider_combo.currentData())
+        if provider_id == "mock":
+            return False
         try:
-            return self.credential_store.has_secret("openai-compatible")
+            return self.credential_store.has_secret(provider_id)
         except Exception:
             return False
 
     def _credential_status(self) -> str:
-        return "已安全保存" if self._has_credential() else "未保存（离线模拟不需要）"
+        provider_id = str(self.provider_combo.currentData())
+        if provider_id == "mock":
+            return "未保存（离线模拟不需要）"
+        return "已安全保存" if self._has_credential() else "未保存"
+
+    def _provider_changed(self) -> None:
+        provider_id = str(self.provider_combo.currentData())
+        default_base_url, default_model = PROVIDER_DEFAULTS[provider_id]
+        self.base_url_edit.setText(default_base_url)
+        self.model_edit.setText(default_model)
+        self.credential_status_label.setText(self._credential_status())
 
     def open_log_directory(self) -> None:
         try:

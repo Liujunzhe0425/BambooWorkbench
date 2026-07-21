@@ -1,0 +1,19 @@
+{
+  "scenario": "标准脱敏售后申请表",
+  "input_file": "sample_after_sales.xlsx",
+  "expected": {
+    "customer": "示例客户",
+    "location": "示例地点",
+    "salesperson": "示例销售",
+    "product": "桃花江竹地板",
+    "order_no": "FZ示例20260501-001N",
+    "complaint_date": "2026-05-10",
+    "year": 2026,
+    "month": 5,
+    "brand": "桃花江",
+    "primary_issue_type": "性能",
+    "fee_amount": 2930.0,
+    "cost_included": true,
+    "resolution_status": "已解决"
+  }
+}

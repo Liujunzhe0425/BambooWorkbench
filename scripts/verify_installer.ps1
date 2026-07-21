@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $Root = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
-$Installer = Join-Path $Root 'installer-output\BambooWorkbench-Setup-0.1.0.exe'
+$Installer = Join-Path $Root 'installer-output\BambooWorkbench-Setup-0.2.1.exe'
 if (-not (Test-Path -LiteralPath $Installer -PathType Leaf)) {
     throw 'Installer does not exist. Run build_installer.ps1 first.'
 }
@@ -46,6 +46,7 @@ try {
         throw 'Silent installation did not create the application executable'
     }
     Invoke-HiddenAndWait $Executable @('--smoke-test') 90
+    Invoke-HiddenAndWait $Executable @('--demo-smoke-test') 90
 
     $DataDirectory = Join-Path $FakeLocalAppData 'BambooWorkbench'
     New-Item -ItemType Directory -Path $DataDirectory -Force | Out-Null

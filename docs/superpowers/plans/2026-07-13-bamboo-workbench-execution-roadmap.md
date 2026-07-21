@@ -4,7 +4,7 @@
 
 **Canonical project root:** `D:\Project\BambooWorkbench`
 
-**Approved product identity:** `BambooWorkbench` / `竹简工作台` / `湖大智竹实践团队`
+**Approved product identity:** `BambooWorkbench` / `竹简工作台` / `湖南大学智创未来团队`
 
 ## Source of Truth
 

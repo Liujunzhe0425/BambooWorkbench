@@ -118,6 +118,7 @@ class MainWindow(QMainWindow):
         self.settings_page.action_failed.connect(
             lambda message: self._show_failure("设置操作失败", message)
         )
+        self.settings_page.settings_saved.connect(context.reload_ai_configuration)
         self.knowledge_page.action_failed.connect(
             lambda message: self._show_failure("知识库操作失败", message)
         )

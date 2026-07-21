@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AfterSalesCase",
+  "type": "object",
+  "required": [
+    "case_id", "source_file", "brand", "issue_types", "primary_issue_type", "fee_amount",
+    "enterprise_cost_amount", "internal_accountability_amount", "external_borne_amount",
+    "fee_status", "case_status", "warnings", "source_cells"
+  ],
+  "properties": {
+    "case_id": {"type": "string", "minLength": 1},
+    "source_file": {"type": "string", "minLength": 1},
+    "brand": {"type": "string", "minLength": 1},
+    "complaint_date": {"type": ["string", "null"]},
+    "year": {"type": ["integer", "null"], "minimum": 1900, "maximum": 2200},
+    "month": {"type": ["integer", "null"], "minimum": 1, "maximum": 12},
+    "issue_types": {
+      "type": "array",
+      "items": {"enum": ["性能", "外观", "加工", "其他", "待确认"]},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "primary_issue_type": {"enum": ["性能", "外观", "加工", "其他", "待确认"]},
+    "fee_amount": {"type": ["number", "null"], "minimum": 0},
+    "enterprise_cost_amount": {"type": ["number", "null"], "minimum": 0},
+    "enterprise_cost_status": {"enum": ["exact", "calculated", "estimated", "transferred", "not_found", "needs_review"]},
+    "enterprise_cost_evidence": {"type": "string"},
+    "enterprise_cost_reviewed": {"type": "boolean"},
+    "internal_accountability_amount": {"type": ["number", "null"], "minimum": 0},
+    "internal_accountability_status": {"enum": ["exact", "calculated", "estimated", "transferred", "not_found", "needs_review"]},
+    "internal_accountability_evidence": {"type": "string"},
+    "internal_accountability_reviewed": {"type": "boolean"},
+    "external_borne_amount": {"type": ["number", "null"], "minimum": 0},
+    "external_borne_status": {"enum": ["exact", "calculated", "estimated", "transferred", "not_found", "needs_review"]},
+    "external_borne_evidence": {"type": "string"},
+    "external_borne_reviewed": {"type": "boolean"},
+    "fee_currency": {"type": "string", "default": "CNY"},
+    "fee_status": {"enum": ["exact", "calculated", "estimated", "transferred", "not_found", "needs_review"]},
+    "case_status": {"enum": ["已关闭", "处理中", "待确认"]},
+    "confidence": {"type": ["number", "null"], "minimum": 0, "maximum": 1},
+    "warnings": {"type": "array", "items": {"type": "string"}},
+    "source_cells": {"type": "object", "additionalProperties": {"type": "string"}},
+    "reviewed": {"type": "boolean"},
+    "reviewed_by": {"type": ["string", "null"]},
+    "reviewed_at": {"type": ["string", "null"]}
+  },
+  "additionalProperties": true
+}

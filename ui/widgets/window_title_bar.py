@@ -2,6 +2,8 @@ from PySide6.QtCore import QLineF, QPoint, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPaintEvent, QPen
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QWidget
 
+from app import __version__
+
 
 class WindowControlButton(QPushButton):
     """Uniform vector-drawn window control with no font-glyph alignment drift."""
@@ -61,7 +63,7 @@ class WindowTitleBar(QWidget):
 
         self.title_label = QLabel("竹简工作台")
         self.title_label.setObjectName("windowTitle")
-        self.version_label = QLabel("BambooWorkbench v0.1.0")
+        self.version_label = QLabel(f"BambooWorkbench v{__version__}")
         self.version_label.setObjectName("windowVersion")
         layout.addWidget(self.title_label)
         layout.addWidget(self.version_label)

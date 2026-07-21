@@ -35,6 +35,26 @@ def test_settings_saves_key_to_credential_store_only(qtbot, database, tmp_path: 
     assert settings.get("ai_network_enabled") == "true"
 
 
+def test_settings_supports_deepseek_defaults_and_provider_scoped_key(
+    qtbot, database, tmp_path: Path
+) -> None:
+    settings = SettingsStore(database)
+    credentials = InMemoryCredentialStore()
+    page = SettingsPage(settings, AppPaths.for_root(tmp_path / "deepseek"), credentials)
+    qtbot.addWidget(page)
+
+    page.provider_combo.setCurrentText("DeepSeek")
+    assert page.base_url_edit.text() == "https://api.deepseek.com"
+    assert page.model_edit.text() == "deepseek-v4-flash"
+    page.api_key_edit.setText("deepseek-secret")
+    page.network_checkbox.setChecked(True)
+    qtbot.mouseClick(page.save_button, Qt.MouseButton.LeftButton)
+
+    assert credentials.get_secret("deepseek") == "deepseek-secret"
+    assert credentials.get_secret("openai-compatible") is None
+    assert settings.get("ai_provider") == "deepseek"
+
+
 def test_knowledge_page_searches_selected_namespace(qtbot, database, tmp_path: Path) -> None:
     repository = KnowledgeRepository(database)
     repository.add(
