@@ -1,7 +1,6 @@
 import datetime as dt
 import hashlib
 import importlib.util
-import io
 import json
 import os
 import re
@@ -276,6 +275,14 @@ def test_draft_job_generates_result_without_modifying_source(tmp_path):
     assert boiling_module.run_job(job_path) == 0
     assert before == digest(sample)
     assert (output / "boiling_summary.xlsx").is_file()
+    workbook = openpyxl.load_workbook(output / "boiling_summary.xlsx")
+    chart_sheet = workbook["分析图表"]
+    assert len(chart_sheet._charts) == 3
+    result_table_row = chart_sheet.max_row - 2
+    assert chart_sheet.cell(result_table_row, 1).value == "原表综合结论"
+    assert chart_sheet.cell(result_table_row + 1, 1).value == "合格"
+    assert chart_sheet.cell(result_table_row + 2, 1).value == "不合格"
+    workbook.close()
     result = json.loads((output / "result.json").read_text(encoding="utf-8"))
     assert result["status"] == "needs_confirmation"
     assert result["summary"]["processed_count"] == 1
@@ -456,7 +463,10 @@ def test_source_and_recalculated_conflict_are_both_retained(tmp_path):
     assert boiling_module.run_job(job_path) == 0
     result = load_result(output)
     assert any(item["rule_id"] == "BOILING-CALC-CONFLICT-001" for item in result["anomalies"])
-    assert any(item["field"] == "density_g_cm3" for item in result["confirmations"])
+    assert any(
+        item["field"].startswith("密度｜conflict.xlsx｜样1")
+        for item in result["confirmations"]
+    )
 
 
 def test_batch_mode_isolates_bad_file_and_skips_duplicate(tmp_path):
@@ -759,6 +769,9 @@ def test_stdout_contains_only_progress_protocol_events(tmp_path):
     make_labeled_sample(sample)
     job_path.write_text(json.dumps(make_job(sample, output), ensure_ascii=False), encoding="utf-8")
 
+    environment = os.environ.copy()
+    environment.pop("PYTHONUTF8", None)
+    environment.pop("PYTHONIOENCODING", None)
     completed = subprocess.run(
         [
             sys.executable,
@@ -771,7 +784,7 @@ def test_stdout_contains_only_progress_protocol_events(tmp_path):
         capture_output=True,
         text=True,
         encoding="utf-8",
-        env={**os.environ, "PYTHONUTF8": "1"},
+        env=environment,
     )
 
     assert completed.returncode == 0
@@ -780,19 +793,6 @@ def test_stdout_contains_only_progress_protocol_events(tmp_path):
     assert events
     assert all(event["type"] == "progress" for event in events)
     assert events[-1]["percent"] == 100
-
-
-def test_cli_reconfigures_cp1252_streams_to_utf8(monkeypatch):
-    raw_output = io.BytesIO()
-    cp1252_stdout = io.TextIOWrapper(raw_output, encoding="cp1252", newline="\n")
-    monkeypatch.setattr(boiling_module.sys, "stdout", cp1252_stdout)
-
-    boiling_module.configure_standard_streams()
-    boiling_module.emit("水煮进度", 50)
-    boiling_module.sys.stdout.flush()
-
-    event = json.loads(raw_output.getvalue().decode("utf-8"))
-    assert event == {"type": "progress", "percent": 50, "message": "水煮进度"}
 
 
 def test_finalize_closes_usage_and_dependent_conclusion_conflicts_in_one_round(tmp_path):
@@ -811,10 +811,11 @@ def test_finalize_closes_usage_and_dependent_conclusion_conflicts_in_one_round(t
     )
     assert boiling_module.run_job(draft_job_path) == 0
     draft_result = load_result(draft_output)
-    assert {item["field"] for item in draft_result["confirmations"]} >= {
-        "product_usage",
-        "密度",
-    }
+    assert any(item["field"] == "product_usage" for item in draft_result["confirmations"])
+    assert any(
+        item["field"].startswith("密度｜combined-conflicts.xlsx｜")
+        for item in draft_result["confirmations"]
+    )
 
     answers = []
     for prompt in draft_result["confirmations"]:
@@ -943,7 +944,44 @@ def test_formal_business_outputs_do_not_leak_absolute_windows_paths(tmp_path):
         workbook.close()
     assert leaked == []
 
-
+def test_outputs_do_not_leak_absolute_paths_even_with_anomalies(tmp_path):
+    sample = tmp_path / "anomaly-scan.xlsx"
+    output = tmp_path / "output"
+    job_path = tmp_path / "job.json"
+    make_labeled_sample(
+        sample,
+        density=1.45,
+        expansion=0.10,
+        product_usage="",
+        conclusion="密度检测合格，2h膨胀率检测合格，浸渍剥离检测合格",
+    )
+    job_path.write_text(json.dumps(make_job(sample, output), ensure_ascii=False), encoding="utf-8")
+    assert boiling_module.run_job(job_path) == 0
+    absolute_path = re.compile(r"(?i)[a-z]:[\\/]")
+    result = json.loads((output / "result.json").read_text(encoding="utf-8"))
+    assert result["status"] in ("needs_confirmation", "partial_success")
+    for path in (output / "boiling_analysis.md", output / "boiling_records.json"):
+        text = path.read_text(encoding="utf-8")
+        matches = absolute_path.findall(text)
+        assert not matches, f"{path.name} leaks {len(matches)} absolute paths"
+    workbook = openpyxl.load_workbook(output / "boiling_summary.xlsx", data_only=False)
+    try:
+        leaked = [
+            cell.value
+            for sheet in workbook.worksheets
+            for row in sheet.iter_rows()
+            for cell in row
+            if isinstance(cell.value, str) and absolute_path.search(cell.value)
+        ]
+    finally:
+        workbook.close()
+    assert leaked == []
+    # result.json must not leak the input file absolute path
+    input_path = str(sample.absolute())
+    result_text = (output / "result.json").read_text(encoding="utf-8")
+    assert input_path not in result_text, (
+        f"result.json leaks input path: {input_path}"
+    )
 def test_real_task_service_closes_after_one_confirmation_round(qtbot, tmp_path):
     sample = tmp_path / "task-service.xlsx"
     make_labeled_sample(sample, product_usage="")

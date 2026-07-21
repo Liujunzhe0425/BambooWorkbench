@@ -1,3 +1,14 @@
+﻿# 更新记录
+
+## 0.2.0 - 2026-07-21 第四轮整改：确认项修复与输出契约收紧
+
+- 修复 add_conclusion_rule_conflict 函数，增加 conclusion_cell 参数，确认项 source 现在包含结论单元格地址。
+- 修复 product_usage_confirmation 的 reason 文本，明确提及"部分或全部输入文件"，并列明可用选项。
+- 移除 run_job 中 individual_confirmation_id 的死代码（个体级 product_usage 确认项从未生成）；usage_answer 只依赖 batch_usage 和 batch_confirmation_id。
+- Markdown 分析报告中异常和确认项现在包含来源文件和工作表信息，便于定位。
+- 确认项 ID 使用基于文件内容的指纹（SHA-256[:12]），在 draft 和 finalize 间保持一致，且不同文件不会生成相同 ID。
+- 新增 conclusion_cell 参数后，结论冲突确认项（C-CONCLUSION-RULE-）现在在 source 中携带 cell_or_range。
+- 本批不涉及业务公式或阈值修改。
 # 更新记录
 
 ## 0.1.0 - 2026-07-19 第三轮整改交付
