@@ -370,6 +370,38 @@ QLabel[confirmationSource="true"] {
     font-size: 10px;
 }
 
+QFrame[confirmationFileGroup="true"] {
+    background: #F4F8EF;
+    border: 1px solid #BFD2BF;
+    border-radius: 8px;
+}
+
+QLabel[confirmationFileCounter="true"] {
+    color: #2F6F56;
+    background: #DDECD9;
+    border: 1px solid #B8CFB8;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QLabel[confirmationFileName="true"] {
+    color: #244F3D;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+QWidget[confirmationField="true"] {
+    background: transparent;
+}
+
+QLabel[confirmationFieldLabel="true"] {
+    color: #294D3C;
+    font-size: 12px;
+    font-weight: 700;
+}
+
 QToolTip {
     color: #FFFDF8;
     background: #294D3C;
