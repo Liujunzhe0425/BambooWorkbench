@@ -162,19 +162,53 @@ def test_normal_draft_freezes_report_and_result_markers(
 def test_acceptance_assets_are_synthetic_relative_and_secret_free() -> None:
     forbidden = ("D:\\", "C:\\Users\\", "api_key", "authorization: bearer")
     paths = list((MODULE_ROOT / "samples").rglob("*"))
-    paths.extend(
-        (MODULE_ROOT / "docs" / f"0{index}-{name}.md")
-        for index, name in (
-            (1, "业务说明"),
-            (2, "输入字段与样本规则"),
-            (3, "统计与公式口径"),
-            (4, "规则与颜色判定"),
-            (5, "AI与经验库说明"),
-            (6, "验收与故障处理"),
-        )
-    )
+    paths.extend((MODULE_ROOT / "docs" / "archive").rglob("*.md"))
+    paths.extend((MODULE_ROOT / "docs" / "evidence").rglob("*.md"))
     for path in paths:
         if path.is_file():
             text = path.read_text(encoding="utf-8", errors="ignore").casefold()
             assert all(item.casefold() not in text for item in forbidden), path
     assert not list(FIXTURES.glob("*.xlsx"))
+
+
+def test_main_table_excludes_technical_and_ai_columns_from_customer_view(
+    tmp_path: Path,
+    workbook_factory: Callable[..., Path],
+) -> None:
+    """C0 requires main table (竹丝含水率统计) to show only 20 business columns."""
+    from contextlib import closing
+    import openpyxl as _openpyxl
+
+    workbooks = _build_acceptance_workbooks(tmp_path / "inputs", workbook_factory)
+    output = tmp_path / "output"
+    job = JobRequest(
+        "1.0",
+        "acceptance-main-table",
+        ModuleId.MOISTURE,
+        JobPhase.DRAFT,
+        RunMode.SINGLE,
+        (workbooks["normal"],),
+        output,
+    )
+
+    assert run_draft(job) == 0
+    xlsx_path = output / "moisture_summary.xlsx"
+    assert xlsx_path.is_file()
+
+    with closing(_openpyxl.load_workbook(xlsx_path, data_only=False)) as workbook:
+        summary = workbook["竹丝含水率统计"]
+        headers = [cell.value for cell in summary[1]]
+
+        TECHNICAL_COLUMNS = [
+            "批次编号", "来源文件", "来源工作表", "文件哈希",
+            "总重", "样本部门映射",
+            "标准差", "中位数", "第一四分位数", "第三四分位数", "四分位距",
+            "部门均值最大差", "初筛下限", "初筛上限",
+            "规则版本", "规则SHA-256", "规则适用范围", "规则确认状态",
+            "初筛状态", "AI复判状态", "置信度", "最终显示色", "人工确认状态",
+            "复核建议", "降级原因", "AI理由",
+        ]
+        for col in TECHNICAL_COLUMNS:
+            assert col not in headers, (
+                f"Technical column '{col}' must not appear in customer-facing main table"
+            )

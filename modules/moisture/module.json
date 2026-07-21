@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "module_id": "moisture",
   "module_name": "竹丝水分检测",
-  "module_version": "0.1.0",
+  "module_version": "0.1.1",
   "entrypoint": "run_module.bat",
   "supported_extensions": [".xlsx"],
   "supports_single_file": true,

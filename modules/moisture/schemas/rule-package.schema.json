@@ -28,6 +28,6 @@
       "enum": ["confirmed", "pending_confirmation"]
     },
     "released_at": {"type": "string", "format": "date-time"},
-    "module_version": {"type": "string", "pattern": "^0\\.1\\.0$"}
+    "module_version": {"type": "string", "pattern": "^0\\.1\\.1$"}
   }
 }
