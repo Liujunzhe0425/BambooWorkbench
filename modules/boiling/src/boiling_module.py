@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import datetime as dt
 import hashlib
 import json
@@ -8,10 +8,21 @@ import sys
 import tempfile
 from pathlib import Path
 
+
+def configure_protocol_streams():
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="replace")
+
+
+configure_protocol_streams()
+
 try:
     import openpyxl
     import yaml
-    from openpyxl.chart import BarChart, Reference
+    from openpyxl.chart import BarChart, PieChart, Reference
+    from openpyxl.chart.label import DataLabelList
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 except ImportError as exc:  # pragma: no cover - exercised in a clean environment
     print(json.dumps({"type": "error", "message": str(exc)}), file=sys.stderr)
@@ -19,7 +30,7 @@ except ImportError as exc:  # pragma: no cover - exercised in a clean environmen
 
 
 MODULE_ID = "boiling"
-MODULE_VERSION = "0.1.0"
+MODULE_VERSION = "0.2.0"
 
 
 def resolve_module_root():
@@ -195,6 +206,11 @@ def formatted_number(value, number_format, percentage=False):
     if percentage:
         return f"{number:.{precision}%}"
     return f"{number:.{precision}f}"
+
+
+def compact_number(value, precision=4):
+    number = as_number(value)
+    return f"{number:.{precision}f}" if number is not None else "缺失"
 
 
 def values_conflict(source_value, calculated_value, number_format, percentage=False):
@@ -747,11 +763,24 @@ def add_conclusion_rule_conflict(
     source_claim,
     observed_outside,
     observed_value,
+    conclusion_cell=None,
 ):
     if source_claim is None or observed_outside is None or source_claim == (not observed_outside):
         return
     source_text = "合格" if source_claim else "不合格"
     rule_text = "不合格" if observed_outside else "合格"
+    source_name = Path(record["source_file"]).name
+    display_field = f"{field}｜{source_name}｜原表{source_text}→规则{rule_text}（建议按规则）"
+    if isinstance(observed_value, dict):
+        observed_detail = (
+            f"最小值 {compact_number(observed_value.get('minimum'))}、"
+            f"最大值 {compact_number(observed_value.get('maximum'))}、"
+            f"密度差 {compact_number(observed_value.get('difference'))}"
+        )
+    elif observed_value is not None:
+        observed_detail = f"规则复核值 {observed_value:.2%}"
+    else:
+        observed_detail = "规则复核值缺失"
     conflict = {
         "field": field,
         "source_conclusion": source_text,
@@ -781,15 +810,18 @@ def add_conclusion_rule_conflict(
     confirmations.append(
         {
             "confirmation_id": f"C-CONCLUSION-RULE-{field}-{fingerprint[:12]}",
-            "field": field,
-            "reason": f"原表结论“{source_text}”与规则观察“{rule_text}”不一致，需要人工复核。",
-            "suggested_value": None,
+            "field": display_field,
+            "reason": (
+                f"{source_name}：原表结论“{source_text}”与规则观察“{rule_text}”不一致；"
+                f"{observed_detail}。建议按现行规则选择“{rule_text}”，原表结论仍会保留。"
+            ),
+            "suggested_value": rule_text,
             "options": [source_text, rule_text],
             "confidence": 0.0,
             "blocking": False,
             "batch_applicable": False,
             "rememberable": False,
-            "source": source_ref(record["source_file"], record["source_sheet"]),
+            "source": source_ref(record["source_file"], record["source_sheet"], conclusion_cell),
         }
     )
 
@@ -987,6 +1019,7 @@ def evaluate_record(record, rules, fingerprint):
             "maximum": record.get("density_max_g_cm3"),
             "difference": density_difference,
         },
+        conclusion_cell=None,
     )
     add_conclusion_rule_conflict(
         record,
@@ -998,6 +1031,7 @@ def evaluate_record(record, rules, fingerprint):
         conclusion_pass_claim(conclusion, ("膨胀率", "膨胀")),
         (not numeric_pass) if numeric_pass is not None else None,
         expansion_value,
+        conclusion_cell=None,
     )
     if record.get("immersion_peel_result") == "不合格":
         anomalies.append(
@@ -1014,6 +1048,21 @@ def evaluate_record(record, rules, fingerprint):
             )
         )
     for index, conflict in enumerate(record.get("conflicts", []), 1):
+        source_name = Path(record["source_file"]).name
+        source_display = conflict.get("source_display") or compact_number(
+            conflict["source_value"]
+        )
+        if conflict["field"] == "expansion_ratio":
+            field_name = "膨胀率"
+            calculated_display = f"{conflict['calculated_value']:.2%}"
+        else:
+            field_name = "密度"
+            calculated_display = f"{conflict['calculated_value']:.3f}"
+        display_field = (
+            f"{field_name}｜{source_name}｜{conflict['sample']}"
+            f"（{conflict.get('cell_or_range') or '来源位置未知'}）｜"
+            f"原表{source_display}→复算{calculated_display}（建议复算值）"
+        )
         anomalies.append(
             make_anomaly(
                 record,
@@ -1031,8 +1080,13 @@ def evaluate_record(record, rules, fingerprint):
         confirmations.append(
             {
                 "confirmation_id": f"C-CONFLICT-{index}-{fingerprint[:12]}",
-                "field": conflict["field"],
-                "reason": f"{conflict['sample']} 原表值与复算值冲突，需要人工选择可信来源。",
+                "field": display_field,
+                "reason": (
+                    f"{source_name} 的 {conflict['sample']}："
+                    f"原表值 {source_display} 与复算值 {calculated_display} 冲突；"
+                    "建议采用复算值，"
+                    "两者仍会在报告中保留。"
+                ),
                 "suggested_value": conflict["calculated_value"],
                 "options": [conflict["source_value"], conflict["calculated_value"]],
                 "confidence": 0.5,
@@ -1405,6 +1459,48 @@ def write_summary(records, output_path, rules, excluded_records=None):
         expansion_chart.height = 8
         expansion_chart.width = 15
         chart_sheet.add_chart(expansion_chart, "E18")
+
+        result_counts = {"合格": 0, "不合格": 0}
+        for record in records:
+            source_conclusion = str(record.get("source_conclusion") or "")
+            if "不合格" in source_conclusion:
+                result_counts["不合格"] += 1
+            elif "合格" in source_conclusion:
+                result_counts["合格"] += 1
+        result_table_row = len(records) + 4
+        chart_sheet.cell(result_table_row, 1, "原表综合结论")
+        chart_sheet.cell(result_table_row, 2, "文件数")
+        chart_sheet.cell(result_table_row + 1, 1, "合格")
+        chart_sheet.cell(result_table_row + 1, 2, result_counts["合格"])
+        chart_sheet.cell(result_table_row + 2, 1, "不合格")
+        chart_sheet.cell(result_table_row + 2, 2, result_counts["不合格"])
+        style_header(chart_sheet[result_table_row])
+
+        result_chart = PieChart()
+        result_chart.title = "原表综合结论：合格与不合格"
+        result_chart.add_data(
+            Reference(
+                chart_sheet,
+                min_col=2,
+                min_row=result_table_row,
+                max_row=result_table_row + 2,
+            ),
+            titles_from_data=True,
+        )
+        result_chart.set_categories(
+            Reference(
+                chart_sheet,
+                min_col=1,
+                min_row=result_table_row + 1,
+                max_row=result_table_row + 2,
+            )
+        )
+        result_chart.dataLabels = DataLabelList()
+        result_chart.dataLabels.showPercent = True
+        result_chart.dataLabels.showLeaderLines = True
+        result_chart.height = 8
+        result_chart.width = 15
+        chart_sheet.add_chart(result_chart, "E34")
         chart_sheet.sheet_view.showGridLines = False
 
     thin_gray = Side(style="thin", color="D9E2F3")
@@ -1474,13 +1570,13 @@ def write_analysis_report(
     lines.extend(["", "## 异常与复核", ""])
     if anomalies:
         for item in anomalies:
-            lines.append(f"- **{item['severity']} / {item['field']}**：{item['message']}")
+            lines.append(f"- **{item['severity']} / {item['field']}**（来源：{item.get('source', {}).get('source_file', '?')} / {item.get('source', {}).get('sheet', '?')}）：{item['message']}")
     else:
         lines.append("- 无异常或观察项。")
     lines.extend(["", "## 人工确认", ""])
     if confirmations:
         for item in confirmations:
-            lines.append(f"- `{item['confirmation_id']}`：{item['reason']}")
+            lines.append(f"- `{item['confirmation_id']}`（来源：{item.get('source', {}).get('source_file', '?')} / {item.get('source', {}).get('sheet', '?')}）：{item['reason']}")
     else:
         lines.append("- 无待确认项。")
     Path(output_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1628,7 +1724,7 @@ def product_usage_confirmation(record, scope_id):
     return {
         "confirmation_id": f"C-PRODUCT-USAGE-BATCH-{scope_id}",
         "field": "product_usage",
-        "reason": "本批输入文件未提供产品用途；请确认一次并批量应用，模块不得自行猜测膨胀率标准。",
+        "reason": "本批部分或全部输入文件未提供产品用途；请确认一次并批量应用（地板/家具/墙板/栏杆/其他），模块不得自行猜测膨胀率标准。",
         "suggested_value": None,
         "options": ["地板", "家具", "墙板", "栏杆", "其他"],
         "confidence": 0.0,
@@ -1738,11 +1834,10 @@ def run_job(job_path):
                     if is_missing_value(record["product_usage"]):
                         record["product_usage"] = ""
                     batch_confirmation_id = f"C-PRODUCT-USAGE-BATCH-{scope_id}"
-                    individual_confirmation_id = f"C-PRODUCT-USAGE-{fingerprint[:12]}"
+                    # Note: individual file-level product_usage confirmations are not generated; batch-level is used.
                     usage_answer = (
                         batch_usage
                         or answer_map.get(batch_confirmation_id)
-                        or answer_map.get(individual_confirmation_id)
                     )
                     usage_confirmation_pending = False
                     if usage_answer:

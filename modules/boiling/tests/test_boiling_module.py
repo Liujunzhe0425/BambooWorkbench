@@ -275,6 +275,14 @@ def test_draft_job_generates_result_without_modifying_source(tmp_path):
     assert boiling_module.run_job(job_path) == 0
     assert before == digest(sample)
     assert (output / "boiling_summary.xlsx").is_file()
+    workbook = openpyxl.load_workbook(output / "boiling_summary.xlsx")
+    chart_sheet = workbook["分析图表"]
+    assert len(chart_sheet._charts) == 3
+    result_table_row = chart_sheet.max_row - 2
+    assert chart_sheet.cell(result_table_row, 1).value == "原表综合结论"
+    assert chart_sheet.cell(result_table_row + 1, 1).value == "合格"
+    assert chart_sheet.cell(result_table_row + 2, 1).value == "不合格"
+    workbook.close()
     result = json.loads((output / "result.json").read_text(encoding="utf-8"))
     assert result["status"] == "needs_confirmation"
     assert result["summary"]["processed_count"] == 1
@@ -455,7 +463,10 @@ def test_source_and_recalculated_conflict_are_both_retained(tmp_path):
     assert boiling_module.run_job(job_path) == 0
     result = load_result(output)
     assert any(item["rule_id"] == "BOILING-CALC-CONFLICT-001" for item in result["anomalies"])
-    assert any(item["field"] == "density_g_cm3" for item in result["confirmations"])
+    assert any(
+        item["field"].startswith("密度｜conflict.xlsx｜样1")
+        for item in result["confirmations"]
+    )
 
 
 def test_batch_mode_isolates_bad_file_and_skips_duplicate(tmp_path):
@@ -758,6 +769,9 @@ def test_stdout_contains_only_progress_protocol_events(tmp_path):
     make_labeled_sample(sample)
     job_path.write_text(json.dumps(make_job(sample, output), ensure_ascii=False), encoding="utf-8")
 
+    environment = os.environ.copy()
+    environment.pop("PYTHONUTF8", None)
+    environment.pop("PYTHONIOENCODING", None)
     completed = subprocess.run(
         [
             sys.executable,
@@ -770,7 +784,7 @@ def test_stdout_contains_only_progress_protocol_events(tmp_path):
         capture_output=True,
         text=True,
         encoding="utf-8",
-        env={**os.environ, "PYTHONUTF8": "1"},
+        env=environment,
     )
 
     assert completed.returncode == 0
@@ -797,10 +811,11 @@ def test_finalize_closes_usage_and_dependent_conclusion_conflicts_in_one_round(t
     )
     assert boiling_module.run_job(draft_job_path) == 0
     draft_result = load_result(draft_output)
-    assert {item["field"] for item in draft_result["confirmations"]} >= {
-        "product_usage",
-        "密度",
-    }
+    assert any(item["field"] == "product_usage" for item in draft_result["confirmations"])
+    assert any(
+        item["field"].startswith("密度｜combined-conflicts.xlsx｜")
+        for item in draft_result["confirmations"]
+    )
 
     answers = []
     for prompt in draft_result["confirmations"]:
