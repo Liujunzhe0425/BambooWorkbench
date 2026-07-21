@@ -5,8 +5,8 @@
 ---
 # 水分模块主框架接入与功能建设要求
 
-> 接收对象：BambooWorkbench 主框架负责人、安全/AI 负责人和最终验收负责人  
-> 适用基线：`modules/moisture` 0.1.0 及当前 Job、Result、Confirmation、Service Request/Response 合同  
+> 接收对象：BambooWorkbench 主框架负责人、安全/AI 负责人和最终验收负责人
+> 适用基线：`modules/moisture` 0.1.0 及当前 Job、Result、Confirmation、Service Request/Response 合同
 > 实施顺序：P0 → P1 → P2 → P3；每一阶段独立实现、测试和验收
 
 ## 1. 目的与当前状态

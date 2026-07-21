@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "job_id": "sample-after-sales",
+  "module_id": "after_sales",
+  "phase": "draft",
+  "run_mode": "batch",
+  "input_files": [
+    "D:\\BambooWorkbench\\modules\\after_sales\\tests\\fixtures\\samples\\input\\sample_after_sales.xlsx"
+  ],
+  "output_dir": "D:\\BambooWorkbench\\tasks\\sample-after-sales",
+  "module_config_file": null,
+  "ai_enabled": false,
+  "allowed_knowledge_scopes": [],
+  "parent_job_id": null,
+  "confirmation_file": null,
+  "service_response_file": null
+}
