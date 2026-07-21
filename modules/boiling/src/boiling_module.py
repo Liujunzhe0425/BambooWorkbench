@@ -1,4 +1,4 @@
-﻿import argparse
+import argparse
 import datetime as dt
 import hashlib
 import json
@@ -1981,11 +1981,7 @@ def run_job(job_path):
     )
     result["finished_at"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
     try:
-        sanitized = sanitize_business_value(result)
-        result_path.write_text(
-            json.dumps(sanitized, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError as exc:
         print(f"无法写入 result.json: {exc}", file=sys.stderr)
         return 3
