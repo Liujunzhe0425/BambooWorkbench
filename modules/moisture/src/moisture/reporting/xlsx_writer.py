@@ -190,8 +190,10 @@ def _formats(workbook: Any) -> dict[str, Any]:
         "header": workbook.add_format(
             {
                 "bold": True,
-                "font_color": "FFFFFF",
-                "bg_color": "4472C4",
+                "font_color": "1F4E3D",
+                "bg_color": "E2F0D9",
+                "border": 1,
+                "border_color": "A6A6A6",
                 "align": "center",
                 "valign": "vcenter",
             }

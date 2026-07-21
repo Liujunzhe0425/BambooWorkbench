@@ -196,6 +196,19 @@ def test_main_table_has_exactly_19_columns_and_correct_headers(
         assert headers == MAIN_TABLE_HEADERS_19
 
 
+def test_all_sheet_headers_use_the_main_table_green_style(
+    tmp_path: Path, report: WorkbookReport
+) -> None:
+    output = write_summary_xlsx(report, tmp_path / "output")
+
+    with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
+        for worksheet in workbook.worksheets:
+            for cell in worksheet[1]:
+                assert cell.fill.fgColor.rgb == "FFE2F0D9"
+                assert cell.font.color is not None
+                assert cell.font.color.rgb == "FF1F4E3D"
+
+
 def test_main_table_freeze_and_filter_are_constrained(
     tmp_path: Path, report: WorkbookReport
 ) -> None:
