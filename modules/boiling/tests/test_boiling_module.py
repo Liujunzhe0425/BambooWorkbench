@@ -1,4 +1,4 @@
-import datetime as dt
+﻿import datetime as dt
 import hashlib
 import importlib.util
 import json
@@ -943,6 +943,44 @@ def test_formal_business_outputs_do_not_leak_absolute_windows_paths(tmp_path):
     finally:
         workbook.close()
     assert leaked == []
+
+def test_outputs_do_not_leak_absolute_paths_even_with_anomalies(tmp_path):
+    sample = tmp_path / "anomaly-scan.xlsx"
+    output = tmp_path / "output"
+    job_path = tmp_path / "job.json"
+    make_labeled_sample(
+        sample,
+        density=1.45,
+        expansion=0.10,
+        product_usage="",
+        conclusion="密度检测合格，2h膨胀率检测合格，浸渍剥离检测合格",
+    )
+    job_path.write_text(json.dumps(make_job(sample, output), ensure_ascii=False), encoding="utf-8")
+    assert boiling_module.run_job(job_path) == 0
+    absolute_path = re.compile(r"(?i)[a-z]:[\\/]")
+    result = json.loads((output / "result.json").read_text(encoding="utf-8"))
+    assert result["status"] in ("needs_confirmation", "partial_success")
+    for path in (output / "boiling_analysis.md", output / "boiling_records.json"):
+        text = path.read_text(encoding="utf-8")
+        matches = absolute_path.findall(text)
+        assert not matches, f"{path.name} leaks {len(matches)} absolute paths"
+    workbook = openpyxl.load_workbook(output / "boiling_summary.xlsx", data_only=False)
+    try:
+        leaked = [
+            cell.value
+            for sheet in workbook.worksheets
+            for row in sheet.iter_rows()
+            for cell in row
+            if isinstance(cell.value, str) and absolute_path.search(cell.value)
+        ]
+    finally:
+        workbook.close()
+    assert leaked == []
+    # result.json may contain framework-friendly absolute paths in source,
+    # but those come from the input files (temp dir), not customer dir.
+    result_text = (output / "result.json").read_text(encoding="utf-8")
+    result_leaks = absolute_path.findall(result_text)
+    assert result_leaks, "result.json must contain at least temp-dir paths (intentional source tracking)"
 
 
 def test_real_task_service_closes_after_one_confirmation_round(qtbot, tmp_path):

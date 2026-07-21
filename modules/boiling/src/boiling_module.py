@@ -1570,15 +1570,19 @@ def write_analysis_report(
     lines.extend(["", "## 异常与复核", ""])
     if anomalies:
         for item in anomalies:
-            lines.append(f"- **{item['severity']} / {item['field']}**（来源：{item.get('source', {}).get('source_file', '?')} / {item.get('source', {}).get('sheet', '?')}）：{item['message']}")
-    else:
+            sf = Path(item.get('source', {}).get('source_file', '')).name or '?'
+            sh = item.get('source', {}).get('sheet', '?')
+            lines.append(
+                f"- **{item['severity']} / {item['field']}**"
+                f"（来源：{sf} / {sh}）：{item['message']}"
+            )
         lines.append("- 无异常或观察项。")
     lines.extend(["", "## 人工确认", ""])
     if confirmations:
         for item in confirmations:
-            lines.append(f"- `{item['confirmation_id']}`（来源：{item.get('source', {}).get('source_file', '?')} / {item.get('source', {}).get('sheet', '?')}）：{item['reason']}")
-    else:
-        lines.append("- 无待确认项。")
+            sf = Path(item.get('source', {}).get('source_file', '')).name or '?'
+            sh = item.get('source', {}).get('sheet', '?')
+            lines.append(f"- `{item['confirmation_id']}`（来源：{sf} / {sh}）：{item['reason']}")
     Path(output_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -1724,7 +1728,11 @@ def product_usage_confirmation(record, scope_id):
     return {
         "confirmation_id": f"C-PRODUCT-USAGE-BATCH-{scope_id}",
         "field": "product_usage",
-        "reason": "本批部分或全部输入文件未提供产品用途；请确认一次并批量应用（地板/家具/墙板/栏杆/其他），模块不得自行猜测膨胀率标准。",
+        "reason": (
+            "本批部分或全部输入文件未提供产品用途；"
+            "请确认一次并批量应用（地板/家具/墙板/栏杆/其他），"
+            "模块不得自行猜测膨胀率标准。"
+        ),
         "suggested_value": None,
         "options": ["地板", "家具", "墙板", "栏杆", "其他"],
         "confidence": 0.0,
@@ -1834,7 +1842,7 @@ def run_job(job_path):
                     if is_missing_value(record["product_usage"]):
                         record["product_usage"] = ""
                     batch_confirmation_id = f"C-PRODUCT-USAGE-BATCH-{scope_id}"
-                    # Note: individual file-level product_usage confirmations are not generated; batch-level is used.
+                    # Individual product_usage confirmations not generated - batch-level is used.
                     usage_answer = (
                         batch_usage
                         or answer_map.get(batch_confirmation_id)
@@ -1973,7 +1981,7 @@ def run_job(job_path):
     )
     result["finished_at"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
     try:
-        result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        result_path.write_text(json.dumps(sanitize_business_value(result), ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError as exc:
         print(f"无法写入 result.json: {exc}", file=sys.stderr)
         return 3
