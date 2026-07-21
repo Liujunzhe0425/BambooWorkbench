@@ -27,6 +27,7 @@ from moisture.domain.models import (
     AIReviewDecision,
     BatchRecord,
     BatchStatistics,
+    RuleHit,
     SampleMeasurement,
     ScreeningDecision,
 )
@@ -163,11 +164,11 @@ def report(tmp_path: Path) -> WorkbookReport:
     )
 
 
-MAIN_TABLE_HEADERS_20 = [
+MAIN_TABLE_HEADERS_19 = [
     "序号", "供应商", "材料类型", "到货日期", "检测日期",
     "样本1", "样本2", "样本3", "样本4", "样本5",
     "样本6", "样本7", "样本8", "样本9", "样本10",
-    "最大值", "最小值", "区间值", "均值", "筛查结果",
+    "最大值", "最小值", "区间值", "均值",
 ]
 
 MAIN_TABLE_EXCLUDED_COLUMNS = [
@@ -177,6 +178,7 @@ MAIN_TABLE_EXCLUDED_COLUMNS = [
     "规则版本", "规则SHA-256", "规则适用范围", "规则确认状态",
     "初筛状态", "AI复判状态", "置信度", "最终显示色", "人工确认状态",
     "复核建议", "来源文件", "来源工作表",
+    "筛查结果",
 ]
 
 
@@ -184,14 +186,14 @@ def _column(headers: list[str | None], name: str) -> int:
     return headers.index(name) + 1
 
 
-def test_main_table_has_exactly_20_columns_and_correct_headers(
+def test_main_table_has_exactly_19_columns_and_correct_headers(
     tmp_path: Path, report: WorkbookReport
 ) -> None:
     output = write_summary_xlsx(report, tmp_path / "output")
     with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
         summary = workbook[SHEET_NAMES[0]]
         headers = [cell.value for cell in summary[1]]
-        assert headers == MAIN_TABLE_HEADERS_20
+        assert headers == MAIN_TABLE_HEADERS_19
 
 
 def test_main_table_freeze_and_filter_are_constrained(
@@ -201,7 +203,7 @@ def test_main_table_freeze_and_filter_are_constrained(
     with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
         summary = workbook[SHEET_NAMES[0]]
         assert summary.freeze_panes == "F2"
-        assert summary.auto_filter.ref == "A1:T1"
+        assert summary.auto_filter.ref == "A1:S1"
 
 
 def test_main_table_excludes_technical_and_rule_columns(
@@ -236,59 +238,31 @@ def test_main_table_blank_sample_cells_are_empty(
                 )
 
 
-def test_main_table_screen_result_text_mapping(
+def test_anomaly_sheet_screen_result_text_mapping(
+    tmp_path: Path, report: WorkbookReport
+) -> None:
+    """Screen-result text is in the anomaly sheet, not main table."""
+    output = write_summary_xlsx(report, tmp_path / "output")
+    with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
+        anomaly = workbook[SHEET_NAMES[1]]
+        headers = [cell.value for cell in anomaly[1]]
+        screen_col = _column(headers, "筛查结果")
+        screen_values = {
+            anomaly.cell(row, screen_col).value
+            for row in range(2, anomaly.max_row + 1)
+        }
+        assert screen_values.issubset({"正常", "偏高疑似", "偏低疑似", "需人工确认"})
+        assert "偏高疑似" in screen_values  # at least one HIGH case present
+
+
+def test_main_table_has_no_screen_result_column(
     tmp_path: Path, report: WorkbookReport
 ) -> None:
     output = write_summary_xlsx(report, tmp_path / "output")
     with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
         summary = workbook[SHEET_NAMES[0]]
         headers = [cell.value for cell in summary[1]]
-        screen_col = _column(headers, "筛查结果")
-        screen_values = {
-            summary.cell(row, screen_col).value
-            for row in range(2, summary.max_row + 1)
-        }
-        assert screen_values.issubset({"正常", "偏高疑似", "偏低疑似", "需人工确认"})
-        assert "偏高疑似" in screen_values  # at least one HIGH case present
-
-
-def test_screen_result_uses_data_quality_not_generic_pending_confirmation(
-    tmp_path: Path, report: WorkbookReport
-) -> None:
-    first, second = report.batches[:2]
-    normal_pending = replace(
-        first,
-        screening_decision=ScreeningDecision(
-            status=ScreenStatus.NORMAL,
-            display_color=DisplayColor.NONE,
-            target_field=None,
-            reason="确定性结果正常",
-        ),
-        final_display_color=DisplayColor.NONE,
-        confirmation_state=ConfirmationState.PENDING_HUMAN_REVIEW,
-    )
-    data_quality = replace(
-        second,
-        screening_decision=ScreeningDecision(
-            status=ScreenStatus.DATA_QUALITY,
-            display_color=DisplayColor.NONE,
-            target_field=None,
-            reason="数据质量需要人工确认",
-        ),
-        final_display_color=DisplayColor.NONE,
-    )
-    focused_report = WorkbookReport(
-        started_at=report.started_at,
-        batches=(normal_pending, data_quality),
-    )
-
-    output = write_summary_xlsx(focused_report, tmp_path / "output")
-    with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
-        summary = workbook[SHEET_NAMES[0]]
-        headers = [cell.value for cell in summary[1]]
-        screen_col = _column(headers, "筛查结果")
-        assert summary.cell(2, screen_col).value == "正常"
-        assert summary.cell(3, screen_col).value == "需人工确认"
+        assert "筛查结果" not in headers
 
 
 def test_main_table_material_type_is_normalized_to_yuanzhusi(
@@ -366,23 +340,221 @@ def test_workbook_contains_five_required_sheets_and_key_values(
         assert not re.search(r"\bNone\b", customer_text)
 
 
+@pytest.fixture
+def date_mixed_report(tmp_path: Path) -> WorkbookReport:
+    """Four batches with intentionally out-of-order test dates."""
+    batches: list[WorkbookBatch] = []
+    # R1: only arrival_date, no test_date — arrival date is the fallback sort date
+    # R2: test_date 2026-04-10
+    # R3: test_date 2026-04-08
+    # R4: neither test_date nor arrival_date — should sort last
+    settings = (
+        ("R1", ScreenStatus.NORMAL, DisplayColor.NONE, "mean",
+         date(2026, 4, 5), None),
+        ("R2", ScreenStatus.NORMAL, DisplayColor.NONE, "mean",
+         date(2026, 4, 1), date(2026, 4, 10)),
+        ("R3", ScreenStatus.HIGH, DisplayColor.ORANGE, "mean",
+         date(2026, 4, 3), date(2026, 4, 8)),
+        ("R4", ScreenStatus.NORMAL, DisplayColor.NONE, "mean",
+         None, None),
+    )
+    for record_id, status, color, target, arrival_date_val, test_date_val in settings:
+        source = tmp_path / f"{record_id}.xlsx"
+        source.write_bytes(f"unchanged-{record_id}".encode())
+        record = _record(record_id, source, ("0.50", "0.52"))
+        record = replace(record, arrival_date=arrival_date_val, test_date=test_date_val)
+        batches.append(
+            WorkbookBatch(
+                record=record,
+                statistics=_statistics(("0.50", "0.52")),
+                screening_decision=ScreeningDecision(
+                    status=status,
+                    display_color=color,
+                    target_field=target,
+                    reason="确定性初筛",
+                ),
+                ai_review=AIReviewDecision(
+                    status=ReviewStatus.NOT_COMPLETED,
+                    display_color=DisplayColor.NONE,
+                    confirmation_state=ConfirmationState.NOT_REQUIRED,
+                    confidence=None,
+                ),
+                final_display_color=color,
+                confirmation_state=ConfirmationState.NOT_REQUIRED,
+                rule_version="rules-v1",
+                rule_hash="c" * 64,
+                rule_applicable_scope="竹丝/原竹丝；全年",
+                rule_confirmation_status="confirmed",
+                lower_threshold=Decimal("0.47"),
+                upper_threshold=Decimal("0.55"),
+                review_suggestion="",
+                experience_references=(),
+                ai_degradation_reason=None,
+            )
+        )
+    return WorkbookReport(
+        started_at=datetime(2026, 7, 13, 8, 0, tzinfo=UTC),
+        batches=tuple(batches),
+    )
+
+
+def test_main_table_sorted_by_test_date_ascending(
+    tmp_path: Path, date_mixed_report: WorkbookReport
+) -> None:
+    output = write_summary_xlsx(date_mixed_report, tmp_path / "output")
+    with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
+        summary = workbook[SHEET_NAMES[0]]
+        headers = [cell.value for cell in summary[1]]
+        date_col = _column(headers, "检测日期")
+        dates = [
+            summary.cell(row, date_col).value
+            for row in range(2, summary.max_row + 1)
+        ]
+        # R1 uses arrival 04-05, then R3 (04-08), R2 (04-10), R4 missing.
+        assert dates[0] is None
+        assert dates[1].date() == date(2026, 4, 8)
+        assert dates[2].date() == date(2026, 4, 10)
+        assert dates[3] is None   # R4: neither date
+
+
+def test_cross_sheet_order_is_consistent(
+    tmp_path: Path, date_mixed_report: WorkbookReport
+) -> None:
+    output = write_summary_xlsx(date_mixed_report, tmp_path / "output")
+    with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
+        # Main table: sequence numbers (1, 2, 3, 4)
+        summary = workbook[SHEET_NAMES[0]]
+        summary_ids = tuple(
+            summary.cell(row, 1).value
+            for row in range(2, summary.max_row + 1)
+        )
+        assert summary_ids == (1, 2, 3, 4)
+        # Trend / Trace / Model (all-batch sheets): record IDs in same relative order
+        # 异常分析明细 only has anomaly subsets, skip for full-order check
+        expected_records = ("R1", "R3", "R2", "R4")
+        for sheet_name in ("趋势分析", "来源追溯", "模型分析记录"):
+            ws = workbook[sheet_name]
+            id_col = None
+            for col, header in enumerate(ws[1], start=1):
+                if header.value == "批次编号":
+                    id_col = col
+                    break
+            assert id_col is not None, f"No 批次编号 column in {sheet_name}"
+            ids = tuple(
+                ws.cell(row, id_col).value
+                for row in range(2, ws.max_row + 1)
+            )
+            assert ids == expected_records, f"Order mismatch in {sheet_name}: {ids}"
+
+
+def test_sort_is_stable_and_deterministic_for_same_dates(
+    tmp_path: Path,
+) -> None:
+    """Same test_date → stable by record_id, then source hash."""
+    batches: list[WorkbookBatch] = []
+    for rid in ("R3", "R1", "R2"):
+        source = tmp_path / f"{rid}.xlsx"
+        source.write_bytes(f"{rid}".encode())
+        record = _record(rid, source, ("0.50", "0.52"))
+        record = replace(record, test_date=date(2026, 4, 10))
+        batches.append(
+            WorkbookBatch(
+                record=record,
+                statistics=_statistics(("0.50", "0.52")),
+                screening_decision=ScreeningDecision(
+                    status=ScreenStatus.NORMAL, display_color=DisplayColor.NONE,
+                    target_field="mean", reason="",
+                ),
+                ai_review=AIReviewDecision(
+                    status=ReviewStatus.NOT_COMPLETED,
+                    display_color=DisplayColor.NONE,
+                    confirmation_state=ConfirmationState.NOT_REQUIRED,
+                    confidence=None,
+                ),
+                final_display_color=DisplayColor.NONE,
+                confirmation_state=ConfirmationState.NOT_REQUIRED,
+                rule_version="v1", rule_hash="h" * 64,
+                rule_applicable_scope="", rule_confirmation_status="confirmed",
+                lower_threshold=Decimal("0.47"), upper_threshold=Decimal("0.55"),
+                review_suggestion="", experience_references=(),
+                ai_degradation_reason=None,
+            )
+        )
+    report = WorkbookReport(
+        started_at=datetime(2026, 7, 13, 8, 0, tzinfo=UTC),
+        batches=tuple(batches),
+    )
+    first = write_summary_xlsx(report, tmp_path / "first")
+    second = write_summary_xlsx(report, tmp_path / "second")
+    assert first.read_bytes() == second.read_bytes()
+
+    with closing(openpyxl.load_workbook(first, data_only=False)) as workbook:
+        trace = workbook["来源追溯"]
+        assert [trace.cell(row, 1).value for row in range(2, 5)] == ["R1", "R2", "R3"]
+
+
+def test_mean_and_range_rule_hits_color_independent_cells(tmp_path: Path) -> None:
+    source = tmp_path / "multi-hit.xlsx"
+    source.write_bytes(b"unchanged")
+    record = _record("MULTI", source, ("0.45", "0.60"))
+    mean_hit = ScreeningDecision(
+        status=ScreenStatus.HIGH,
+        display_color=DisplayColor.ORANGE,
+        target_field="mean",
+        reason="mean above threshold",
+        rule_hits=(RuleHit("HIGH_DEFAULT", "mean above threshold", DisplayColor.ORANGE, "mean"),),
+    )
+    range_hit = ScreeningDecision(
+        status=ScreenStatus.HIGH,
+        display_color=DisplayColor.ORANGE,
+        target_field="range_value",
+        reason="range above threshold",
+        rule_hits=(
+            RuleHit(
+                "RANGE_VALUE_HIGH",
+                "range above threshold",
+                DisplayColor.ORANGE,
+                "range_value",
+            ),
+        ),
+    )
+    batch = WorkbookBatch(
+        record=record,
+        statistics=_statistics(("0.45", "0.60")),
+        screening_decision=mean_hit,
+        screening_decisions=(mean_hit, range_hit),
+        ai_review=AIReviewDecision(status=ReviewStatus.NOT_REQUIRED),
+        final_display_color=DisplayColor.ORANGE,
+        confirmation_state=ConfirmationState.NOT_REQUIRED,
+        rule_version="rules-v2",
+        review_suggestion="建议复核",
+    )
+    output = write_summary_xlsx(
+        WorkbookReport(datetime(2026, 7, 21, tzinfo=UTC), (batch,)),
+        tmp_path / "output",
+    )
+
+    with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
+        summary = workbook["竹丝含水率统计"]
+        headers = [cell.value for cell in summary[1]]
+        orange = f"FF{COLOR_HEX['orange']}"
+        assert summary.cell(2, _column(headers, "均值")).fill.fgColor.rgb == orange
+        assert summary.cell(2, _column(headers, "区间值")).fill.fgColor.rgb == orange
+        anomalies = workbook["异常分析明细"]
+        assert [anomalies.cell(row, 4).value for row in range(2, 4)] == ["均值", "区间值"]
+
+
 def test_review_colors_match_contract_semantics(tmp_path: Path, report: WorkbookReport) -> None:
     output = write_summary_xlsx(report, tmp_path / "output")
     with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
         sheet = workbook[SHEET_NAMES[0]]
         headers = [cell.value for cell in sheet[1]]
-        screen_col = _column(headers, "筛查结果")
         targets = ("均值", "最小值", "最大值", "样本1")
         colors = ("orange", "green", "red", "blue")
         for row, target, color in zip(range(2, 6), targets, colors, strict=True):
-            # Target indicator cell keeps its color
+            # Target indicator cell carries its rule-hit color
             assert (
                 sheet.cell(row, _column(headers, target)).fill.fgColor.rgb
-                == f"FF{COLOR_HEX[color]}"
-            )
-            # 筛查结果 cell must also carry the final display color
-            assert (
-                sheet.cell(row, screen_col).fill.fgColor.rgb
                 == f"FF{COLOR_HEX[color]}"
             )
 

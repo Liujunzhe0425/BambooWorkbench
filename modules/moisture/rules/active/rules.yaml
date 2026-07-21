@@ -17,3 +17,12 @@ definitions:
     applicable_materials: [竹丝, 原竹丝]
     applicable_seasons: [all]
     customer_confirmation_status: confirmed
+  - rule_id: RANGE_VALUE_HIGH
+    rule_type: numeric_threshold
+    field: range_value
+    operator: ">"
+    threshold: "0.13"
+    color: orange
+    applicable_materials: [竹丝, 原竹丝]
+    applicable_seasons: [all]
+    customer_confirmation_status: confirmed

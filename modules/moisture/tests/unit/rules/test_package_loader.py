@@ -61,7 +61,11 @@ def test_default_rules_are_formally_approved_for_bamboo_materials() -> None:
     snapshot = RulePackageLoader().load(ACTIVE)
 
     assert snapshot.customer_confirmation_status == "confirmed"
-    assert {str(rule.threshold) for rule in snapshot.definitions} == {"0.55", "0.47"}
+    assert {rule.rule_id: str(rule.threshold) for rule in snapshot.definitions} == {
+        "HIGH_DEFAULT": "0.55",
+        "LOW_DEFAULT": "0.47",
+        "RANGE_VALUE_HIGH": "0.13",
+    }
     assert all(
         rule.customer_confirmation_status == "confirmed" for rule in snapshot.definitions
     )

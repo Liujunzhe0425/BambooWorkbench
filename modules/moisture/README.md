@@ -60,12 +60,13 @@ JSON Lines 写入 stdout，普通诊断写入 stderr。模块能够形成合同�
 任务还会生成 XLSX 和 Markdown：
 
 - `result.json`：最后原子写入的机器结果；
-- `moisture_summary.xlsx`：五表汇总工作簿——
-  - **竹丝含水率统计**（20列）：序号、供应商、材料类型、到货日期、检测日期、样本1—10、最大值、最小值、区间值、均值、筛查结果；
+- `moisture_summary.xlsx`：五表汇总工作簿，按检测日期升序排列——
+  - **竹丝含水率统计**（19列）：序号、供应商、材料类型、到货日期、检测日期、样本1—10、最大值、最小值、区间值、均值。命中规则的目标数值单元格直接染色（橙/绿/红/蓝），无"筛查结果"文字列；
   - **异常分析明细**（8列）：批次编号、供应商、检测日期、目标字段、观测值、筛查结果、原因、复核建议；
   - **趋势分析**（14列）：统计指标、初筛上下限和趋势图表；
   - **来源追溯**（12列）：文件、规则和样本元数据；
   - **模型分析记录**（8列）：AI复判技术字段；
+  - 冻结 `F2`，筛选 `A1:S1`，日期统一 `yyyy-mm-dd`。
 - `analysis_report.md`：供人工复核的分析报告。
 
 全部输入失败时，`outputs` 可以为空，不会伪造 XLSX/Markdown。损坏文件只影响自身；
@@ -148,6 +149,13 @@ powershell -ExecutionPolicy Bypass -File modules\moisture\build_portable_runtime
 | [业务规则与数据说明](docs/业务规则与数据说明.md) | 字段映射、含水率公式、统计口径、规则与阈值、颜色含义、确认边界、经验库与 AI 辅助边界、待业务批准事项 |
 | [架构与开发维护指南](docs/架构与开发维护指南.md) | 目录结构、调用链、合同模型、draft/finalize 流程、经验库读写边界、测试命令、禁止修改目录和禁止依赖 |
 | [验收标准与已知限制](docs/验收标准与已知限制.md) | 合同/业务/框架/安全验收、AI 降级行为、已知限制、待业务批准事项 |
+
+下一阶段 Proposed 文档（不替代上述当前实现与验收依据）：
+
+| 文档 | 内容 |
+|------|------|
+| [下一阶段架构设计](docs/architecture/moisture-next-stage-architecture.md) | 规则治理工作器、不可变规则版本、任务快照、Knowledge→AI 编排、人工复核和红蓝退出策略 |
+| [框架适配请求 FCR-moisture-20260721](docs/framework-change-requests/FCR-moisture-20260721-rule-governance-runtime-analysis.md) | 请求框架提供治理进程宿主、存储、UI、active binding、服务编排、审计和打包能力 |
 
 ## 记录文件
 

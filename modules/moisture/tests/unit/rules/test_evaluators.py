@@ -87,6 +87,28 @@ def test_only_confirmed_rules_auto_evaluate() -> None:
     assert result.decisions[0].display_color == DisplayColor.ORANGE
 
 
+def test_range_value_rule_is_strictly_greater_than_thirteen_percent() -> None:
+    range_rule = RuleDefinition(
+        rule_id="RANGE_VALUE_HIGH",
+        rule_type="numeric_threshold",
+        field="range_value",
+        operator=">",
+        threshold=Decimal("0.13"),
+        color=DisplayColor.ORANGE,
+    )
+
+    below = evaluate_rules(batch(sample(1, "0.40"), sample(2, "0.5299")), snapshot(range_rule))
+    boundary = evaluate_rules(batch(sample(1, "0.40"), sample(2, "0.53")), snapshot(range_rule))
+    exceeded = evaluate_rules(
+        batch(sample(1, "0.40"), sample(2, "0.5301")), snapshot(range_rule)
+    )
+
+    assert below.decisions == ()
+    assert boundary.decisions == ()
+    assert exceeded.decisions[0].target_field == "range_value"
+    assert exceeded.decisions[0].display_color is DisplayColor.ORANGE
+
+
 def test_pending_rule_requires_confirmation_without_auto_decision() -> None:
     pending = threshold("HIGH", ">", "0.55", DisplayColor.ORANGE, status="pending_confirmation")
 
