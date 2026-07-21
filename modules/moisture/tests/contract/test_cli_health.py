@@ -73,7 +73,7 @@ def write_fake_python_runtime(
         "    if marker:\n"
         "        pathlib.Path(marker).write_text('launched', encoding='utf-8')\n"
         f"    if {supported!r} and arguments[1:] == ['moisture.cli', 'version']:\n"
-        "        print('0.1.0')\n"
+        "        print('0.1.1')\n"
         "        raise SystemExit(0)\n"
         "    raise SystemExit(91)\n"
         "raise SystemExit(93)\n",
@@ -367,7 +367,7 @@ def test_repository_venv_runs_when_no_runtime_is_declared() -> None:
     completed = run_cli("version", env=env)
 
     assert completed.returncode == 0
-    assert completed.stdout == "0.1.0\n"
+    assert completed.stdout == "0.1.1\n"
     assert completed.stderr == ""
 
 
@@ -405,7 +405,7 @@ def test_active_repository_environment_runs_all_contract_commands(tmp_path: Path
     run = run_cli("run", "--job", str(job_file), env=env)
 
     assert version.returncode == 0
-    assert version.stdout == "0.1.0\n"
+    assert version.stdout == "0.1.1\n"
     assert version.stderr == ""
     assert self_check.returncode == 0
     assert self_check.stdout == "ok\n"
