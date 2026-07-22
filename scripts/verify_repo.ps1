@@ -2,6 +2,12 @@ $ErrorActionPreference = 'Stop'
 $Root = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 Set-Location -LiteralPath $Root
 
+# CI and repository tests do not require a visible desktop. The offscreen
+# backend avoids native Windows COM/DWM event-loop failures in pytest-qt.
+if (-not $env:QT_QPA_PLATFORM) {
+    $env:QT_QPA_PLATFORM = 'offscreen'
+}
+
 $VenvPython = Join-Path $Root '.venv\Scripts\python.exe'
 $Python = if ($env:BAMBOO_PYTHON -and (Test-Path -LiteralPath $env:BAMBOO_PYTHON -PathType Leaf)) {
     $env:BAMBOO_PYTHON
