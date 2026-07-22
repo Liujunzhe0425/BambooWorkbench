@@ -16,6 +16,11 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from after_sales_agent import MODULE_ID, MODULE_NAME, MODULE_VERSION
+from after_sales_agent.ai_service import (
+    apply_ai_service_outcome,
+    build_ai_service_requests,
+    read_ai_service_responses,
+)
 from after_sales_agent.analysis import write_analysis_report
 from after_sales_agent.annual_rollup import write_annual_rollup_workbook
 from after_sales_agent.extractor import file_sha256, process_workbook
@@ -91,6 +96,11 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
     api_config = (runtime_config or {}).get("api") if job.get("ai_enabled") else None
     progress_callback = (runtime_config or {}).get("progress_callback")
     result = _empty_result(job, rules, started_at)
+    root_job_id = (
+        str(job["parent_job_id"])
+        if job.get("phase") == "finalize"
+        else str(job.get("job_id") or "")
+    )
 
     try:
         input_files = expand_inputs(job.get("input_files", []))
@@ -158,7 +168,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 file_result["anomaly_count"] = len(anomalies)
                 if record:
                     record["input_index"] = input_index
-                    record["case_id"] = f"{job.get('job_id', 'batch')}-{input_index}"
+                    record["case_id"] = f"{root_job_id}-{input_index}"
                     record["analysis_status"] = (
                         "智能分析完成"
                         if record.get("issue_analysis_source") == "api"
@@ -209,6 +219,23 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                         "current_file": input_file.name,
                     },
                 )
+
+        ai_service_requests = build_ai_service_requests(
+            root_job_id=root_job_id,
+            records=records,
+        )
+        if job.get("phase") == "draft":
+            result["service_requests"] = ai_service_requests
+        else:
+            ai_outcome = read_ai_service_responses(
+                Path(job["service_response_file"])
+                if job.get("service_response_file")
+                else None,
+                root_job_id=root_job_id,
+                requests=ai_service_requests,
+            )
+            apply_ai_service_outcome(records, ai_outcome)
+            result["errors"].extend(ai_outcome.errors)
 
         answered_confirmation_ids: set[str] = set()
         if job.get("phase") == "finalize":
@@ -274,11 +301,19 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 "mime_type": "text/markdown",
             },
         ]
+        ai_completed = sum(
+            1 for record in records if record.get("ai_service_status") == "智能分析完成"
+        )
+        ai_summary = (
+            f"；AI智能分析完成 {ai_completed} 个，其余保留离线结果并由人工复核"
+            if job.get("phase") == "finalize"
+            else f"；已生成 {len(ai_service_requests)} 个脱敏AI分析请求，等待用户联网授权"
+        )
         result["analysis_summary"] = (
             f"已对账 {len(input_files)} 个输入文件，成功处理 "
             f"{result['summary']['processed_count']} 个，失败 "
             f"{result['summary']['failed_count']} 个；已生成按报修时间排序的全量汇总、"
-            "三类金额统计、分析图表和分析报告。"
+            f"三类金额统计、分析图表和分析报告{ai_summary}。"
         )
         return 0
     finally:
