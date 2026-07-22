@@ -36,7 +36,11 @@ if (Test-Path -LiteralPath (Join-Path $Root 'modules') -PathType Container) {
 Invoke-Checked $Python -m ruff check @RuffTargets
 Invoke-Checked $Python -m pytest -q
 if ($ModuleTestTargets.Count -gt 0) {
-    Invoke-Checked $Python -m pytest -q @ModuleTestTargets
+    # Module suites manipulate independent import paths and some load Qt. Keep
+    # them in separate processes so one module cannot leak Qt/plugin state into another.
+    foreach ($ModuleTestTarget in $ModuleTestTargets) {
+        Invoke-Checked $Python -m pytest -q $ModuleTestTarget
+    }
 }
 Invoke-Checked $Python -m app.tools.module_contract_cli validate mock_modules/moisture
 Invoke-Checked $Python -m app.tools.module_contract_cli validate mock_modules/boiling
