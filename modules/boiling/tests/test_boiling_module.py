@@ -275,6 +275,7 @@ def test_draft_job_generates_result_without_modifying_source(tmp_path):
     assert boiling_module.run_job(job_path) == 0
     assert before == digest(sample)
     assert (output / "boiling_summary.xlsx").is_file()
+    assert (output / "boiling_analysis.xlsx").is_file()
     workbook = openpyxl.load_workbook(output / "boiling_summary.xlsx")
     summary_sheet = workbook["水煮检测汇总"]
     summary_headers = [cell.value for cell in summary_sheet[1]]
@@ -431,6 +432,7 @@ def test_product_usage_in_source_does_not_request_confirmation(tmp_path):
     assert {item["type"] for item in result["outputs"]} == {
         "summary_excel",
         "analysis_report",
+        "analysis_report_markdown",
         "business_records",
     }
 
@@ -604,6 +606,34 @@ def test_summary_lists_five_fixed_position_density_and_expansion_values(tmp_path
     assert summary["M2"].number_format == "0.000"
     assert summary["N2"].number_format == "0.00%"
     workbook.close()
+    analysis_workbook = openpyxl.load_workbook(output / "boiling_analysis.xlsx")
+    assert analysis_workbook.sheetnames == [
+        "分析报告",
+        "需要关注",
+        "未纳入统计",
+        "阅读说明",
+    ]
+    analysis_sheet = analysis_workbook["分析报告"]
+    assert analysis_sheet["A1"].value == "水煮实验分析报告"
+    assert analysis_sheet["A5"].value == "整体状态"
+    assert analysis_sheet["A6"].value == "本批次未发现异常"
+    assert [cell.value for cell in analysis_sheet[9]] == [
+        "来源文件",
+        "批号",
+        "产品",
+        "产品用途",
+        "平均密度(g/cm³)",
+        "密度判定",
+        "平均膨胀率",
+        "自动等级",
+        "需人工复核",
+        "浸渍剥离",
+        "业务状态",
+        "阅读提示",
+    ]
+    attention_sheet = analysis_workbook["需要关注"]
+    assert attention_sheet["A2"].value == "无"
+    analysis_workbook.close()
 
 
 def test_density_boundaries_and_difference_are_inclusive(tmp_path):
@@ -971,6 +1001,9 @@ def test_repeated_input_and_answers_have_stable_ids_and_business_outputs(tmp_pat
     assert excel_values(final_outputs[0] / "boiling_summary.xlsx") == excel_values(
         final_outputs[1] / "boiling_summary.xlsx"
     )
+    assert excel_values(final_outputs[0] / "boiling_analysis.xlsx") == excel_values(
+        final_outputs[1] / "boiling_analysis.xlsx"
+    )
 
 
 def test_formal_business_outputs_do_not_leak_absolute_windows_paths(tmp_path):
@@ -1087,6 +1120,7 @@ def test_real_task_service_closes_after_one_confirmation_round(qtbot, tmp_path):
         assert {item.type for item in final_result.outputs} == {
             "summary_excel",
             "analysis_report",
+            "analysis_report_markdown",
             "business_records",
         }
     finally:

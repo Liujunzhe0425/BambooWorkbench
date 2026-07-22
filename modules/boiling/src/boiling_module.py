@@ -6,6 +6,7 @@ import math
 import re
 import sys
 import tempfile
+from copy import copy
 from pathlib import Path
 
 
@@ -30,7 +31,7 @@ except ImportError as exc:  # pragma: no cover - exercised in a clean environmen
 
 
 MODULE_ID = "boiling"
-MODULE_VERSION = "1.0.0"
+MODULE_VERSION = "1.1.0"
 
 
 def resolve_module_root():
@@ -1526,6 +1527,272 @@ def write_summary(records, output_path, rules, excluded_records=None):
     workbook.save(output_path)
 
 
+def write_analysis_workbook(
+    records, anomalies, confirmations, output_path, rules, excluded_records=None
+):
+    """Write a concise, human-oriented report without replacing audit outputs."""
+    excluded_records = excluded_records or []
+    workbook = openpyxl.Workbook()
+    overview = workbook.active
+    overview.title = "分析报告"
+    overview.sheet_view.showGridLines = False
+
+    title_fill = PatternFill("solid", fgColor="17365D")
+    section_fill = PatternFill("solid", fgColor="D9EAF7")
+    note_fill = PatternFill("solid", fgColor="FFF2CC")
+    thin_gray = Side(style="thin", color="D9E2F3")
+    all_border = Border(left=thin_gray, right=thin_gray, top=thin_gray, bottom=thin_gray)
+
+    overview.merge_cells("A1:L2")
+    overview["A1"] = "水煮实验分析报告"
+    overview["A1"].font = Font(name="微软雅黑", size=20, bold=True, color="FFFFFF")
+    overview["A1"].fill = title_fill
+    overview["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    overview.merge_cells("A3:L3")
+    overview["A3"] = (
+        "本报告用于快速阅读规则复核结果；人工复核项须由有权限人员确认，不替代最终业务签字。"
+    )
+    overview["A3"].fill = note_fill
+    overview["A3"].font = Font(name="微软雅黑", italic=True, color="7F6000")
+    overview["A3"].alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    status_counts = {"正常": 0, "异常": 0, "待确认": 0}
+    for record in records:
+        status = record.get("business_status", "")
+        if status in status_counts:
+            status_counts[status] += 1
+    if confirmations:
+        overall_status = "待人工确认"
+    elif anomalies:
+        overall_status = "发现异常/观察项"
+    elif excluded_records:
+        overall_status = "部分文件信息不足"
+    else:
+        overall_status = "本批次未发现异常"
+
+    metric_labels = [
+        "整体状态",
+        "纳入统计",
+        "正常",
+        "异常",
+        "待确认",
+        "信息不足",
+    ]
+    metric_values = [
+        overall_status,
+        len(records),
+        status_counts["正常"],
+        status_counts["异常"],
+        status_counts["待确认"],
+        len(excluded_records),
+    ]
+    for index, (label, value) in enumerate(zip(metric_labels, metric_values, strict=True)):
+        start_column = index * 2 + 1
+        label_cell = overview.cell(5, start_column, label)
+        value_cell = overview.cell(6, start_column, value)
+        overview.merge_cells(
+            start_row=5,
+            start_column=start_column,
+            end_row=5,
+            end_column=start_column + 1,
+        )
+        overview.merge_cells(
+            start_row=6,
+            start_column=start_column,
+            end_row=6,
+            end_column=start_column + 1,
+        )
+        label_cell.fill = section_fill
+        label_cell.font = Font(name="微软雅黑", bold=True, color="1F4E78")
+        value_cell.font = Font(name="微软雅黑", size=14, bold=True)
+        label_cell.alignment = value_cell.alignment = Alignment(
+            horizontal="center", vertical="center", wrap_text=True
+        )
+        label_cell.border = value_cell.border = all_border
+        style_result_cell(value_cell, value)
+
+    overview.merge_cells("A8:L8")
+    overview["A8"] = "批次结果一览"
+    overview["A8"].fill = section_fill
+    overview["A8"].font = Font(name="微软雅黑", size=12, bold=True, color="1F4E78")
+    overview["A8"].alignment = Alignment(vertical="center")
+    overview_headers = [
+        "来源文件",
+        "批号",
+        "产品",
+        "产品用途",
+        "平均密度(g/cm³)",
+        "密度判定",
+        "平均膨胀率",
+        "自动等级",
+        "需人工复核",
+        "浸渍剥离",
+        "业务状态",
+        "阅读提示",
+    ]
+    overview.append(overview_headers)
+    style_header(overview[9])
+    for record in records:
+        hints = []
+        if record.get("conflicts"):
+            hints.append(f"复算冲突 {len(record['conflicts'])} 项")
+        if record.get("conclusion_rule_conflicts"):
+            hints.append(f"结论冲突 {len(record['conclusion_rule_conflicts'])} 项")
+        if record.get("expansion_human_review_required"):
+            hints.append("膨胀率需人工复核")
+        overview.append(
+            [
+                Path(record["source_file"]).name,
+                record.get("batch_no", ""),
+                record.get("product", ""),
+                record.get("product_usage", ""),
+                record.get("average_density_g_cm3"),
+                record.get("rule_observations", {}).get("density", ""),
+                record.get("average_expansion_ratio"),
+                record.get("expansion_grade", ""),
+                "是" if record.get("expansion_human_review_required") else "否",
+                record.get("immersion_peel_result", ""),
+                record.get("business_status", ""),
+                "；".join(hints) or "无特别提示",
+            ]
+        )
+    if not records:
+        overview.append(["无可纳入正常统计的文件"] + [""] * 11)
+    overview.freeze_panes = "A10"
+    overview.auto_filter.ref = f"A9:L{overview.max_row}"
+    for row in range(10, overview.max_row + 1):
+        overview[f"E{row}"].number_format = "0.000"
+        overview[f"G{row}"].number_format = "0.00%"
+        for column in ("F", "H", "I", "J", "K"):
+            style_result_cell(overview[f"{column}{row}"], overview[f"{column}{row}"].value)
+    overview.row_dimensions[1].height = 28
+    overview.row_dimensions[2].height = 28
+    overview.row_dimensions[3].height = 32
+    for column, width in {
+        "A": 28,
+        "B": 16,
+        "C": 18,
+        "D": 14,
+        "E": 18,
+        "F": 34,
+        "G": 16,
+        "H": 18,
+        "I": 14,
+        "J": 18,
+        "K": 14,
+        "L": 32,
+    }.items():
+        overview.column_dimensions[column].width = width
+
+    attention = workbook.create_sheet("需要关注")
+    attention.sheet_view.showGridLines = False
+    attention_headers = [
+        "类别",
+        "严重程度",
+        "来源文件",
+        "工作表",
+        "单元格/区域",
+        "业务字段",
+        "原因与处理提示",
+        "稳定标识",
+    ]
+    attention.append(attention_headers)
+    style_header(attention[1])
+    for item in anomalies:
+        source = item.get("source", {})
+        attention.append(
+            [
+                "异常/观察",
+                item.get("severity", ""),
+                Path(source.get("source_file", "")).name,
+                source.get("sheet", ""),
+                source.get("cell_or_range", ""),
+                item.get("field", ""),
+                item.get("message", ""),
+                item.get("anomaly_id", ""),
+            ]
+        )
+    for item in confirmations:
+        source = item.get("source", {})
+        attention.append(
+            [
+                "人工确认",
+                "待确认",
+                Path(source.get("source_file", "")).name,
+                source.get("sheet", ""),
+                source.get("cell_or_range", ""),
+                item.get("field", ""),
+                item.get("reason", ""),
+                item.get("confirmation_id", ""),
+            ]
+        )
+    if not anomalies and not confirmations:
+        attention.append(["无", "", "", "", "", "", "本批次没有异常、观察或确认项。", ""])
+    attention.freeze_panes = "A2"
+    attention.auto_filter.ref = attention.dimensions
+    for row in range(2, attention.max_row + 1):
+        style_result_cell(attention[f"B{row}"], attention[f"B{row}"].value)
+    for column, width in {
+        "A": 14,
+        "B": 14,
+        "C": 28,
+        "D": 18,
+        "E": 18,
+        "F": 18,
+        "G": 72,
+        "H": 34,
+    }.items():
+        attention.column_dimensions[column].width = width
+
+    excluded = workbook.create_sheet("未纳入统计")
+    excluded.sheet_view.showGridLines = False
+    excluded.append(["来源文件", "批号", "产品", "缺失字段", "阻断原因", "处理建议"])
+    style_header(excluded[1])
+    for record in excluded_records:
+        excluded.append(
+            [
+                Path(record["source_file"]).name,
+                record.get("batch_no", ""),
+                record.get("product", ""),
+                "、".join(record.get("missing_fields", [])),
+                "；".join(record.get("blocking_reasons", [])),
+                "补全源表后重新运行；该文件当前未参与批次统计。",
+            ]
+        )
+    if not excluded_records:
+        excluded.append(["无", "", "", "", "本批次没有因信息不足而排除的文件。", ""])
+    excluded.freeze_panes = "A2"
+    excluded.auto_filter.ref = excluded.dimensions
+    for column, width in {"A": 28, "B": 16, "C": 20, "D": 34, "E": 60, "F": 48}.items():
+        excluded.column_dimensions[column].width = width
+
+    notes = workbook.create_sheet("阅读说明")
+    notes.sheet_view.showGridLines = False
+    notes.append(["项目", "说明"])
+    notes.append(["规则版本", rules.get("rule_version", "")])
+    notes.append(["正常", "可计算且未发现异常或待确认项。"])
+    notes.append(["异常", "发现测量、剥离或规则观察异常，需要业务人员复核。"])
+    notes.append(["待确认", "产品用途、数据冲突或规则边界需要人工确认。"])
+    notes.append(["信息不足", "空表、未完成表或无可计算试件，未纳入正常统计。"])
+    notes.append(["自动等级", "按当前模块规则自动计算，仅用于辅助判断。"])
+    notes.append(["责任边界", "框架兼容通过不代表业务结论正确；最终结论由有权限人员确认。"])
+    style_header(notes[1])
+    notes.column_dimensions["A"].width = 20
+    notes.column_dimensions["B"].width = 90
+
+    for sheet in workbook.worksheets:
+        for row in sheet.iter_rows():
+            for cell in row:
+                font = copy(cell.font)
+                font.name = "微软雅黑"
+                cell.font = font
+                cell.alignment = Alignment(vertical="center", wrap_text=True)
+                if sheet.title != "分析报告" or cell.row >= 9:
+                    cell.border = all_border
+        sheet.freeze_panes = sheet.freeze_panes or "A2"
+    workbook.save(output_path)
+
+
 def write_analysis_report(
     records, anomalies, confirmations, output_path, rules, excluded_records=None
 ):
@@ -1929,10 +2196,19 @@ def run_job(job_path):
 
     if records or excluded_records:
         summary_path = output_dir / "boiling_summary.xlsx"
+        analysis_workbook_path = output_dir / "boiling_analysis.xlsx"
         report_path = output_dir / "boiling_analysis.md"
         records_path = output_dir / "boiling_records.json"
         try:
             write_summary(records, summary_path, rules, excluded_records)
+            write_analysis_workbook(
+                records,
+                result["anomalies"],
+                result["confirmations"],
+                analysis_workbook_path,
+                rules,
+                excluded_records,
+            )
             write_analysis_report(
                 records,
                 result["anomalies"],
@@ -1954,8 +2230,16 @@ def run_job(job_path):
                     },
                     {
                         "type": "analysis_report",
-                        "path": str(report_path),
+                        "path": str(analysis_workbook_path),
                         "label": "水煮实验分析报告",
+                        "mime_type": (
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        ),
+                    },
+                    {
+                        "type": "analysis_report_markdown",
+                        "path": str(report_path),
+                        "label": "水煮实验分析记录（Markdown）",
                         "mime_type": "text/markdown",
                     },
                     {
