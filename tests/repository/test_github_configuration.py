@@ -32,7 +32,9 @@ def test_repository_gate_discovers_real_module_code_tests_and_contracts() -> Non
     assert "$RuffTargets += 'modules'" in gate
     assert "$ModuleTestTargets" in gate
     assert "python -m pytest" not in gate
-    assert "-m pytest -q @ModuleTestTargets" in gate
+    assert "foreach ($ModuleTestTarget in $ModuleTestTargets)" in gate
+    assert "-m pytest -q $ModuleTestTarget" in gate
+    assert "-m pytest -q @ModuleTestTargets" not in gate
     assert "module_contract_cli validate $_.FullName" in gate
 
 
