@@ -31,6 +31,9 @@ def test_request_is_stable_sorted_redacted_and_declares_consent() -> None:
     assert first.request["request_id"] == second.request["request_id"]
     assert first.request["payload"] == second.request["payload"]
     assert first.request["requires_user_consent"] is True
+    assert first.request["response_format"] == "json_object"
+    assert first.request["payload"]["response_schema"]["type"] == "object"
+    assert "仅返回" in first.request["payload"]["instruction"]
     serialized = json.dumps(first.request, ensure_ascii=False)
     assert secret not in serialized and "C:/secret" not in serialized and "客户甲" not in serialized
 

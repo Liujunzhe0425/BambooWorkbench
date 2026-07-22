@@ -240,7 +240,7 @@ def test_high_low_normal_use_rule_snapshot_bounds_and_distinct_suggestions(
     assert "高于55.00%" in outcome.batches[0].review_suggestion
     assert "低于47.00%" in outcome.batches[1].review_suggestion
     assert outcome.batches[2].review_suggestion == "未命中已确认筛查规则"
-    assert all(batch.rule_version == "default-v1-approved" for batch in outcome.batches)
+    assert all(batch.rule_version == "default-v2-approved" for batch in outcome.batches)
     assert all(batch.rule_hash == outcome.rule_package.rules_sha256 for batch in outcome.batches)
     assert all(batch.rule_applicable_scope == "竹丝/原竹丝；全年" for batch in outcome.batches)
     assert all(batch.rule_confirmation_status == "confirmed" for batch in outcome.batches)

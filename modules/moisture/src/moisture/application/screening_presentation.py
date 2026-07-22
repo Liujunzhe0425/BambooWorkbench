@@ -37,9 +37,12 @@ def screening_suggestion(
     upper: Decimal | None,
     *,
     pending: bool = False,
+    target_field: str | None = None,
 ) -> str:
     if pending:
         return "待业务确认规则未自动参与判定"
+    if target_field == "range_value":
+        return "区间值超过已确认筛查阈值，建议复核样本离散程度、取样和称量记录"
     if status is ScreenStatus.HIGH:
         return f"均值高于{_percent(upper)}，建议复核取样、烘干和称量记录"
     if status is ScreenStatus.LOW:

@@ -17,7 +17,12 @@ if __package__ in (None, ""):
 
 from after_sales_agent import MODULE_ID, MODULE_NAME, MODULE_VERSION
 from after_sales_agent.analysis import write_analysis_report
+from after_sales_agent.annual_rollup import write_annual_rollup_workbook
 from after_sales_agent.extractor import file_sha256, process_workbook
+from after_sales_agent.manual_review import (
+    apply_business_review_value,
+    build_required_review_prompts,
+)
 from after_sales_agent.report import write_summary_workbook
 from after_sales_agent.rules import load_rules
 
@@ -142,6 +147,8 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 seen_hashes.setdefault(digest, str(input_file))
 
                 record, anomalies, confirmations = process_workbook(input_file, rules, api_config)
+                if record:
+                    confirmations.extend(build_required_review_prompts(record, rules))
                 result["anomalies"].extend(
                     _normalize_anomalies(anomalies, len(result["anomalies"]))
                 )
@@ -232,14 +239,22 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
         result["summary"]["confirmation_count"] = len(result["confirmations"])
         result["status"] = decide_status(result)
         summary_path = output_dir / "after_sales_summary.xlsx"
+        annual_rollup_path = output_dir / "after_sales_annual_rollup.xlsx"
         detail_path = output_dir / "after_sales_records.json"
         analysis_path = output_dir / "after_sales_analysis.md"
+        write_annual_rollup_workbook(records, annual_rollup_path, rules)
         write_summary_workbook(records, summary_path, rules)
         with detail_path.open("w", encoding="utf-8") as f:
             json.dump(records, f, ensure_ascii=False, indent=2)
         write_analysis_report(records, result, analysis_path)
 
         result["outputs"] = [
+            {
+                "type": "annual_rollup_excel",
+                "path": str(annual_rollup_path),
+                "label": "售后全量汇总表",
+                "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
             {
                 "type": "summary_excel",
                 "path": str(summary_path),
@@ -262,7 +277,8 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
         result["analysis_summary"] = (
             f"已对账 {len(input_files)} 个输入文件，成功处理 "
             f"{result['summary']['processed_count']} 个，失败 "
-            f"{result['summary']['failed_count']} 个；已生成三类金额汇总、分析图表和分析报告。"
+            f"{result['summary']['failed_count']} 个；已生成按报修时间排序的全量汇总、"
+            "三类金额统计、分析图表和分析报告。"
         )
         return 0
     finally:
@@ -434,6 +450,8 @@ def _apply_confirmation_answers(
 
 
 def _apply_record_value(record: dict[str, Any], field: str, value: Any) -> None:
+    if apply_business_review_value(record, field, value):
+        return
     if field in {"brand", "brand_name"}:
         record["brand"] = str(value or "未知").strip() or "未知"
         record["brand_confidence"] = 1.0

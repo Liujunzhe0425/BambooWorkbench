@@ -1,5 +1,6 @@
 import importlib
 import json
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import QAbstractItemView
 
 from core.contracts.enums import ModuleId
+from core.contracts.result import ModuleResult
 from ui.main_window import MainWindow
 from ui.page_ids import PageId
 
@@ -65,11 +67,62 @@ def test_history_refreshes_from_repository(app_context, main_window) -> None:
 
     table = main_window.history_page.table
     assert table.rowCount() == 1
-    assert table.item(0, 0).text() == "history-1"
+    assert table.item(0, 0).text() == "1"
+    assert table.item(0, 3).text() == "2026-07-13 10:00:00"
+    assert "T" not in table.item(0, 4).text()
     assert table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
     headers = [table.horizontalHeaderItem(index).text() for index in range(table.columnCount())]
     assert "error" not in {header.lower() for header in headers}
     assert "result_path" not in {header.lower() for header in headers}
+
+
+def test_successful_history_row_opens_its_result(
+    qtbot, app_context, main_window
+) -> None:
+    job_id = "history-result"
+    task_dir = app_context.paths.tasks / job_id
+    output_dir = task_dir / "output-final"
+    output_dir.mkdir(parents=True)
+    result = ModuleResult.model_validate(
+        {
+            "schema_version": "1.0",
+            "job_id": job_id,
+            "module_id": "moisture",
+            "module_version": "0.1.1",
+            "status": "success",
+            "rule_version": "test",
+            "summary": {
+                "input_count": 1,
+                "processed_count": 1,
+                "skipped_count": 0,
+                "failed_count": 0,
+                "anomaly_count": 0,
+                "confirmation_count": 0,
+            },
+            "started_at": datetime.now().astimezone(),
+            "finished_at": datetime.now().astimezone(),
+        }
+    )
+    result_path = output_dir / "result.json"
+    result_path.write_text(result.model_dump_json(), encoding="utf-8")
+    app_context.task_repository.create(
+        job_id, "moisture", "success", "2026-07-13T10:00:00+08:00"
+    )
+    app_context.task_repository.update_status(
+        job_id, "success", result_path=str(result_path)
+    )
+    main_window.history_page.refresh()
+
+    qtbot.mouseClick(
+        main_window.history_page.table.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=main_window.history_page.table.visualItemRect(
+            main_window.history_page.table.item(0, 0)
+        ).center(),
+    )
+
+    assert main_window.stack.currentWidget() is main_window.result_center_page
+    assert main_window.result_center_page.current_result == result
 
 
 def test_navigation_refreshes_history(

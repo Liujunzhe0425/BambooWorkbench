@@ -37,6 +37,6 @@ body:
     id: version
     attributes:
       label: 版本与系统
-      placeholder: BambooWorkbench v0.2.1 / Windows 11 x64
+      placeholder: BambooWorkbench v1.0.0 / Windows 11 x64
     validations:
       required: true

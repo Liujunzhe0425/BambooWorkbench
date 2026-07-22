@@ -37,7 +37,7 @@ def rule_root(root: Path, direction: str, *, marker: str = "v1") -> Path:
         "applicable_scope": "test",
         "customer_confirmation_status": "confirmed",
         "released_at": "2026-07-16T00:00:00+08:00",
-        "module_version": "0.1.0",
+        "module_version": "0.1.1",
     }
     (package / "rule-package.json").write_text(
         json.dumps(manifest, ensure_ascii=False), encoding="utf-8"

@@ -59,14 +59,14 @@ class WindowTitleBar(QWidget):
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 0, 2, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(10)
 
         self.title_label = QLabel("竹简工作台")
         self.title_label.setObjectName("windowTitle")
         self.version_label = QLabel(f"BambooWorkbench v{__version__}")
         self.version_label.setObjectName("windowVersion")
-        layout.addWidget(self.title_label)
-        layout.addWidget(self.version_label)
+        layout.addWidget(self.title_label, 0, Qt.AlignmentFlag.AlignVCenter)
+        layout.addWidget(self.version_label, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addStretch()
 
         self.minimize_button = self._button(

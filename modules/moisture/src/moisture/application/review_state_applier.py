@@ -13,6 +13,7 @@ from moisture.application.run_result import InternalAnomaly, ReviewState
 from moisture.application.service_response_validator import ValidatedReviewDecision
 from moisture.domain.enums import ConfirmationState, DisplayColor, ReviewStatus
 from moisture.domain.models import AIReviewDecision
+from moisture.domain.review import AIReviewCandidate
 from moisture.ports.writers import WorkbookBatch
 
 
@@ -53,18 +54,21 @@ def apply_validated_review(
     candidates = candidates_from_batches(batches, rule_package)
     by_public_id = {opaque_candidate_id(item): item for item in candidates}
     decision_by_id = {item.candidate_id: item for item in decisions}
-    promoted_records: dict[str, ValidatedReviewDecision] = {}
+    promoted_records: dict[str, tuple[AIReviewCandidate, ValidatedReviewDecision]] = {}
     for public_id, candidate in by_public_id.items():
         decision = decision_by_id[public_id]
         if candidate.record_id is not None:
-            promoted_records[candidate.record_id] = decision
+            # Candidate order is strongest deviation first; keep that stable
+            # record-level presentation when more than one metric is flagged.
+            promoted_records.setdefault(candidate.record_id, (candidate, decision))
 
     updated_batches: list[WorkbookBatch] = []
     for batch in batches:
-        decision = promoted_records.get(batch.record.record_id)
-        if decision is None:
+        promoted = promoted_records.get(batch.record.record_id)
+        if promoted is None:
             updated_batches.append(batch)
             continue
+        _, decision = promoted
         color = DisplayColor.RED if decision.direction == "high" else DisplayColor.BLUE
         status = (
             ReviewStatus.REVIEW_HIGH if decision.direction == "high" else ReviewStatus.REVIEW_LOW
@@ -87,32 +91,24 @@ def apply_validated_review(
             )
         )
 
+    promoted_by_source = {
+        batch.record.source_file: promoted_records[batch.record.record_id]
+        for batch in batches
+        if batch.record.record_id in promoted_records
+    }
     updated_anomalies = tuple(
         replace(
             anomaly,
             review_state=(
                 ReviewState.HIGH_SUSPICION_HIGH
-                if promoted_records.get(
-                    next(
-                        (
-                            batch.record.record_id
-                            for batch in batches
-                            if batch.record.source_file == anomaly.source_file
-                        ),
-                        "",
-                    )
-                ).direction
-                == "high"
+                if promoted_by_source[anomaly.source_file][1].direction == "high"
                 else ReviewState.HIGH_SUSPICION_LOW
             ),
             message="有效辅助证据支持的高度疑似，非正式错误或责任结论",
         )
-        if any(
-            batch.record.record_id in promoted_records
-            and batch.record.source_file == anomaly.source_file
-            for batch in batches
-        )
-        and anomaly.rule_id is not None
+        if anomaly.source_file in promoted_by_source
+        and anomaly.rule_id == promoted_by_source[anomaly.source_file][0].rule_id
+        and anomaly.field == promoted_by_source[anomaly.source_file][0].target_field
         else anomaly
         for anomaly in anomalies
     )

@@ -1,4 +1,6 @@
-from PySide6.QtCore import Qt
+from datetime import datetime
+
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFrame,
@@ -16,8 +18,10 @@ from core.storage.repositories.tasks import TaskRepository
 
 
 class HistoryPage(QWidget):
+    result_requested = Signal(str)
+
     _COLUMNS = (
-        ("job_id", "任务 ID"),
+        ("task_number", "编号"),
         ("module_id", "业务模块"),
         ("status", "状态"),
         ("created_at", "创建时间"),
@@ -29,6 +33,10 @@ class HistoryPage(QWidget):
         "after_sales": "售后分析",
     }
     _STATUS_NAMES = {
+        "created": "已创建",
+        "running_draft": "正在读取与分析",
+        "waiting_confirmation": "待确认",
+        "running_finalize": "正在生成结果",
         "success": "已完成",
         "partial_success": "部分完成",
         "needs_confirmation": "待确认",
@@ -81,6 +89,8 @@ class HistoryPage(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.table.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.table.cellClicked.connect(self._open_result)
         self.table.setAlternatingRowColors(True)
         self.table.setShowGrid(False)
         self.table.verticalHeader().setVisible(False)
@@ -142,7 +152,13 @@ class HistoryPage(QWidget):
                     raw_value = self._MODULE_NAMES.get(raw_value, raw_value)
                 elif field == "status":
                     raw_value = self._STATUS_NAMES.get(raw_value, raw_value)
+                elif field in {"created_at", "updated_at"}:
+                    raw_value = self._display_time(raw_value)
                 item = QTableWidgetItem(raw_value)
+                item.setData(Qt.ItemDataRole.UserRole, str(record["job_id"]))
+                item.setData(Qt.ItemDataRole.UserRole + 1, raw_status)
+                if raw_status in {"success", "partial_success"}:
+                    item.setToolTip("单击查看本次任务结果")
                 if field == "status":
                     item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 self.table.setItem(row, column, item)
@@ -151,3 +167,21 @@ class HistoryPage(QWidget):
         self.pending_value.setText(str(pending))
         self.table.setVisible(bool(records))
         self.empty_label.setVisible(not records)
+
+    def _open_result(self, row: int, _column: int) -> None:
+        item = self.table.item(row, 0)
+        if item is None:
+            return
+        if item.data(Qt.ItemDataRole.UserRole + 1) not in {"success", "partial_success"}:
+            return
+        job_id = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(job_id, str) and job_id:
+            self.result_requested.emit(job_id)
+
+    @staticmethod
+    def _display_time(value: str) -> str:
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError:
+            return value.replace("T", " ", 1)
+        return parsed.strftime("%Y-%m-%d %H:%M:%S")

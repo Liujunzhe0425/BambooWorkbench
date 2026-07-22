@@ -9,7 +9,7 @@
     "膨胀率"
   ],
   "expected_confirmation_fields": [
-    "膨胀率"
+    "膨胀率｜03_expansion_observation.xlsx｜原表合格→规则不合格（建议按规则）"
   ],
   "expected_sample_count": 2,
   "expected_retest_count": 0,

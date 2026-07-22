@@ -63,7 +63,7 @@ def test_minimal_draft_writes_schema_valid_result_last(tmp_path: Path) -> None:
     jsonschema.validate(result, schema, format_checker=jsonschema.FormatChecker())
     assert result["job_id"] == job["job_id"]
     assert result["module_id"] == "moisture"
-    assert result["module_version"] == "0.1.0"
+    assert result["module_version"] == "1.0.0"
     assert result["status"] == "failed"
     assert result["outputs"] == []
     assert result["summary"] == {
