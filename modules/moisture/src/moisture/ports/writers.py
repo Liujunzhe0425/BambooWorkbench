@@ -56,9 +56,14 @@ class WorkbookBatch:
     upper_threshold: Decimal | None = None
     experience_references: tuple[ExperienceCitation, ...] = ()
     ai_degradation_reason: str | None = None
+    screening_decisions: tuple[ScreeningDecision, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "experience_references", tuple(self.experience_references))
+        decisions = tuple(self.screening_decisions)
+        if not decisions and self.screening_decision.status.value != "normal":
+            decisions = (self.screening_decision,)
+        object.__setattr__(self, "screening_decisions", decisions)
 
 
 @dataclass(frozen=True, slots=True)

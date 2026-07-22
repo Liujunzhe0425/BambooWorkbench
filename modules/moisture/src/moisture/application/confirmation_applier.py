@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 
 from moisture.adapters.rules.builtin_evaluators import evaluate_rules
+from moisture.application.decision_aggregation import ordered_decisions, primary_decision
 from moisture.application.run_result import InternalAnomaly, ReviewState
 from moisture.application.screening_presentation import (
     screening_bounds,
@@ -220,7 +221,8 @@ def apply_confirmations(
                 )
             )
 
-        decision = decisions[0] if decisions else ScreeningDecision(status=ScreenStatus.NORMAL)
+        ordered = ordered_decisions(decisions)
+        decision = primary_decision(ordered)
         lower_threshold, upper_threshold = screening_bounds(evaluation)
         for item in decisions:
             for hit in item.rule_hits:
@@ -253,9 +255,11 @@ def apply_confirmations(
                     decision.status,
                     lower_threshold,
                     upper_threshold,
+                    target_field=decision.target_field,
                 ),
                 lower_threshold=lower_threshold,
                 upper_threshold=upper_threshold,
+                screening_decisions=ordered,
             )
         )
 

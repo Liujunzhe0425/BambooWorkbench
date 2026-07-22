@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import xlsxwriter
 from moisture.domain.enums import DisplayColor, ScreenStatus
+from moisture.domain.models import ScreeningDecision
 from moisture.ports.writers import WorkbookBatch, WorkbookReport
 from moisture.reporting.labels import (
     color_label,
@@ -44,7 +45,6 @@ SUMMARY_HEADERS = (
     "最小值",
     "区间值",
     "均值",
-    "筛查结果",
 )
 
 TARGET_HEADERS = {
@@ -71,19 +71,22 @@ def _excel_date(value: date | None) -> datetime | None:
     return None if value is None else datetime.combine(value, time.min)
 
 
-def _target_header(batch: WorkbookBatch) -> str | None:
-    decision = (
-        batch.ai_review
-        if batch.ai_review.display_color != DisplayColor.NONE
-        else batch.screening_decision
-    )
-    target = decision.target_field
+def _target_header_for(target: str | None) -> str | None:
     if target is None:
         return None
     if target.startswith("sample_") and target.removeprefix("sample_").isdigit():
         sample_index = int(target.removeprefix("sample_"))
         return f"样本{sample_index}" if 1 <= sample_index <= 10 else None
     return TARGET_HEADERS.get(target)
+
+
+def _target_header(batch: WorkbookBatch) -> str | None:
+    decision = (
+        batch.ai_review
+        if batch.ai_review.display_color != DisplayColor.NONE
+        else batch.screening_decision
+    )
+    return _target_header_for(decision.target_field)
 
 
 def _screen_result(batch: WorkbookBatch) -> str:
@@ -101,19 +104,36 @@ def _material_label(value: str | None) -> str | None:
     return normalized
 
 
+def _ordered_batches(report: WorkbookReport) -> tuple[WorkbookBatch, ...]:
+    """Return batches in stable display order without modifying the original report.
+
+    Sort key: test_date ASC → arrival_date fallback → missing last
+             → record_id → source_sha256
+    """
+    from datetime import MAXYEAR
+
+    _date_max = date(MAXYEAR, 12, 31)
+
+    def _sort_key(batch: WorkbookBatch) -> tuple[int, date, str, str]:
+        record = batch.record
+        observed = record.test_date or record.arrival_date
+        return (
+            1 if observed is None else 0,
+            observed or _date_max,
+            record.record_id or "",
+            record.source_file_hash or "",
+        )
+
+    return tuple(sorted(report.batches, key=_sort_key))
+
+
 def _department_map(batch: WorkbookBatch) -> str:
     return "; ".join(
         f"样本{sample.sample_index}:{sample.department}" for sample in batch.record.samples
     )
 
 
-def _target_value(batch: WorkbookBatch) -> Decimal | None:
-    decision = (
-        batch.ai_review
-        if batch.ai_review.display_color != DisplayColor.NONE
-        else batch.screening_decision
-    )
-    target = decision.target_field
+def _target_value_for(batch: WorkbookBatch, target: str | None) -> Decimal | None:
     if target is None:
         return None
     if target.startswith("sample_") and target.removeprefix("sample_").isdigit():
@@ -125,6 +145,36 @@ def _target_value(batch: WorkbookBatch) -> Decimal | None:
     if target == "total_weight_kg":
         return batch.record.total_weight_kg
     return getattr(batch.statistics, target, None)
+
+
+def _target_value(batch: WorkbookBatch) -> Decimal | None:
+    decision = (
+        batch.ai_review
+        if batch.ai_review.display_color != DisplayColor.NONE
+        else batch.screening_decision
+    )
+    return _target_value_for(batch, decision.target_field)
+
+
+def _target_colors(batch: WorkbookBatch) -> dict[str, DisplayColor]:
+    colors: dict[str, DisplayColor] = {}
+    for decision in batch.screening_decisions or (batch.screening_decision,):
+        header = _target_header_for(decision.target_field)
+        if header is not None and decision.display_color is not DisplayColor.NONE:
+            colors[header] = decision.display_color
+    if batch.ai_review.display_color is not DisplayColor.NONE:
+        header = _target_header_for(batch.ai_review.target_field)
+        if header is not None:
+            colors[header] = batch.ai_review.display_color
+    return colors
+
+
+def _anomaly_suggestion(batch: WorkbookBatch, decision: ScreeningDecision) -> str:
+    if decision.target_field == "range_value":
+        return "建议复核样本离散程度、取样和称量记录"
+    if decision == batch.screening_decision:
+        return batch.review_suggestion
+    return decision.reason or batch.review_suggestion
 
 
 def _write_headers(worksheet: Any, headers: tuple[str, ...], header_format: Any) -> None:
@@ -140,8 +190,10 @@ def _formats(workbook: Any) -> dict[str, Any]:
         "header": workbook.add_format(
             {
                 "bold": True,
-                "font_color": "FFFFFF",
-                "bg_color": "4472C4",
+                "font_color": "1F4E3D",
+                "bg_color": "E2F0D9",
+                "border": 1,
+                "border_color": "A6A6A6",
                 "align": "center",
                 "valign": "vcenter",
             }
@@ -246,7 +298,6 @@ def _summary_row(batch: WorkbookBatch, index: int) -> list[object | None]:
         _number(batch.statistics.minimum),
         _number(batch.statistics.range_value),
         _number(batch.statistics.mean),
-        _screen_result(batch),
     ]
 
 
@@ -260,7 +311,6 @@ def _write_summary(workbook: Any, report: WorkbookReport, formats: dict[str, Any
     worksheet.set_column(3, 4, 12)
     worksheet.set_column(5, 14, 11)
     worksheet.set_column(15, 18, 12)
-    worksheet.set_column(19, 19, 14)
     columns = {header: index for index, header in enumerate(SUMMARY_HEADERS)}
     date_columns = {columns["到货日期"], columns["检测日期"]}
     percent_headers = {
@@ -271,21 +321,20 @@ def _write_summary(workbook: Any, report: WorkbookReport, formats: dict[str, Any
         "均值",
     }
     percent_columns = {columns[name] for name in percent_headers}
-    for row_index, batch in enumerate(report.batches, start=1):
-        target_header = _target_header(batch)
+    ordered = _ordered_batches(report)
+    for row_index, batch in enumerate(ordered, start=1):
+        target_colors = _target_colors(batch)
         for column, value in enumerate(_summary_row(batch, row_index)):
             cell_format = formats["main_text"]
             if column in date_columns:
                 cell_format = formats["main_date"]
             elif column in percent_columns:
                 cell_format = formats["main_number"]
-            elif column in {columns["序号"], columns["材料类型"], columns["筛查结果"]}:
+            elif column in {columns["序号"], columns["材料类型"]}:
                 cell_format = formats["main_center"]
-            if target_header in columns and column == columns[target_header]:
-                color_key = f"main_color_{batch.final_display_color.value}_number"
-                cell_format = formats.get(color_key, cell_format)
-            if column == columns["筛查结果"]:
-                color_key = f"main_color_{batch.final_display_color.value}_text"
+            header = SUMMARY_HEADERS[column]
+            if header in target_colors:
+                color_key = f"main_color_{target_colors[header].value}_number"
                 cell_format = formats.get(color_key, cell_format)
             if value is None:
                 worksheet.write_blank(row_index, column, None, cell_format)
@@ -312,36 +361,44 @@ def _write_anomalies(workbook: Any, report: WorkbookReport, formats: dict[str, A
     worksheet = workbook.add_worksheet(SHEET_NAMES[1])
     _write_headers(worksheet, headers, formats["header"])
     row = 1
-    for batch in report.batches:
-        if batch.final_display_color == DisplayColor.NONE:
-            continue
-        values = (
-            batch.record.record_id,
-            batch.record.supplier,
-            _excel_date(batch.record.test_date),
-            _target_header(batch)
-            or batch.ai_review.target_field
-            or batch.screening_decision.target_field,
-            _number(_target_value(batch)),
-            _screen_result(batch),
-            batch.ai_review.rationale or batch.screening_decision.reason or batch.review_suggestion,
-            batch.review_suggestion,
-        )
-        for column, value in enumerate(values):
-            cell_format = formats["wrap"] if column >= 6 else formats["text"]
-            if isinstance(value, datetime):
-                worksheet.write_datetime(row, column, value, formats["date"])
-            elif isinstance(value, (int, float)):
-                number_format = (
-                    formats["weight"]
-                    if column == 4 and _target_header(batch) == "总重(kg)"
-                    else formats["number"]
-                )
-                worksheet.write_number(row, column, value, number_format)
-            else:
-                worksheet.write(row, column, value, cell_format)
-        worksheet.set_row(row, 30)
-        row += 1
+    for batch in _ordered_batches(report):
+        for decision in batch.screening_decisions or (batch.screening_decision,):
+            if decision.display_color is DisplayColor.NONE:
+                continue
+            target_header = _target_header_for(decision.target_field)
+            reviewed = (
+                batch.ai_review.display_color is not DisplayColor.NONE
+                and batch.ai_review.target_field == decision.target_field
+            )
+            values = (
+                batch.record.record_id,
+                batch.record.supplier,
+                _excel_date(batch.record.test_date),
+                target_header or decision.target_field,
+                _number(_target_value_for(batch, decision.target_field)),
+                (
+                    _screen_result(batch)
+                    if decision == batch.screening_decision
+                    else screen_label(decision.status)
+                ),
+                batch.ai_review.rationale if reviewed else decision.reason,
+                _anomaly_suggestion(batch, decision),
+            )
+            for column, value in enumerate(values):
+                cell_format = formats["wrap"] if column >= 6 else formats["text"]
+                if isinstance(value, datetime):
+                    worksheet.write_datetime(row, column, value, formats["date"])
+                elif isinstance(value, (int, float)):
+                    number_format = (
+                        formats["weight"]
+                        if column == 4 and target_header == "总重(kg)"
+                        else formats["number"]
+                    )
+                    worksheet.write_number(row, column, value, number_format)
+                else:
+                    worksheet.write(row, column, value, cell_format)
+            worksheet.set_row(row, 30)
+            row += 1
     worksheet.set_column(0, 0, 34)
     worksheet.set_column(1, 1, 14)
     worksheet.set_column(2, 2, 12)
@@ -356,16 +413,8 @@ def _write_trends(workbook: Any, report: WorkbookReport, formats: dict[str, Any]
     )
     worksheet = workbook.add_worksheet(SHEET_NAMES[2])
     _write_headers(worksheet, headers, formats["header"])
-    trend_batches = tuple(
-        sorted(
-            report.batches,
-            key=lambda batch: (
-                batch.record.test_date or date.max,
-                batch.record.record_id,
-            ),
-        )
-    )
-    for row_index, batch in enumerate(trend_batches, start=1):
+    ordered = _ordered_batches(report)
+    for row_index, batch in enumerate(ordered, start=1):
         values = (
             row_index,
             batch.record.record_id,
@@ -399,9 +448,9 @@ def _write_trends(workbook: Any, report: WorkbookReport, formats: dict[str, Any]
     worksheet.set_column(2, 2, 12)
     worksheet.set_column(3, 3, 14)
     worksheet.set_column(4, 13, 13)
-    if not trend_batches:
+    if not ordered:
         return
-    last_row = len(trend_batches)
+    last_row = len(ordered)
     average_chart = workbook.add_chart({"type": "scatter", "subtype": "straight_with_markers"})
     for column, name, color in (
         (4, "批次均值", "4472C4"),
@@ -464,7 +513,7 @@ def _write_trace(workbook: Any, report: WorkbookReport, formats: dict[str, Any])
     )
     worksheet = workbook.add_worksheet(SHEET_NAMES[3])
     _write_headers(worksheet, headers, formats["header"])
-    for row, batch in enumerate(report.batches, start=1):
+    for row, batch in enumerate(_ordered_batches(report), start=1):
         values = (
             batch.record.record_id,
             batch.record.source_file.name if batch.record.source_file else None,
@@ -505,7 +554,7 @@ def _write_model_records(workbook: Any, report: WorkbookReport, formats: dict[st
     )
     worksheet = workbook.add_worksheet(SHEET_NAMES[4])
     _write_headers(worksheet, headers, formats["header"])
-    for row, batch in enumerate(report.batches, start=1):
+    for row, batch in enumerate(_ordered_batches(report), start=1):
         values = (
             batch.record.record_id,
             screen_label(batch.screening_decision.status),

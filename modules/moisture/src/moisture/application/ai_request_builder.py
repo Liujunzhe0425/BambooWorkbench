@@ -73,49 +73,53 @@ def candidates_from_batches(
     definitions = {item.rule_id: item for item in snapshot.definitions}
     candidates: list[AIReviewCandidate] = []
     for batch in batches:
-        decision = batch.screening_decision
-        if decision.display_color not in {DisplayColor.ORANGE, DisplayColor.GREEN}:
-            continue
-        target = decision.target_field
-        if target is None:
-            continue
-        observed = getattr(batch.statistics, target, None)
-        if target == "total_weight_kg":
-            observed = batch.record.total_weight_kg
-        if not hasattr(observed, "as_tuple"):
-            continue
-        hit = next((item for item in decision.rule_hits if item.target_field == target), None)
-        definition = definitions.get(hit.rule_id) if hit is not None else None
-        if hit is None or definition is None:
-            continue
-        threshold = definition.threshold
-        if threshold is None:
-            threshold = (
-                definition.upper
-                if decision.display_color is DisplayColor.ORANGE
-                else definition.lower
+        decisions = batch.screening_decisions or (batch.screening_decision,)
+        for decision in decisions:
+            if decision.display_color not in {DisplayColor.ORANGE, DisplayColor.GREEN}:
+                continue
+            target = decision.target_field
+            if target is None:
+                continue
+            observed = getattr(batch.statistics, target, None)
+            if target == "total_weight_kg":
+                observed = batch.record.total_weight_kg
+            if not hasattr(observed, "as_tuple"):
+                continue
+            hit = next((item for item in decision.rule_hits if item.target_field == target), None)
+            definition = definitions.get(hit.rule_id) if hit is not None else None
+            if hit is None or definition is None:
+                continue
+            threshold = definition.threshold
+            if threshold is None:
+                threshold = (
+                    definition.upper
+                    if decision.display_color is DisplayColor.ORANGE
+                    else definition.lower
+                )
+            if threshold is None:
+                continue
+            relative = abs(observed - threshold) / abs(threshold) if threshold else abs(observed)
+            fingerprint = batch.record.source_file_hash or batch.record.record_id
+            raw_identity = f"{fingerprint}:{hit.rule_id}:{target}:{snapshot.rules_sha256}"
+            evidence_refs = (f"rule:{hit.rule_id}",) + tuple(
+                f"experience:{item.entry_id}@{item.version}"
+                for item in batch.experience_references
             )
-        if threshold is None:
-            continue
-        relative = abs(observed - threshold) / abs(threshold) if threshold else abs(observed)
-        fingerprint = batch.record.source_file_hash or batch.record.record_id
-        raw_identity = f"{fingerprint}:{hit.rule_id}:{target}:{snapshot.rules_sha256}"
-        evidence_refs = (f"rule:{hit.rule_id}",) + tuple(
-            f"experience:{item.entry_id}@{item.version}" for item in batch.experience_references
-        )
-        candidates.append(
-            AIReviewCandidate(
-                candidate_id=raw_identity,
-                target_field=target,
-                observed_value=observed,
-                reference_value=threshold,
-                relative_deviation=relative,
-                direction=("high" if decision.display_color is DisplayColor.ORANGE else "low"),
-                rule_id=hit.rule_id,
-                evidence_refs=evidence_refs,
-                record_id=batch.record.record_id,
+            candidates.append(
+                AIReviewCandidate(
+                    candidate_id=raw_identity,
+                    target_field=target,
+                    observed_value=observed,
+                    reference_value=threshold,
+                    relative_deviation=relative,
+                    direction=(
+                        "high" if decision.display_color is DisplayColor.ORANGE else "low"
+                    ),
+                    rule_id=hit.rule_id,
+                    evidence_refs=evidence_refs,
+                    record_id=batch.record.record_id,
+                )
             )
-        )
     return ordered_candidates(tuple(candidates))
 
 
