@@ -1,6 +1,6 @@
 # 竹丝水分检测模块
 
-BambooWorkbench 竹丝水分检测模块 v0.1.1。模块通过主框架 Registry 发现，
+BambooWorkbench 竹丝水分检测模块 v0.1.2。模块通过主框架 Registry 发现，
 由 Runner 经 `run_module.bat` 启动，支持确定性 Excel 分析、draft/finalize、
 业务确认项以及受控的 knowledge/AI service request。模块不直接访问网络、
 Provider、数据库或凭据。

@@ -1,67 +1,38 @@
-# 框架负责人待处理事项
+# 框架事项状态总览
 
-本文记录当前仍需 BambooWorkbench 主框架负责人或业务负责人批准/实施的事项。
-这些事项需要跨越模块业务边界，或需要业务负责人正式批准；本轮文档整理不修改相应代码、规则资产或主框架。
+> 文档职责：只维护事项状态、责任方和下一步，不重复保存实施规格。
+>
+> 最后核对：2026-07-22；当前模块版本：`0.1.2`。
 
-## 1. 正式模块真实调用
+规则治理、任务规则快照和人工复核的完整需求，以
+[`framework-change-requests/FCR-moisture-20260721-rule-governance-runtime-analysis.md`](framework-change-requests/FCR-moisture-20260721-rule-governance-runtime-analysis.md)
+为唯一权威规格。下一阶段业务架构以
+[`architecture/moisture-next-stage-architecture.md`](architecture/moisture-next-stage-architecture.md)
+为准。本文件不复制两者的字段、流程、Schema 或验收矩阵。
 
-主框架默认发现并真实调用正式 moisture 模块。当前仍需确认：
+## 当前状态
 
-- 禁止静默回退同 ID Mock 模块；
-- 确认 Registry → Runner → BAT → 独立进程的完整调用链在正式部署环境中行为一致。
+| 事项 | 状态 | 责任方 | 下一步/权威依据 |
+| --- | --- | --- | --- |
+| 正式 moisture 注册与独立进程调用 | 已完成模块与源码验收 | 框架方 | 默认使用正式模块；继续纳入发布回归，不再作为开放缺陷 |
+| DeepSeek / OpenAI-compatible Provider 基础接入 | 已实现，待真实环境验收 | 框架方、安全负责人 | 使用 Windows 凭据、联网开关和逐次同意完成生产环境联调；Provider 异常仍需结构化降级 |
+| 规则治理、active binding、任务规则快照与人工复核 | 待框架审核 | 框架方、模块方 | 见上述 FCR；本文件不重复其实现要求 |
+| 经验库治理 UI | 待立项 | 框架方、模块方 | 复用模块现有离线治理生命周期；如需框架改动，应另建独立 FCR |
+| AI 报告增强 | 待设计与验收 | 框架方、模块方、业务负责人 | AI 只能增强确定性报告，不重算数值或形成责任/不合格结论 |
+| `0.55/0.47` 均值阈值业务批准 | 待业务批准 | 业务负责人 | 当前 `default-v2-approved` 机器资产仍标记 confirmed；业务批准完成前继续按“待批准筛查提示”说明 |
+| 便携包正式发布签署 | 待发布阶段完成 | 发布负责人 | 源码、合同、BAT 和模块测试已通过；正式交付时重新构建并完成便携环境签署 |
 
-## 2. 真实 AI / Knowledge Provider
+## 已关闭事项
 
-moisture 模块只声明 service request 并校验 service response，不持有 Provider、
-HTTP 客户端、API Key 或网络实现。以下需主框架或安全负责人提供：
+- 主框架默认 `use_mocks=False`，正式 `modules/moisture` 可由 Registry 发现；
+- Runner 通过 `run_module.bat` 启动独立模块进程，不需要框架 import moisture 业务实现；
+- 模块合同、`version`、`self-check`、历史样本和源码调用链已完成验收；
+- 框架 Bootstrap 已能组合 DeepSeek、OpenAI-compatible、Mock 和不可用 Provider；
+- 模块继续只声明 service request、校验 service response，不持有 HTTP 客户端或 API Key。
 
-- 真实 OpenAI-compatible / DeepSeek Provider 部署；
-- Windows 凭据管理和安全存储；
-- 逐次联网用户同意机制；
-- AI 降级展示（denied / error / timeout 的用户可见反馈）。
+## 维护规则
 
-## 3. 经验库治理 UI
-
-当前离线经验管理仅通过命令行工具 `moisture.tools.manage_experience` 操作。
-仍需提供：
-
-- 独立管理进程或 GUI 治理界面；
-- 经验创建、审核、发布、停用和回滚的完整工作流。
-
-## 4. 规则治理
-
-运行时规则包 `rules/active/` 当前为只读静态文件。仍需提供：
-
-- 规则草稿、校验、批准、发布的工作流；
-- 规则停用/回滚和审计入口；
-- 规则包版本管理与模块版本的耦合策略。
-
-## 5. AI 报告增强
-
-基于确定性结果和已验证辅助证据的 AI 报告增强功能尚未启用。
-该功能需在真实 Provider 就绪后由主框架编排层实现，
-模块本身不持有报告增强逻辑。
-
-## 6. 阈值治理一致性
-
-当前存在文档口径与机器规则包元数据的不一致：
-
-- 机器规则包元数据将 `0.55/0.47` 标记为 `confirmed` / `default-v1-approved`；
-- 最新业务要求标注为"待业务批准"。
-
-在业务负责人正式批准并由规则治理流程更新资产前，指导文档统一标注为"待业务批准"。
-此不一致已在《验收标准与已知限制》中列为已知限制。
-
-需业务负责人和框架负责人共同确定：
-
-- 正式批准流程和时间节点；
-- 规则包元数据更新方式；
-- 已交付版本中的旧 `confirmed` 状态处置策略。
-
-## 7. 源码与便携包一致性验收
-
-仍需框架负责人在正式发布前完成：
-
-- 源码与 portable 构建产物的行为一致性验证；
-- 真实独立进程验收（非 import orchestrator 模拟）；
-- 发布负责人最终签署。
+1. 这里只更新状态、责任方和链接；不得复制 FCR 的详细协议或验收条款。
+2. 已完成事项移入“已关闭事项”，不继续描述为待开发能力。
+3. FCR 获批、拒绝或拆分后，只同步状态和新文档链接。
+4. 业务阈值批准必须引用正式批准记录，不能仅凭机器包中的 `confirmed` 字段关闭。

@@ -1,7 +1,7 @@
 ---
 request_id: FCR-moisture-20260721-rule-governance-runtime-analysis
 module_id: moisture
-module_version: 0.1.1
+module_version: 0.1.2
 owner: moisture模块负责人
 status: proposed
 framework_areas:
@@ -17,11 +17,14 @@ required_before_module_merge: false
 
 # 框架适配请求：水分规则治理、任务规则快照与人工复核
 
-> 本请求不阻塞当前 moisture v0.1.1 的既有接入；阶段 A/B 的模块离线治理内核也可先独立开发。
+> 本请求不阻塞当前 moisture v0.1.2 的既有接入；阶段 A/B 的模块离线治理内核也可先独立开发。
 >
 > 在受治理规则进入正式运行、Knowledge→AI 编排或人工复核上线前，本请求必须获批并完成相应阶段。
 >
 > 完整设计见：[`../architecture/moisture-next-stage-architecture.md`](../architecture/moisture-next-stage-architecture.md)。
+>
+> 本文是规则治理、任务规则快照与人工复核的唯一详细框架规格；当前事项状态只在
+> [`../framework-issues.md`](../framework-issues.md) 维护，避免重复更新两份需求正文。
 
 ## 1. 业务目标与使用场景
 
@@ -37,7 +40,7 @@ required_before_module_merge: false
 
 ### 1.3 颜色业务方向
 
-下一业务版本停止生成红/蓝：20列主表只保留确定性橙/绿，AI 内容进入“模型分析记录”和 Markdown 的“AI辅助分析（非结论）”。该行为由 moisture 模块实现和验收。框架不得根据 AI 文本自行着色，也不得回写或重算 v0.1.1 历史红/蓝结果。
+下一业务版本停止生成红/蓝：19列主表只保留确定性橙/绿，AI 内容进入“模型分析记录”和 Markdown 的“AI辅助分析（非结论）”。该行为由 moisture 模块实现和验收。框架不得根据 AI 文本自行着色，也不得回写或重算 v0.1.2 及更早版本的历史红/蓝结果。
 
 ## 2. 当前限制
 
@@ -45,7 +48,7 @@ required_before_module_merge: false
 2. 当前规则包已有版本、来源、scope、机器批准状态和 `rules.yaml` SHA-256，但框架没有保存数据集、回放、批准人、package 整体 SHA-256 和发布审计。
 3. 框架没有受控历史数据集、候选规则、回放报告、已发布版本、active binding 和人工复核的存储模型。
 4. 当前任务创建不生成规则/趋势快照；Draft/Finalize 读取模块当前 active 目录，不能在发布切换期间证明使用同一版本。
-5. 当前 v0.1.1 的模块配置只接受 `default_year`，直接增加 `rule_snapshot` 等字段会触发 `configuration contains unknown fields`。
+5. 当前 v0.1.2 的模块配置只接受 `default_year`，直接增加 `rule_snapshot` 等字段会触发 `configuration contains unknown fields`。
 6. 中央 Module Manifest 没有治理工作器能力字段，框架也没有独立的模块治理进程宿主。
 7. Knowledge 和 AI 请求目前独立处理，没有 request dependency、Knowledge证据版本绑定和 Knowledge→AI 顺序编排。
 8. Provider 配置或调用异常并非所有路径都保证形成结构化 `error`/`timeout` 响应。
@@ -124,7 +127,7 @@ build_package
 
 #### D. 扩展模块配置的版本协商
 
-当前 v0.1.1 仅接受 `default_year`。框架只有在模块能力文件明确声明 `moisture-runtime-context/1.0` 后，才生成扩展 `module_config_file`：
+当前 v0.1.2 仅接受 `default_year`。框架只有在模块能力文件明确声明 `moisture-runtime-context/1.0` 后，才生成扩展 `module_config_file`：
 
 ```json
 {
@@ -246,7 +249,7 @@ build_package
 - 跨批次 Decimal 统计、候选计算、规范化/哈希业务实现；
 - 候选编译、回放、冲突和scope算法；
 - 模块私有 Schema、任务上下文和AI业务响应校验；
-- 下一版本取消红/蓝、20列主表和报告呈现的业务正确性。
+- 下一版本取消红/蓝、19列主表和报告呈现的业务正确性。
 
 ### 需要业务负责人确认
 
@@ -271,7 +274,7 @@ build_package
 ## 6. 兼容性与迁移
 
 - 是否破坏中央合同：否；
-- 是否兼容当前 v0.1.1：是，未声明能力时继续使用模块内 `rules/active/` 和旧配置；
+- 是否兼容当前 v0.1.2：是，未声明能力时继续使用模块内 `rules/active/` 和旧配置；
 - 旧任务/result/artifacts：只读保留，不补写新快照或人工复核，不重算历史红/蓝；
 - 框架未升级：现有确定性检测继续运行，但不能宣称具备治理发布和人工复核；
 - 当前规则迁移：`0.47/0.55` 不自动成为新治理系统 approved；
@@ -281,7 +284,7 @@ build_package
 
 ## 7. 验收标准
 
-1. 无治理能力文件的 v0.1.1 继续正常 draft/finalize，框架不下发扩展配置；
+1. 无治理能力文件的 v0.1.2 继续正常 draft/finalize，框架不下发扩展配置；
 2. 能力文件 module ID、入口或协议非法时 Registry 拒绝治理能力，但不影响模块现有日常运行；
 3. 框架经独立进程调用治理工作器，工作器不能访问本次治理目录外的路径；
 4. 同一冻结数据集重复试算得到相同统计、候选、回放结果和 SHA-256；
@@ -293,8 +296,8 @@ build_package
 10. Draft/Finalize 的 package ID、版本和 SHA-256 一致，快照篡改时明确失败；
 11. 同一任务 Knowledge 先于依赖AI，request/response ID和证据哈希可交叉验证；
 12. AI拒绝、缺密钥、Provider配置错误、HTTP错误、限流、超时或Knowledge不可用时仍产生确定性 XLSX、Markdown 和 result；
-13. 下一业务版本主表只使用确定性橙/绿，AI不能改色；v0.1.1历史红/蓝仍可只读打开；
-14. 20列主表、公式、均值、区间和现有确定性基线不因框架治理改动而变化；
+13. 下一业务版本主表只使用确定性橙/绿，AI不能改色；v0.1.2及更早版本的历史红/蓝仍可只读打开；
+14. 19列主表、公式、均值、区间和现有确定性基线不因框架治理改动而变化；
 15. 人工复核完整保存任务、批次、规则/AI哈希、操作人、结论、时间和说明，不修改输入或 artifacts；
 16. 只有显式创建新数据集时，确定人工标签才进入回放；
 17. 非moisture模块和旧版本模块仍按原合同创建、完成和恢复任务；
@@ -322,7 +325,7 @@ build_package
 - 当前 AI 响应 Schema：`modules/moisture/schemas/ai-review-response.schema.json`；
 - 当前框架限制：[`../framework-issues.md`](../framework-issues.md)；
 - 当前维护说明：[`../架构与开发维护指南.md`](../架构与开发维护指南.md)；
-- 脱敏基线：21份历史文件、166个样本、公式复核差异0、1高1低19正常；
+- 脱敏基线：21份历史文件、166个样本、公式复核差异0；原均值规则1高1低，另有1个区间值命中；
 - 相关 issue/PR：待框架负责人受理后填写。
 
 ## 10. 框架方审核（由框架负责人/Codex填写）
