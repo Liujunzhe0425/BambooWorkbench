@@ -276,6 +276,30 @@ def test_draft_job_generates_result_without_modifying_source(tmp_path):
     assert before == digest(sample)
     assert (output / "boiling_summary.xlsx").is_file()
     workbook = openpyxl.load_workbook(output / "boiling_summary.xlsx")
+    summary_sheet = workbook["水煮检测汇总"]
+    summary_headers = [cell.value for cell in summary_sheet[1]]
+    assert summary_sheet.max_column == 36
+    assert not {
+        "缺失/待补字段",
+        "命中规则ID",
+        "密度来源单元格",
+        "膨胀率来源单元格",
+        "源表有效区域",
+    }.intersection(summary_headers)
+    assert summary_headers[12:22] == [
+        "端1-1密度(g/cm³)",
+        "端1-1膨胀率",
+        "端1-2密度(g/cm³)",
+        "端1-2膨胀率",
+        "中1密度(g/cm³)",
+        "中1膨胀率",
+        "端2-1密度(g/cm³)",
+        "端2-1膨胀率",
+        "端2-2密度(g/cm³)",
+        "端2-2膨胀率",
+    ]
+    assert [summary_sheet.cell(2, column).value for column in range(13, 23)] == [0] * 10
+    assert summary_headers[-2:] == ["复算冲突数", "结论/规则冲突数"]
     chart_sheet = workbook["分析图表"]
     assert len(chart_sheet._charts) == 3
     result_table_row = chart_sheet.max_row - 2
@@ -551,6 +575,35 @@ def test_real_template_four_and_five_sample_labels(tmp_path):
         "端2-2",
     ]
     assert len(boiling_module.extract_file(four)["samples"]) == 4
+
+
+def test_summary_lists_five_fixed_position_density_and_expansion_values(tmp_path):
+    sample = tmp_path / "five.xlsx"
+    output = tmp_path / "output"
+    job_path = tmp_path / "job.json"
+    densities = [1.11, 1.12, 1.13, 1.14, 1.15]
+    expansions = [0.01, 0.02, 0.03, 0.04, 0.05]
+    make_labeled_sample(
+        sample,
+        sample_count=5,
+        labels=["端1-1", "端1-2", "中1", "端2-1", "端2-2"],
+        densities=densities,
+        expansions=expansions,
+    )
+    job_path.write_text(json.dumps(make_job(sample, output), ensure_ascii=False), encoding="utf-8")
+
+    assert boiling_module.run_job(job_path) == 0
+    workbook = openpyxl.load_workbook(output / "boiling_summary.xlsx")
+    summary = workbook["水煮检测汇总"]
+    expected_values = [
+        value for pair in zip(densities, expansions, strict=True) for value in pair
+    ]
+    assert [summary.cell(2, column).value for column in range(13, 23)] == pytest.approx(
+        expected_values
+    )
+    assert summary["M2"].number_format == "0.000"
+    assert summary["N2"].number_format == "0.00%"
+    workbook.close()
 
 
 def test_density_boundaries_and_difference_are_inclusive(tmp_path):

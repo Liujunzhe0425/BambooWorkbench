@@ -30,7 +30,7 @@ except ImportError as exc:  # pragma: no cover - exercised in a clean environmen
 
 
 MODULE_ID = "boiling"
-MODULE_VERSION = "0.2.0"
+MODULE_VERSION = "0.2.2"
 
 
 def resolve_module_root():
@@ -413,7 +413,6 @@ def extract_file(path):
     try:
         sheet = select_data_sheet(formula_book)
         value_sheet = value_book[sheet.title]
-
         def value(row, column):
             calculated = value_sheet.cell(row=row, column=column).value
             return (
@@ -954,6 +953,7 @@ def evaluate_record(record, rules, fingerprint):
     else:
         human_review = True
         rule_detail = f"产品用途“{usage}”没有自动判定规则"
+
     record["expansion_numeric_pass"] = numeric_pass
     record["expansion_grade"] = expansion_grade
     record["expansion_human_review_required"] = human_review
@@ -1146,6 +1146,16 @@ def write_summary(records, output_path, rules, excluded_records=None):
         "产品用途",
         "试件数",
         "复测试件数",
+        "端1-1密度(g/cm³)",
+        "端1-1膨胀率",
+        "端1-2密度(g/cm³)",
+        "端1-2膨胀率",
+        "中1密度(g/cm³)",
+        "中1膨胀率",
+        "端2-1密度(g/cm³)",
+        "端2-1膨胀率",
+        "端2-2密度(g/cm³)",
+        "端2-2膨胀率",
         "平均密度(g/cm³)",
         "最小密度(g/cm³)",
         "最大密度(g/cm³)",
@@ -1158,17 +1168,24 @@ def write_summary(records, output_path, rules, excluded_records=None):
         "浸渍剥离",
         "原表结论",
         "业务状态",
-        "缺失/待补字段",
-        "命中规则ID",
-        "密度来源单元格",
-        "膨胀率来源单元格",
         "复算冲突数",
         "结论/规则冲突数",
-        "源表有效区域",
     ]
     summary.append(headers)
     style_header(summary[1])
     for record in records:
+        samples_by_label = {}
+        for sample in record["samples"]:
+            samples_by_label.setdefault(str(sample.get("label") or "").strip(), sample)
+        position_values = []
+        for label in ("端1-1", "端1-2", "中1", "端2-1", "端2-2"):
+            sample = samples_by_label.get(label, {})
+            position_values.extend(
+                [
+                    sample.get("density_g_cm3") or 0,
+                    sample.get("expansion_ratio") or 0,
+                ]
+            )
         summary.append(
             [
                 Path(record["source_file"]).name,
@@ -1183,6 +1200,7 @@ def write_summary(records, output_path, rules, excluded_records=None):
                 record["product_usage"],
                 len(record["samples"]),
                 sum(1 for sample in record["samples"] if sample["sample_type"] == "retest"),
+                *position_values,
                 record["average_density_g_cm3"],
                 record["density_min_g_cm3"],
                 record["density_max_g_cm3"],
@@ -1195,36 +1213,24 @@ def write_summary(records, output_path, rules, excluded_records=None):
                 record["immersion_peel_result"],
                 record["source_conclusion"],
                 record["business_status"],
-                ", ".join(record["missing_fields"]),
-                ", ".join(str(item.get("rule_id") or "") for item in record.get("rule_hits", [])),
-                ", ".join(
-                    sample["density_source_cell"]
-                    for sample in record["samples"]
-                    if sample.get("density_source_cell")
-                ),
-                ", ".join(
-                    sample["expansion_source_cell"]
-                    for sample in record["samples"]
-                    if sample.get("expansion_source_cell")
-                ),
                 len(record["conflicts"]),
                 len(record["conclusion_rule_conflicts"]),
-                record.get("source_used_range", ""),
             ]
         )
     summary.freeze_panes = "A2"
     summary.auto_filter.ref = summary.dimensions
     summary.sheet_view.showGridLines = False
-    for column in ("M", "N", "O", "P"):
+    for column in ("M", "O", "Q", "S", "U", "W", "X", "Y", "Z"):
         for cell in summary[column][1:]:
             cell.number_format = "0.000"
-    for cell in summary["R"][1:]:
-        cell.number_format = "0.00%"
+    for column in ("N", "P", "R", "T", "V", "AB"):
+        for cell in summary[column][1:]:
+            cell.number_format = "0.00%"
     for row in range(2, summary.max_row + 1):
-        style_result_cell(summary[f"Q{row}"], summary[f"Q{row}"].value)
-        style_result_cell(summary[f"T{row}"], summary[f"T{row}"].value)
-        style_result_cell(summary[f"U{row}"], summary[f"U{row}"].value)
-        style_result_cell(summary[f"X{row}"], summary[f"X{row}"].value)
+        style_result_cell(summary[f"AA{row}"], summary[f"AA{row}"].value)
+        style_result_cell(summary[f"AD{row}"], summary[f"AD{row}"].value)
+        style_result_cell(summary[f"AE{row}"], summary[f"AE{row}"].value)
+        style_result_cell(summary[f"AH{row}"], summary[f"AH{row}"].value)
     widths = {
         "A": 24,
         "B": 16,
@@ -1238,25 +1244,30 @@ def write_summary(records, output_path, rules, excluded_records=None):
         "J": 12,
         "K": 10,
         "L": 10,
-        "M": 15,
-        "N": 15,
-        "O": 15,
-        "P": 15,
-        "Q": 12,
+        "M": 17,
+        "N": 14,
+        "O": 17,
+        "P": 14,
+        "Q": 17,
         "R": 14,
-        "S": 50,
-        "T": 16,
-        "U": 12,
-        "V": 12,
-        "W": 48,
-        "X": 12,
-        "Y": 30,
-        "Z": 34,
-        "AA": 26,
-        "AB": 26,
-        "AC": 12,
+        "S": 17,
+        "T": 14,
+        "U": 17,
+        "V": 14,
+        "W": 15,
+        "X": 15,
+        "Y": 15,
+        "Z": 15,
+        "AA": 12,
+        "AB": 14,
+        "AC": 50,
         "AD": 16,
-        "AE": 16,
+        "AE": 12,
+        "AF": 12,
+        "AG": 48,
+        "AH": 12,
+        "AI": 12,
+        "AJ": 16,
     }
     for column, width in widths.items():
         summary.column_dimensions[column].width = width
