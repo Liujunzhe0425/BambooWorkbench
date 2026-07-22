@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from datetime import datetime
 
 from PySide6.QtCore import Qt, Signal
@@ -45,9 +46,14 @@ class HistoryPage(QWidget):
         "running": "处理中",
     }
 
-    def __init__(self, repository: TaskRepository) -> None:
+    def __init__(
+        self,
+        repository: TaskRepository,
+        status_resolver: Callable[[dict[str, object]], str] | None = None,
+    ) -> None:
         super().__init__()
         self.repository = repository
+        self.status_resolver = status_resolver
         self.setObjectName("page-history")
         self.setAccessibleName("任务历史")
 
@@ -143,9 +149,13 @@ class HistoryPage(QWidget):
         successes = 0
         pending = 0
         for row, record in enumerate(records):
-            raw_status = str(record["status"])
+            raw_status = (
+                self.status_resolver(record)
+                if self.status_resolver is not None
+                else str(record["status"])
+            )
             successes += raw_status in {"success", "partial_success"}
-            pending += raw_status == "needs_confirmation"
+            pending += raw_status in {"needs_confirmation", "waiting_confirmation"}
             for column, (field, _label) in enumerate(self._COLUMNS):
                 raw_value = str(record[field])
                 if field == "module_id":

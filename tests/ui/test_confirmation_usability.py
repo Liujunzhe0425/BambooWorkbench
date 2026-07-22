@@ -3,7 +3,14 @@ from pathlib import Path
 import pytest
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QDesktopServices, QEnterEvent
-from PySide6.QtWidgets import QComboBox, QFrame, QLabel, QPlainTextEdit, QToolTip
+from PySide6.QtWidgets import (
+    QComboBox,
+    QFrame,
+    QLabel,
+    QPlainTextEdit,
+    QToolButton,
+    QToolTip,
+)
 
 from core.contracts.result import ConfirmationPrompt, OutputArtifact, SourceRef
 from ui.pages.confirmations_page import ConfirmationsPage
@@ -125,6 +132,38 @@ def test_after_sales_protocol_fields_are_localized(qtbot) -> None:
         "表格模板识别（可选）",
     }.issubset(labels)
     assert not any("_" in label for label in labels if "（可选）" in label)
+
+
+def test_date_location_and_ai_preview_use_progressive_disclosure(qtbot) -> None:
+    page = ConfirmationsPage()
+    qtbot.addWidget(page)
+    prompt = _prompt(
+        "service-consent:one",
+        "AI联网授权：辅助复核",
+        "用途：复核候选。\n\n[[REDACTED_PREVIEW]]\n{\n  \"candidates\": [1, 2]\n}",
+        cell="arrival_date/test_date",
+        blocking=True,
+        options=["允许", "拒绝"],
+    )
+
+    page.load("ai-preview", [prompt])
+
+    assert page.source_labels[prompt.confirmation_id].text() == "涉及日期：到货日期、检测日期"
+    assert "candidates" not in page.reason_labels[prompt.confirmation_id].text()
+    detail = next(
+        editor
+        for editor in page.findChildren(QPlainTextEdit)
+        if editor.accessibleName() == "发送给AI的脱敏明细"
+    )
+    toggle = next(
+        button
+        for button in page.findChildren(QToolButton)
+        if button.accessibleName() == "查看发送给AI的脱敏明细"
+    )
+    assert detail.isHidden()
+    qtbot.mouseClick(toggle, Qt.MouseButton.LeftButton)
+    assert not detail.isHidden()
+    assert "candidates" in detail.toPlainText()
 
 
 def test_confirmation_popup_and_help_badges_have_immediate_light_ui(
@@ -331,7 +370,8 @@ def test_json_output_is_pretty_printed_in_built_in_viewer(
 ) -> None:
     records = tmp_path / "boiling_records.json"
     records.write_text('{"records":[{"product":"竹板"}]}', encoding="utf-8")
-    monkeypatch.setattr(QDesktopServices, "openUrl", lambda _url: False)
+    opened: list[object] = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url) or True)
     widget = OutputFilesWidget()
     qtbot.addWidget(widget)
     widget.set_outputs(
@@ -350,6 +390,7 @@ def test_json_output_is_pretty_printed_in_built_in_viewer(
     editor = widget.text_viewers[0].findChild(QPlainTextEdit)
     assert editor is not None
     assert '\n  "records": [' in editor.toPlainText()
+    assert opened == []
 
 
 def test_theme_gives_unchecked_confirmations_a_visible_border(app_context) -> None:

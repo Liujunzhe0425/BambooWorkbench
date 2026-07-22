@@ -10,6 +10,7 @@ from PySide6.QtTest import QSignalSpy
 from core.contracts.enums import ModuleId
 from core.storage.repositories.confirmations import ConfirmationRepository
 from core.storage.repositories.tasks import TaskRepository
+from core.storage.settings import SettingsStore
 from core.tasks.service import TaskService
 
 
@@ -46,6 +47,49 @@ def test_task_service_snapshots_input_persists_outputs_and_finishes(
     assert len(task_repository.list_outputs(job_id)) == 3
     assert source.read_bytes() == b"source-bytes"
     assert job_id not in service.runners
+
+
+def test_task_service_publishes_outputs_after_module_finishes(
+    qtbot, app_services: dict[str, object], tmp_path: Path
+) -> None:
+    source = tmp_path / "normal.xlsx"
+    source.write_bytes(b"source-bytes")
+    output_root = tmp_path / "published"
+    settings = SettingsStore(app_services["database"])
+    settings.set("output_dir", str(output_root))
+    service = _service(app_services, settings=settings)
+
+    with qtbot.waitSignal(service.finished, timeout=15_000) as signal:
+        job_id = service.create_and_start(ModuleId.MOISTURE, [source])
+
+    folders = list(output_root.glob("000001-竹丝水分-*"))
+    assert len(folders) == 1
+    assert (folders[0] / "result.json").is_file()
+    assert all(Path(output.path).is_relative_to(folders[0]) for output in signal.args[0].outputs)
+    stored = app_services["task_repository"].list_outputs(job_id)
+    assert all(Path(str(output["path"])).is_relative_to(folders[0]) for output in stored)
+
+
+def test_publication_failure_keeps_internal_outputs_and_warns(
+    qtbot, app_services: dict[str, object], tmp_path: Path
+) -> None:
+    source = tmp_path / "normal.xlsx"
+    source.write_bytes(b"source-bytes")
+    invalid_root = tmp_path / "not-a-directory"
+    invalid_root.write_text("occupied", encoding="utf-8")
+    settings = SettingsStore(app_services["database"])
+    settings.set("output_dir", str(invalid_root))
+    service = _service(app_services, settings=settings)
+
+    with (
+        qtbot.waitSignal(service.publication_warning, timeout=15_000) as warning,
+        qtbot.waitSignal(service.finished, timeout=15_000) as finished,
+    ):
+        service.create_and_start(ModuleId.MOISTURE, [source])
+
+    assert "已保留" in warning.args[1]
+    assert finished.args[0].status.value == "success"
+    assert all(Path(output.path).is_file() for output in finished.args[0].outputs)
 
 
 def test_task_service_persists_confirmation_prompts_before_state_and_signal(
@@ -85,10 +129,15 @@ def test_task_service_persists_partial_outputs(
 ) -> None:
     source = tmp_path / "partial.xlsx"
     source.write_bytes(b"partial-source")
+    successful_source = tmp_path / "normal.xlsx"
+    successful_source.write_bytes(b"normal-source")
     service = _service(app_services)
 
     with qtbot.waitSignal(service.finished, timeout=15_000):
-        job_id = service.create_and_start(ModuleId.MOISTURE, [source])
+        job_id = service.create_and_start(
+            ModuleId.MOISTURE,
+            [source, successful_source],
+        )
 
     task_repository = app_services["task_repository"]
     assert isinstance(task_repository, TaskRepository)

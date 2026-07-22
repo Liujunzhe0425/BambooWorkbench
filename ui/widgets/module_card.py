@@ -52,14 +52,14 @@ class ModuleCard(QFrame):
         try:
             module = registry.get(module_id)
         except KeyError:
-            return "暂未安装 · 等待接入"
-        source = "模拟模块" if module.is_mock else "正式模块"
-        health = {
-            "healthy": "健康",
-            "unhealthy": "异常",
-            "unknown": "状态未知",
-        }.get(module.health, "状态未知")
-        return f"已安装 · {source} · {health}"
+            return "暂未安装 · 暂不可用"
+        if module.is_mock:
+            if module.health == "unknown":
+                return "演示模式 · 状态未知"
+            if module.health == "unhealthy":
+                return "演示模式 · 异常"
+            return "演示模式"
+        return "可使用" if module.health == "healthy" else "暂不可用"
 
     @staticmethod
     def _is_installed(registry: object, module_id: object) -> bool:
