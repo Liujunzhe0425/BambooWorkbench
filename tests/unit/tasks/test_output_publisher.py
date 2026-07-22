@@ -40,6 +40,7 @@ def test_publishes_task_outputs_to_numbered_isolated_folder(tmp_path: Path) -> N
         finished_at=now,
     )
     external = tmp_path / "customer-output"
+    timestamp = now.astimezone().strftime("%Y%m%d-%H%M%S")
 
     published = publish_outputs(
         result,
@@ -49,7 +50,7 @@ def test_publishes_task_outputs_to_numbered_isolated_folder(tmp_path: Path) -> N
         configured_root=str(external),
     )
 
-    folder = external / "000123-竹丝水分-20260722-223015"
+    folder = external / f"000123-竹丝水分-{timestamp}"
     assert Path(published.outputs[0].path) == folder / "分析报告.md"
     assert Path(published.outputs[0].path).read_text(encoding="utf-8") == "ok"
     assert (folder / "result.json").is_file()
@@ -131,7 +132,8 @@ def test_existing_folder_name_gets_suffix_instead_of_overwrite(tmp_path: Path) -
         finished_at=now,
     )
     external = tmp_path / "customer-output"
-    existing = external / "000001-竹丝水分-20260722-223015"
+    timestamp = now.astimezone().strftime("%Y%m%d-%H%M%S")
+    existing = external / f"000001-竹丝水分-{timestamp}"
     existing.mkdir(parents=True)
     marker = existing / "keep.txt"
     marker.write_text("old", encoding="utf-8")
