@@ -30,7 +30,7 @@ except ImportError as exc:  # pragma: no cover - exercised in a clean environmen
 
 
 MODULE_ID = "boiling"
-MODULE_VERSION = "0.2.2"
+MODULE_VERSION = "1.0.0"
 
 
 def resolve_module_root():
