@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from collections import defaultdict
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -8,8 +10,13 @@ from openpyxl import Workbook
 from openpyxl.chart import BarChart, LineChart, Reference
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from after_sales_agent.analysis import ISSUE_ORDER, build_analysis_metrics
+from after_sales_agent.manual_review import (
+    effective_after_sales_fee,
+    effective_responsible_factory,
+)
 
 
 def write_summary_workbook(
@@ -56,23 +63,337 @@ def write_summary_workbook(
 
 
 def _chronological_record_sort_key(record: dict[str, Any]) -> tuple[Any, ...]:
-    year = record.get("year")
-    month = record.get("month")
+    year, month, day = _record_date_parts(record)
+    input_index = _safe_int(record.get("input_index"), 0)
+    if year is not None and month is not None:
+        return (0, year, month, day if day is not None else 32, input_index)
+    if month is not None:
+        return (1, 9999, month, day if day is not None else 32, input_index)
+    return (2, 9999, 99, 32, input_index)
+
+
+def _record_date_parts(record: dict[str, Any]) -> tuple[int | None, int | None, int | None]:
+    """Return sortable complaint-date parts without borrowing order/delivery dates."""
+    value = str(record.get("complaint_date") or "").strip()
+    if value:
+        try:
+            parsed = date.fromisoformat(value)
+            return parsed.year, parsed.month, parsed.day
+        except ValueError:
+            pass
+        month_day = re.search(r"(?<!\d)(\d{1,2})\s*月\s*(\d{1,2})?", value)
+        if month_day:
+            month = _safe_int(month_day.group(1))
+            day = _safe_int(month_day.group(2)) if month_day.group(2) else None
+            if month is not None and 1 <= month <= 12:
+                return None, month, day if day is not None and 1 <= day <= 31 else None
+
+    year = _safe_int(record.get("year"))
+    month = _safe_int(record.get("month"))
+    if month is None or not 1 <= month <= 12:
+        month = None
+    return year, month, None
+
+
+def _safe_int(value: Any, default: int | None = None) -> int | None:
     try:
-        year_value = int(year) if year is not None else None
+        return int(value) if value not in {None, ""} else default
     except (TypeError, ValueError):
-        year_value = None
-    try:
-        month_value = int(month) if month is not None else 99
-    except (TypeError, ValueError):
-        month_value = 99
-    return (
-        0 if year_value is not None else 1,
-        year_value if year_value is not None else 9999,
-        month_value,
-        str(record.get("complaint_date") or ""),
-        int(record.get("input_index") or 0),
+        return default
+
+
+def _write_master_detail(ws: Any, records: list[dict[str, Any]]) -> None:
+    original_columns = [
+        ("source_file", "来源文件"),
+        ("sheet", "原工作表"),
+        ("customer", "客户/项目"),
+        ("location", "地点"),
+        ("salesperson", "销售/代表"),
+        ("brand", "品牌"),
+        ("product", "产品"),
+        ("spec", "规格"),
+        ("order_no", "订单号"),
+        ("delivery_date", "交货日期"),
+        ("feedback", "客户反馈内容"),
+        ("application", "方案申请明细"),
+        ("investigation", "售后负责人调查情况"),
+        ("solution", "售后解决方案原文"),
+        ("responsibility", "责任落实与处理"),
+    ]
+    analysis_columns = [
+        ("after_sales_analysis", "售后问题分析"),
+        ("issue_reason_summary", "产生售后的具体原因"),
+        ("issue_types_display", "原因分类（性能/外观/加工）"),
+        ("performance_flag", "性能"),
+        ("appearance_flag", "外观"),
+        ("processing_flag", "加工"),
+        ("primary_issue_type", "主要原因"),
+        ("complaint_type_reviewed_display", "投诉类型复核状态"),
+        ("selected_solution", "最终采用方案"),
+        ("after_sales_fee_amount", "售后费用（人工复核口径）"),
+        ("after_sales_fee_reviewed_display", "售后费用复核状态"),
+        ("responsible_factory", "责任工厂（人工复核口径）"),
+        ("responsibility_reviewed_display", "责任工厂复核状态"),
+        ("enterprise_cost_amount", "最终售后费用（企业承担）"),
+        ("internal_accountability_amount", "内部责任扣款"),
+        ("external_borne_amount", "外部承担金额"),
+        ("enterprise_cost_status", "最终费用状态"),
+        ("enterprise_cost_evidence", "最终费用依据"),
+        ("resolution_status", "处理状态"),
+        ("resolved_flag", "是否已解决"),
+        ("analysis_status", "分析状态"),
+        ("analysis_error", "失败原因"),
+        ("included_in_summary", "纳入业务汇总"),
+    ]
+    fixed_columns = [
+        ("chronological_index", "时间序号"),
+        ("input_index", "原输入序号"),
+        ("complaint_date", "提出质量问题/报修日期"),
+        ("complaint_date_raw", "日期原文"),
+    ]
+    columns = [*fixed_columns, *original_columns, *analysis_columns]
+    last_col = len(columns)
+    last_letter = get_column_letter(last_col)
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=last_col)
+    ws.cell(1, 1, "售后原始内容、问题分析与费用汇总明细")
+    ws.cell(1, 1).font = Font(name="微软雅黑", size=16, bold=True, color="FFFFFF")
+    ws.cell(1, 1).fill = PatternFill("solid", fgColor="176B4D")
+    ws.cell(1, 1).alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[1].height = 32
+
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=last_col)
+    ws.cell(
+        2,
+        1,
+        "每份输入文件保留一行；先按完整报修日期排序，再列示缺少年份及日期未知的记录。"
+        "左侧保留原表业务内容，右侧追加智能分析、原因分类、处理状态和最终费用。",
     )
+    ws.cell(2, 1).font = Font(name="微软雅黑", size=9, color="52645B")
+    ws.cell(2, 1).fill = PatternFill("solid", fgColor="EAF4EF")
+    ws.cell(2, 1).alignment = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    ws.row_dimensions[2].height = 30
+
+    for col, (_, title) in enumerate(columns, start=1):
+        cell = ws.cell(3, col, title)
+        cell.fill = PatternFill("solid", fgColor="254F43" if col <= 19 else "2F6B87")
+        cell.font = Font(name="微软雅黑", size=9, bold=True, color="FFFFFF")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.row_dimensions[3].height = 34
+
+    amount_keys = {
+        "after_sales_fee_amount",
+        "enterprise_cost_amount",
+        "internal_accountability_amount",
+        "external_borne_amount",
+    }
+    thin = Side(style="thin", color="D7E2DC")
+    for row_index, record in enumerate(records, start=4):
+        issue_types = _display_issue_types(record)
+        display_values: dict[str, Any] = {
+            **record,
+            "chronological_index": row_index - 3,
+            "source_file": Path(str(record.get("source_file") or "")).name,
+            "complaint_date": _complaint_date_cell_value(record),
+            "after_sales_analysis": _after_sales_analysis_text(record),
+            "issue_types_display": "、".join(issue_types) if issue_types else "其他",
+            "performance_flag": "是" if "性能" in issue_types else "否",
+            "appearance_flag": "是" if "外观" in issue_types else "否",
+            "processing_flag": "是" if "加工" in issue_types else "否",
+            "complaint_type_reviewed_display": (
+                "已复核" if record.get("complaint_type_reviewed") else "待复核"
+            ),
+            "selected_solution": record.get("selected_solution") or record.get("solution") or "",
+            "after_sales_fee_amount": effective_after_sales_fee(record),
+            "after_sales_fee_reviewed_display": (
+                "已复核" if record.get("after_sales_fee_reviewed") else "待复核"
+            ),
+            "responsible_factory": effective_responsible_factory(record) or "未知",
+            "responsibility_reviewed_display": (
+                "已复核" if record.get("responsibility_reviewed") else "待复核"
+            ),
+            "enterprise_cost_amount": _record_amount(
+                record, "enterprise_cost_amount", "fee_amount", "cost"
+            ),
+            "enterprise_cost_status": _display_cost_status(
+                record.get("enterprise_cost_status", record.get("fee_status"))
+            ),
+            "resolution_status": record.get("resolution_status")
+            or ("已解决" if record.get("closed") else "未解决"),
+            "resolved_flag": "是" if record.get("resolution_status") == "已解决" else "否",
+            "included_in_summary": "是" if record.get("included_in_summary", True) else "否",
+        }
+        display_values["resolved_flag"] = (
+            "是" if display_values["resolution_status"] == "已解决" else "否"
+        )
+        for col, (key, _) in enumerate(columns, start=1):
+            value = display_values.get(key, "")
+            if isinstance(value, (list, dict)):
+                value = str(value)
+            cell = ws.cell(row_index, col, value)
+            cell.font = Font(name="微软雅黑", size=9, color="22332B")
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+            cell.border = Border(bottom=thin)
+            if key in amount_keys:
+                cell.number_format = '#,##0.00;[Red]-#,##0.00;"-"'
+                cell.alignment = Alignment(horizontal="right", vertical="top")
+            elif key in {
+                "chronological_index",
+                "input_index",
+                "performance_flag",
+                "appearance_flag",
+                "processing_flag",
+                "resolved_flag",
+                "included_in_summary",
+            }:
+                cell.alignment = Alignment(horizontal="center", vertical="top", wrap_text=True)
+            elif key == "complaint_date" and isinstance(value, date):
+                cell.number_format = "yyyy-mm-dd"
+                cell.alignment = Alignment(horizontal="center", vertical="top")
+        if row_index % 2 == 1:
+            for col in range(1, last_col + 1):
+                ws.cell(row_index, col).fill = PatternFill("solid", fgColor="F6FAF8")
+        for flag_col in (23, 24, 25):
+            if ws.cell(row_index, flag_col).value == "是":
+                ws.cell(row_index, flag_col).fill = PatternFill("solid", fgColor="DCEFE6")
+                ws.cell(row_index, flag_col).font = Font(
+                    name="微软雅黑", size=9, bold=True, color="176B4D"
+                )
+        if display_values.get("analysis_status") == "分析失败":
+            for col in range(1, last_col + 1):
+                ws.cell(row_index, col).fill = PatternFill("solid", fgColor="FFF1F0")
+        ws.row_dimensions[row_index].height = _master_detail_row_height(display_values)
+
+    widths = [
+        9,
+        10,
+        18,
+        18,
+        32,
+        15,
+        24,
+        16,
+        14,
+        12,
+        20,
+        16,
+        18,
+        16,
+        38,
+        38,
+        38,
+        38,
+        32,
+        46,
+        40,
+        22,
+        9,
+        9,
+        9,
+        12,
+        36,
+        18,
+        16,
+        16,
+        16,
+        36,
+        12,
+        11,
+        13,
+        32,
+        13,
+    ]
+    for col, width in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(col)].width = width
+    ws.freeze_panes = "E4"
+    ws.sheet_view.showGridLines = False
+    ws.auto_filter.ref = f"A3:{last_letter}{max(3, len(records) + 3)}"
+    if records:
+        table = Table(
+            displayName="AfterSalesMasterDetail",
+            ref=f"A3:{last_letter}{len(records) + 3}",
+        )
+        table.tableStyleInfo = TableStyleInfo(
+            name="TableStyleMedium4",
+            showFirstColumn=False,
+            showLastColumn=False,
+            showRowStripes=False,
+            showColumnStripes=False,
+        )
+        ws.add_table(table)
+    ws.print_title_rows = "1:3"
+    ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+    ws.print_area = f"A1:{last_letter}{max(3, len(records) + 3)}"
+
+
+def _complaint_date_cell_value(record: dict[str, Any]) -> date | str:
+    value = str(record.get("complaint_date") or "").strip()
+    if not value:
+        return str(record.get("complaint_date_raw") or "")
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return value
+
+
+def _display_issue_types(record: dict[str, Any]) -> list[str]:
+    raw = record.get("issue_types")
+    if not isinstance(raw, list):
+        raw = [record.get("primary_issue_type")]
+    ordered = [item for item in ["性能", "外观", "加工"] if item in raw]
+    ordered.extend(str(item) for item in raw if item and str(item) not in ordered)
+    return ordered
+
+
+def _after_sales_analysis_text(record: dict[str, Any]) -> str:
+    if record.get("analysis_status") == "分析失败":
+        return str(record.get("issue_reason_summary") or record.get("analysis_error") or "")
+    sections: list[str] = []
+    feedback = str(record.get("feedback") or "").strip()
+    investigation = str(record.get("investigation") or "").strip()
+    conclusion = str(record.get("issue_reason_summary") or "").strip()
+    if feedback:
+        sections.append(f"问题表现：{feedback}")
+    if investigation:
+        sections.append(f"调查情况：{investigation}")
+    if conclusion:
+        sections.append(f"分析结论：{conclusion}")
+    return "\n".join(dict.fromkeys(sections)) or "未提取到可确认的问题描述"
+
+
+def _display_cost_status(value: Any) -> str:
+    statuses = {
+        "exact": "已确认",
+        "calculated": "已计算",
+        "estimated": "估算待复核",
+        "transferred": "外部承担",
+        "not_found": "未识别",
+        "needs_review": "待复核",
+    }
+    text = str(value or "").strip()
+    return statuses.get(text, text)
+
+
+def _master_detail_row_height(values: dict[str, Any]) -> float:
+    narrative_keys = [
+        "feedback",
+        "application",
+        "investigation",
+        "solution",
+        "responsibility",
+        "after_sales_analysis",
+        "issue_reason_summary",
+        "selected_solution",
+        "enterprise_cost_evidence",
+    ]
+    estimated_lines = 1
+    for key in narrative_keys:
+        text = str(values.get(key) or "")
+        logical_lines = sum(max(1, (len(line) + 54) // 55) for line in text.splitlines())
+        estimated_lines = max(estimated_lines, logical_lines)
+    return min(240.0, max(72.0, 13.5 * (estimated_lines + 1)))
 
 
 def _ordered_brands(records: list[dict[str, Any]], rules: dict[str, Any]) -> list[str]:
@@ -285,6 +606,13 @@ def _write_input_audit(ws: Any, records: list[dict[str, Any]]) -> None:
         ("month", "月份"),
         ("primary_issue_type", "主要原因"),
         ("issue_reason_summary", "产生售后的具体原因"),
+        ("complaint_type_reviewed", "投诉类型已复核"),
+        ("after_sales_fee_amount", "售后费用"),
+        ("after_sales_fee_status", "售后费用复核状态"),
+        ("after_sales_fee_reviewed", "售后费用已复核"),
+        ("responsible_factory", "责任工厂"),
+        ("responsibility_reviewed", "责任工厂已复核"),
+        ("manual_review_completed", "三项人工复核完成"),
         ("enterprise_cost_amount", "企业售后成本"),
         ("enterprise_cost_status", "企业成本状态"),
         ("enterprise_cost_evidence", "企业成本依据"),
@@ -574,6 +902,13 @@ def _write_detail(ws: Any, records: list[dict[str, Any]]) -> None:
         ("issue_analysis_source", "分类来源"),
         ("issue_confidence", "分类置信度"),
         ("issue_reason_summary", "产生售后的具体原因"),
+        ("complaint_type_reviewed", "投诉类型已复核"),
+        ("after_sales_fee_amount", "售后费用"),
+        ("after_sales_fee_status", "售后费用复核状态"),
+        ("after_sales_fee_reviewed", "售后费用已复核"),
+        ("responsible_factory", "责任工厂"),
+        ("responsibility_reviewed", "责任工厂已复核"),
+        ("manual_review_completed", "三项人工复核完成"),
         ("enterprise_cost_amount", "企业售后成本"),
         ("enterprise_cost_status", "企业成本状态"),
         ("enterprise_cost_evidence", "企业成本依据"),
@@ -639,6 +974,8 @@ def _write_review(ws: Any, records: list[dict[str, Any]]) -> None:
         record
         for record in records
         if record.get("needs_review")
+        or record.get("mandatory_review_pending")
+        or record.get("manual_review_completed")
         or record.get("brand") in {"未知", "待确认"}
         or record.get("primary_issue_type") in {"其他", "待确认", None, ""}
         or record.get("enterprise_cost_status", record.get("fee_status"))
@@ -653,6 +990,13 @@ def _write_review(ws: Any, records: list[dict[str, Any]]) -> None:
         ("brand", "品牌"),
         ("complaint_date", "提出质量问题/报修日期"),
         ("primary_issue_type", "主原因"),
+        ("complaint_type_reviewed", "投诉类型已复核"),
+        ("after_sales_fee_amount", "售后费用"),
+        ("after_sales_fee_status", "售后费用状态"),
+        ("after_sales_fee_reviewed", "售后费用已复核"),
+        ("responsible_factory", "责任工厂"),
+        ("responsibility_reviewed", "责任工厂已复核"),
+        ("manual_review_completed", "三项复核完成"),
         ("enterprise_cost_amount", "企业售后成本"),
         ("enterprise_cost_status", "企业成本状态"),
         ("internal_accountability_amount", "内部责任扣款"),
@@ -676,7 +1020,13 @@ def _write_review(ws: Any, records: list[dict[str, Any]]) -> None:
                 value = Path(str(value)).name
             if isinstance(value, (list, dict)):
                 value = str(value)
-            if key == "reviewed":
+            if key in {
+                "reviewed",
+                "complaint_type_reviewed",
+                "after_sales_fee_reviewed",
+                "responsibility_reviewed",
+                "manual_review_completed",
+            }:
                 value = "是" if value else "否"
             ws.cell(row_index, col, value)
     header_fill = PatternFill("solid", fgColor="334E68")
@@ -688,7 +1038,33 @@ def _write_review(ws: Any, records: list[dict[str, Any]]) -> None:
         for cell in row:
             cell.alignment = Alignment(vertical="top", wrap_text=True)
             cell.font = Font(name="微软雅黑", size=9)
-    widths = [9, 36, 12, 20, 12, 15, 18, 15, 18, 15, 18, 12, 42, 46, 44, 32, 30, 12]
+    widths = [
+        9,
+        36,
+        12,
+        20,
+        12,
+        14,
+        14,
+        18,
+        14,
+        14,
+        14,
+        14,
+        15,
+        18,
+        15,
+        18,
+        15,
+        18,
+        12,
+        42,
+        46,
+        44,
+        32,
+        30,
+        12,
+    ]
     for col, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(col)].width = width
     ws.freeze_panes = "C2"

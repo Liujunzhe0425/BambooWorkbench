@@ -81,7 +81,7 @@ def test_confirmation_page_explains_batch_scope_and_disambiguates_repeated_field
     assert page.batch_help_labels["usage"].text() == "!"
     assert page.batch_help_labels["usage"].toolTip() == page.batch_checks["usage"].toolTip()
     assert page.reason_labels["expansion-one"].text().startswith("中1")
-    assert "20260135.xlsx" in page.source_labels["expansion-one"].text()
+    assert page.file_group_titles["20260135.xlsx"].text() == "20260135.xlsx"
     assert "H22" in page.source_labels["expansion-one"].text()
 
     visible_labels = {label.text() for label in page.findChildren(QLabel)}
@@ -109,6 +109,102 @@ def test_confirmation_page_scrolls_instead_of_compressing_many_prompts(qtbot, qa
     page.show()
     qapp.processEvents()
 
+    assert page.scroll_area.verticalScrollBar().maximum() > 0
+    assert all(editor.height() > 20 for editor in page.answer_inputs.values())
+
+
+def test_confirmation_page_groups_fields_by_source_file_and_preserves_answers(
+    qtbot,
+) -> None:
+    page = ConfirmationsPage()
+    qtbot.addWidget(page)
+    prompts = [
+        _prompt(
+            f"file-{file_index}-{field}",
+            field,
+            f"第 {file_index} 份文件的{field}需要复核。",
+            source_file=f"售后记录-{file_index}.xlsx",
+            blocking=True,
+            options=["建议值", "人工值"],
+        )
+        for file_index in range(1, 6)
+        for field in ("售后费用", "责任工厂", "投诉类型")
+    ]
+
+    page.load("after-sales-review", prompts)
+
+    assert len(page.file_group_frames) == 5
+    assert [label.text() for label in page.file_group_titles.values()] == [
+        f"售后记录-{index}.xlsx" for index in range(1, 6)
+    ]
+    for file_index in range(1, 6):
+        group_key = f"售后记录-{file_index}.xlsx"
+        confirmation_ids = {
+            f"file-{file_index}-{field}"
+            for field in ("售后费用", "责任工厂", "投诉类型")
+        }
+        assert {
+            confirmation_id
+            for confirmation_id, prompt_group in page.prompt_group_keys.items()
+            if prompt_group == group_key
+        } == confirmation_ids
+
+    page.answer_inputs["file-1-售后费用"].setCurrentIndex(1)
+    page.answer_inputs["file-4-投诉类型"].setCurrentIndex(1)
+    submitted: list[tuple[str, list[object]]] = []
+    page.submitted.connect(lambda job_id, answers: submitted.append((job_id, answers)))
+
+    qtbot.mouseClick(page.submit_button, Qt.MouseButton.LeftButton)
+
+    assert submitted[0][0] == "after-sales-review"
+    values = {
+        answer.confirmation_id: answer.value for answer in submitted[0][1]
+    }
+    assert values["file-1-售后费用"] == "人工值"
+    assert values["file-4-投诉类型"] == "人工值"
+    assert values["file-2-责任工厂"] == "建议值"
+
+
+def test_confirmation_page_keeps_missing_source_prompts_in_other_group(qtbot) -> None:
+    page = ConfirmationsPage()
+    qtbot.addWidget(page)
+    prompt = _prompt(
+        "legacy-confirmation",
+        "legacy_field",
+        "旧任务没有提供来源文件。",
+        source_file="",
+    )
+
+    page.load("legacy-task", [prompt])
+
+    assert "" in page.file_group_frames
+    assert page.file_group_titles[""].text() == "其他确认事项"
+    assert page.prompt_group_keys["legacy-confirmation"] == ""
+    assert "legacy-confirmation" in page.answer_inputs
+
+
+def test_confirmation_page_scrolls_across_one_hundred_file_groups(qtbot, qapp) -> None:
+    page = ConfirmationsPage()
+    qtbot.addWidget(page)
+    page.resize(1050, 620)
+    prompts = [
+        _prompt(
+            f"review-{index}",
+            "责任工厂",
+            "请逐文件确认责任工厂。",
+            source_file=f"售后-{index:03d}.xlsx",
+            blocking=True,
+            options=["一厂", "二厂"],
+        )
+        for index in range(100)
+    ]
+
+    page.load("hundred-files", prompts)
+    page.show()
+    qapp.processEvents()
+
+    assert len(page.file_group_frames) == 100
+    assert page.file_group_titles["售后-099.xlsx"].text() == "售后-099.xlsx"
     assert page.scroll_area.verticalScrollBar().maximum() > 0
     assert all(editor.height() > 20 for editor in page.answer_inputs.values())
 

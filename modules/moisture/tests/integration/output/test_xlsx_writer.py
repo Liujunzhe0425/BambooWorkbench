@@ -163,7 +163,152 @@ def report(tmp_path: Path) -> WorkbookReport:
     )
 
 
-def test_workbook_contains_five_required_sheets(tmp_path: Path, report: WorkbookReport) -> None:
+MAIN_TABLE_HEADERS_20 = [
+    "序号", "供应商", "材料类型", "到货日期", "检测日期",
+    "样本1", "样本2", "样本3", "样本4", "样本5",
+    "样本6", "样本7", "样本8", "样本9", "样本10",
+    "最大值", "最小值", "区间值", "均值", "筛查结果",
+]
+
+MAIN_TABLE_EXCLUDED_COLUMNS = [
+    "批次编号", "总重(kg)", "样本部门映射",
+    "标准差", "中位数", "第一四分位数", "第三四分位数", "四分位距",
+    "部门均值最大差", "初筛下限", "初筛上限",
+    "规则版本", "规则SHA-256", "规则适用范围", "规则确认状态",
+    "初筛状态", "AI复判状态", "置信度", "最终显示色", "人工确认状态",
+    "复核建议", "来源文件", "来源工作表",
+]
+
+
+def _column(headers: list[str | None], name: str) -> int:
+    return headers.index(name) + 1
+
+
+def test_main_table_has_exactly_20_columns_and_correct_headers(
+    tmp_path: Path, report: WorkbookReport
+) -> None:
+    output = write_summary_xlsx(report, tmp_path / "output")
+    with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
+        summary = workbook[SHEET_NAMES[0]]
+        headers = [cell.value for cell in summary[1]]
+        assert headers == MAIN_TABLE_HEADERS_20
+
+
+def test_main_table_freeze_and_filter_are_constrained(
+    tmp_path: Path, report: WorkbookReport
+) -> None:
+    output = write_summary_xlsx(report, tmp_path / "output")
+    with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
+        summary = workbook[SHEET_NAMES[0]]
+        assert summary.freeze_panes == "F2"
+        assert summary.auto_filter.ref == "A1:T1"
+
+
+def test_main_table_excludes_technical_and_rule_columns(
+    tmp_path: Path, report: WorkbookReport
+) -> None:
+    output = write_summary_xlsx(report, tmp_path / "output")
+    with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
+        summary = workbook[SHEET_NAMES[0]]
+        headers = [cell.value for cell in summary[1]]
+        for excluded in MAIN_TABLE_EXCLUDED_COLUMNS:
+            assert excluded not in headers, (
+                f"'{excluded}' must not appear in main table headers"
+            )
+
+
+def test_main_table_blank_sample_cells_are_empty(
+    tmp_path: Path, report: WorkbookReport
+) -> None:
+    output = write_summary_xlsx(report, tmp_path / "output")
+    with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
+        summary = workbook[SHEET_NAMES[0]]
+        for row in range(2, summary.max_row + 1):
+            for col in range(6, 16):  # columns F-O (样本1—样本10)
+                cell = summary.cell(row, col)
+                if cell.value is None:
+                    continue
+                assert cell.value != 0, (
+                    f"Empty sample cell ({row},{col}) must be None, not 0"
+                )
+                assert cell.value != "", (
+                    f"Empty sample cell ({row},{col}) must be None, not empty string"
+                )
+
+
+def test_main_table_screen_result_text_mapping(
+    tmp_path: Path, report: WorkbookReport
+) -> None:
+    output = write_summary_xlsx(report, tmp_path / "output")
+    with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
+        summary = workbook[SHEET_NAMES[0]]
+        headers = [cell.value for cell in summary[1]]
+        screen_col = _column(headers, "筛查结果")
+        screen_values = {
+            summary.cell(row, screen_col).value
+            for row in range(2, summary.max_row + 1)
+        }
+        assert screen_values.issubset({"正常", "偏高疑似", "偏低疑似", "需人工确认"})
+        assert "偏高疑似" in screen_values  # at least one HIGH case present
+
+
+def test_screen_result_uses_data_quality_not_generic_pending_confirmation(
+    tmp_path: Path, report: WorkbookReport
+) -> None:
+    first, second = report.batches[:2]
+    normal_pending = replace(
+        first,
+        screening_decision=ScreeningDecision(
+            status=ScreenStatus.NORMAL,
+            display_color=DisplayColor.NONE,
+            target_field=None,
+            reason="确定性结果正常",
+        ),
+        final_display_color=DisplayColor.NONE,
+        confirmation_state=ConfirmationState.PENDING_HUMAN_REVIEW,
+    )
+    data_quality = replace(
+        second,
+        screening_decision=ScreeningDecision(
+            status=ScreenStatus.DATA_QUALITY,
+            display_color=DisplayColor.NONE,
+            target_field=None,
+            reason="数据质量需要人工确认",
+        ),
+        final_display_color=DisplayColor.NONE,
+    )
+    focused_report = WorkbookReport(
+        started_at=report.started_at,
+        batches=(normal_pending, data_quality),
+    )
+
+    output = write_summary_xlsx(focused_report, tmp_path / "output")
+    with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
+        summary = workbook[SHEET_NAMES[0]]
+        headers = [cell.value for cell in summary[1]]
+        screen_col = _column(headers, "筛查结果")
+        assert summary.cell(2, screen_col).value == "正常"
+        assert summary.cell(3, screen_col).value == "需人工确认"
+
+
+def test_main_table_material_type_is_normalized_to_yuanzhusi(
+    tmp_path: Path, report: WorkbookReport
+) -> None:
+    output = write_summary_xlsx(report, tmp_path / "output")
+    with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
+        summary = workbook[SHEET_NAMES[0]]
+        headers = [cell.value for cell in summary[1]]
+        mat_col = _column(headers, "材料类型")
+        for row in range(2, summary.max_row + 1):
+            cell_value = summary.cell(row, mat_col).value
+            assert cell_value == "原竹丝", (
+                f"Material type must be '原竹丝', got '{cell_value}'"
+            )
+
+
+def test_workbook_contains_five_required_sheets_and_key_values(
+    tmp_path: Path, report: WorkbookReport
+) -> None:
     output = write_summary_xlsx(report, tmp_path / "output")
 
     assert output == tmp_path / "output" / "moisture_summary.xlsx"
@@ -171,40 +316,49 @@ def test_workbook_contains_five_required_sheets(tmp_path: Path, report: Workbook
         assert workbook.sheetnames == SHEET_NAMES
         summary = workbook[SHEET_NAMES[0]]
         headers = [cell.value for cell in summary[1]]
-        assert headers[headers.index("样本1") : headers.index("样本1") + 10] == [
-            f"样本{index}" for index in range(1, 11)
-        ]
-        assert summary.auto_filter.ref == f"A1:{summary.cell(1, summary.max_column).column_letter}1"
-        assert summary.freeze_panes == "C2"
-        assert summary.cell(2, headers.index("均值") + 1).value == pytest.approx(0.61)
-        assert summary.cell(2, headers.index("来源文件") + 1).value == "R1.xlsx"
-        assert summary.cell(2, headers.index("来源工作表") + 1).value == "检测数据"
-        assert summary.cell(2, headers.index("初筛下限") + 1).value == pytest.approx(0.47)
-        assert summary.cell(2, headers.index("初筛上限") + 1).value == pytest.approx(0.55)
-        assert summary.cell(2, headers.index("规则SHA-256") + 1).value == "c" * 64
-        assert summary.cell(2, headers.index("规则适用范围") + 1).value == "竹丝/原竹丝；全年"
-        assert summary.cell(2, headers.index("规则确认状态") + 1).value == "已确认"
-        assert summary.cell(2, headers.index("初筛状态") + 1).value == "偏高疑似"
-        assert summary.cell(2, headers.index("AI复判状态") + 1).value == "辅助复判未完成"
-        assert summary.cell(2, headers.index("最终显示色") + 1).value == "橙色"
-        assert summary.cell(2, headers.index("人工确认状态") + 1).value == "待人工复核"
+
+        # Core business values still present
+        assert summary.cell(2, _column(headers, "均值")).value == pytest.approx(0.61)
+        assert summary.cell(2, _column(headers, "均值")).number_format == "0.00%"
+
+        # Relocated: 来源追溯 fields
         trace = workbook["来源追溯"]
         trace_headers = [cell.value for cell in trace[1]]
-        assert trace.cell(2, trace_headers.index("来源文件") + 1).value == "R1.xlsx"
+        assert trace.cell(2, _column(trace_headers, "来源文件")).value == "R1.xlsx"
+        assert trace.cell(2, _column(trace_headers, "来源工作表")).value == "检测数据"
+        assert trace.cell(2, _column(trace_headers, "规则SHA-256")).value == "c" * 64
+        assert trace.cell(2, _column(trace_headers, "规则适用范围")).value == "竹丝/原竹丝；全年"
+        assert trace.cell(2, _column(trace_headers, "规则确认状态")).value == "已确认"
+        assert trace.cell(2, _column(trace_headers, "总重")).value == pytest.approx(1234.5)
+        assert trace.cell(2, _column(trace_headers, "总重")).number_format == "#,##0.0"
         assert str(tmp_path) not in " ".join(
             str(cell.value)
-            for row in trace.iter_rows()
-            for cell in row
+            for row_ in trace.iter_rows()
+            for cell in row_
             if cell.value is not None
         )
-        assert summary.cell(2, headers.index("均值") + 1).number_format == "0.00%"
-        assert summary.cell(2, headers.index("总重(kg)") + 1).number_format == "#,##0.0"
+
+        # Relocated: 趋势分析 fields
+        trend = workbook["趋势分析"]
+        trend_headers = [cell.value for cell in trend[1]]
+        assert trend.cell(2, _column(trend_headers, "初筛下限")).value == pytest.approx(0.47)
+        assert trend.cell(2, _column(trend_headers, "初筛上限")).value == pytest.approx(0.55)
+
+        # Relocated: 模型分析记录 fields
+        model = workbook["模型分析记录"]
+        model_headers = [cell.value for cell in model[1]]
+        assert model.cell(2, _column(model_headers, "初筛状态")).value == "偏高疑似"
+        assert model.cell(2, _column(model_headers, "AI复判状态")).value == "辅助复判未完成"
+        assert model.cell(2, _column(model_headers, "最终显示色")).value == "橙色"
+        assert model.cell(2, _column(model_headers, "人工确认状态")).value == "待人工复核"
+
+        # Customer-visible text hygiene
         customer_text = " ".join(
             str(cell.value)
             for worksheet in workbook.worksheets
             if worksheet.title != "来源追溯"
-            for row in worksheet.iter_rows()
-            for cell in row
+            for row_ in worksheet.iter_rows()
+            for cell in row_
             if cell.value is not None
         )
         assert "not_required" not in customer_text
@@ -217,11 +371,18 @@ def test_review_colors_match_contract_semantics(tmp_path: Path, report: Workbook
     with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
         sheet = workbook[SHEET_NAMES[0]]
         headers = [cell.value for cell in sheet[1]]
+        screen_col = _column(headers, "筛查结果")
         targets = ("均值", "最小值", "最大值", "样本1")
         colors = ("orange", "green", "red", "blue")
         for row, target, color in zip(range(2, 6), targets, colors, strict=True):
+            # Target indicator cell keeps its color
             assert (
-                sheet.cell(row, headers.index(target) + 1).fill.fgColor.rgb
+                sheet.cell(row, _column(headers, target)).fill.fgColor.rgb
+                == f"FF{COLOR_HEX[color]}"
+            )
+            # 筛查结果 cell must also carry the final display color
+            assert (
+                sheet.cell(row, screen_col).fill.fgColor.rgb
                 == f"FF{COLOR_HEX[color]}"
             )
 
@@ -259,6 +420,17 @@ def test_workbook_has_named_charts_and_plain_untrusted_text(
             for row in worksheet.iter_rows()
             for cell in row
         )
+
+
+def test_trend_charts_do_not_overlap_extended_statistics_table(
+    tmp_path: Path, report: WorkbookReport
+) -> None:
+    output = write_summary_xlsx(report, tmp_path / "output")
+    with closing(openpyxl.load_workbook(output, data_only=False)) as workbook:
+        trend = workbook[SHEET_NAMES[2]]
+        assert trend.max_column == 14
+        assert len(trend._charts) == 2
+        assert all(chart.anchor._from.col >= 15 for chart in trend._charts)
 
 
 def test_trend_rows_are_sorted_by_detection_date(
