@@ -2,7 +2,7 @@ import pytest
 
 from core.ai.audit import ConsentAuditRepository
 from core.ai.gateway import AIGateway, ConsentDenied, ConsentRequired, GatewayRequest
-from core.ai.providers import MockProvider
+from core.ai.providers import AIResponse, MockProvider
 from core.security.redaction import RedactionService
 
 
@@ -44,3 +44,32 @@ def test_allowed_and_denied_decisions_are_audited(database) -> None:
         gateway.complete(request, allowed=False)
 
     assert [item.allowed for item in audit.list_for_task("task-1")] == [True, False]
+
+
+def test_gateway_preserves_module_declared_json_output(database) -> None:
+    class CapturingProvider:
+        def __init__(self) -> None:
+            self.requests = []
+
+        def complete(self, request):
+            self.requests.append(request)
+            return AIResponse('{"schema_version":"1.0"}')
+
+    provider = CapturingProvider()
+    gateway = AIGateway(provider, RedactionService(), ConsentAuditRepository(database))
+
+    response = gateway.complete(
+        GatewayRequest(
+            "task-json",
+            "moisture",
+            "deepseek",
+            "deepseek-chat",
+            {"response_schema": {"type": "object"}},
+            response_format="json_object",
+        ),
+        allowed=True,
+    )
+
+    assert response.text.startswith("{")
+    assert provider.requests[0].response_format == "json_object"
+    assert "仅返回一个合法 JSON 对象" in provider.requests[0].system

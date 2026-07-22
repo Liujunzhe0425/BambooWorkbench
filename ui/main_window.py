@@ -1,5 +1,6 @@
 import ctypes
 import sys
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon, QResizeEvent, QShowEvent
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
 from core.contracts.enums import TaskStatus
 from core.contracts.progress import ProgressEvent
 from core.contracts.result import ModuleResult
+from core.platform.path_safety import resolve_contained_file
 from core.tasks.models import InvalidTaskTransition, TaskLifecycleState
 from ui.navigation import Navigation
 from ui.page_ids import PageId
@@ -62,7 +64,7 @@ class MainWindow(QMainWindow):
         self.stack.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.workbench_page = WorkbenchPage(context.registry)
         self.history_page = HistoryPage(context.task_repository)
-        self.confirmations_page = ConfirmationsPage()
+        self.confirmations_page = ConfirmationsPage(context.task_repository.get_number)
         self.knowledge_page = KnowledgePage(
             context.knowledge_repository,
             context.paths.knowledge,
@@ -107,6 +109,7 @@ class MainWindow(QMainWindow):
         self.size_grip.setObjectName("windowSizeGrip")
         self.size_grip.resize(18, 18)
         self.navigation.page_selected.connect(self.navigate)
+        self.history_page.result_requested.connect(self._open_history_result)
         self.workbench_page.module_selected.connect(self._open_module)
         self.module_task_page.task_requested.connect(self._start_task)
         self.task_progress_page.cancel_requested.connect(self._cancel_task)
@@ -288,6 +291,28 @@ class MainWindow(QMainWindow):
             self._show_failure("任务未完成", "；".join(result.errors) or result.status.value)
         self._foreground_job_id = None
 
+    def _open_history_result(self, job_id: str) -> None:
+        try:
+            task = self.context.task_repository.get(job_id)
+            if task["status"] not in {"success", "partial_success"}:
+                return
+            task_dir = self.context.paths.tasks / job_id
+            result_path = resolve_contained_file(
+                Path(str(task["result_path"])),
+                task_dir,
+                "历史任务结果",
+                reject_link=True,
+            )
+            result = ModuleResult.model_validate_json(result_path.read_text(encoding="utf-8"))
+            if result.job_id != job_id or result.module_id.value != task["module_id"]:
+                raise ValueError("历史任务结果与任务记录不匹配")
+        except (KeyError, OSError, UnicodeError, ValueError) as error:
+            self._show_failure("无法打开历史结果", str(error))
+            return
+        self.result_center_page.show_result(result)
+        self.stack.setCurrentWidget(self.result_center_page)
+        self.navigation.set_current_page(PageId.HISTORY)
+
     def _on_failed(self, job_id: str, message: str) -> None:
         if self._starting_task:
             self._start_failure_job_id = job_id
@@ -302,7 +327,7 @@ class MainWindow(QMainWindow):
             self.task_progress_page.cancel_button.setEnabled(False)
             self.task_progress_page.message_label.setText("任务执行失败")
             self._foreground_job_id = None
-        self._show_failure("任务未完成", f"任务 {job_id}：{message}")
+        self._show_failure("任务未完成", f"{self._task_display_name(job_id)}：{message}")
 
     def _on_orchestration_error(self, job_id: str, message: str) -> None:
         if self._starting_task:
@@ -318,7 +343,13 @@ class MainWindow(QMainWindow):
             self.task_progress_page.cancel_button.setEnabled(False)
             self.task_progress_page.message_label.setText("任务协调错误")
             self._foreground_job_id = None
-        self._show_failure("任务协调错误", f"任务 {job_id}：{message}")
+        self._show_failure("任务协调错误", f"{self._task_display_name(job_id)}：{message}")
+
+    def _task_display_name(self, job_id: str) -> str:
+        try:
+            return f"任务 {self.context.task_repository.get_number(job_id)}"
+        except KeyError:
+            return "当前任务"
 
     def _clear_confirmation(self, job_id: str) -> None:
         self._confirmation_job_ids.discard(job_id)

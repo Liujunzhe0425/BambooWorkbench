@@ -1,9 +1,9 @@
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QComboBox, QLabel, QPlainTextEdit
+from PySide6.QtCore import QPointF, Qt
+from PySide6.QtGui import QColor, QDesktopServices, QEnterEvent
+from PySide6.QtWidgets import QComboBox, QFrame, QLabel, QPlainTextEdit, QToolTip
 
 from core.contracts.result import ConfirmationPrompt, OutputArtifact, SourceRef
 from ui.pages.confirmations_page import ConfirmationsPage
@@ -73,6 +73,8 @@ def test_confirmation_page_explains_batch_scope_and_disambiguates_repeated_field
 
     page.load("boiling-ui", prompts)
 
+    assert page.job_selector.currentText() == "任务 1"
+    assert "boiling-ui" not in page.status_label.text()
     assert isinstance(page.answer_inputs["usage"], QComboBox)
     assert page.answer_inputs["usage"].currentText() == "地板"
     assert "只有确认本批数据应使用同一答案时才勾选" in page.batch_checks[
@@ -80,6 +82,11 @@ def test_confirmation_page_explains_batch_scope_and_disambiguates_repeated_field
     ].toolTip()
     assert page.batch_help_labels["usage"].text() == "!"
     assert page.batch_help_labels["usage"].toolTip() == page.batch_checks["usage"].toolTip()
+    assert page.remember_help_labels["usage"].text() == "!"
+    assert "后续相同字段自动匹配" in page.remember_help_labels["usage"].help_text
+    options_view = page.answer_inputs["usage"].view()
+    assert options_view.objectName() == "confirmationOptions"
+    assert options_view.frameShape() == QFrame.Shape.NoFrame
     assert page.reason_labels["expansion-one"].text().startswith("中1")
     assert page.file_group_titles["20260135.xlsx"].text() == "20260135.xlsx"
     assert "H22" in page.source_labels["expansion-one"].text()
@@ -89,6 +96,82 @@ def test_confirmation_page_explains_batch_scope_and_disambiguates_repeated_field
     assert "密度结论复核 2/2（可选）" in visible_labels
     assert "膨胀率数值冲突 1/2（可选）" in visible_labels
     assert "膨胀率数值冲突 2/2（可选）" in visible_labels
+
+
+def test_after_sales_protocol_fields_are_localized(qtbot) -> None:
+    page = ConfirmationsPage()
+    qtbot.addWidget(page)
+    prompts = [
+        _prompt(f"field-{field}", field, "需要人工确认。")
+        for field in (
+            "complaint_date",
+            "enterprise_cost_amount",
+            "internal_accountability_amount",
+            "external_borne_amount",
+            "issue_types",
+            "template",
+        )
+    ]
+
+    page.load("after-sales-fields", prompts)
+
+    labels = {label.text() for label in page.findChildren(QLabel)}
+    assert {
+        "投诉日期（可选）",
+        "企业承担售后费用（可选）",
+        "内部责任费用（可选）",
+        "外部承担费用（可选）",
+        "质量问题类型（可选）",
+        "表格模板识别（可选）",
+    }.issubset(labels)
+    assert not any("_" in label for label in labels if "（可选）" in label)
+
+
+def test_confirmation_popup_and_help_badges_have_immediate_light_ui(
+    qtbot, qapp, monkeypatch
+) -> None:
+    page = ConfirmationsPage()
+    qtbot.addWidget(page)
+    page.load(
+        "visual-confirmation",
+        [
+            _prompt(
+                "visual-field",
+                "product_usage",
+                "请选择产品用途。",
+                batch_applicable=True,
+                rememberable=True,
+                options=["地板", "家具"],
+            )
+        ],
+    )
+    page.resize(900, 520)
+    page.show()
+    qapp.processEvents()
+    editor = page.answer_inputs["visual-field"]
+    assert isinstance(editor, QComboBox)
+    editor.showPopup()
+    qapp.processEvents()
+    popup_image = editor.view().window().grab().toImage()
+    assert QColor(popup_image.pixelColor(popup_image.width() // 2, 0)) != QColor("#000000")
+    assert QColor(
+        popup_image.pixelColor(popup_image.width() // 2, popup_image.height() - 1)
+    ) != QColor("#000000")
+    editor.hidePopup()
+
+    shown: list[str] = []
+    monkeypatch.setattr(
+        QToolTip,
+        "showText",
+        lambda _position, text, _widget: shown.append(text),
+    )
+    enter = QEnterEvent(QPointF(1, 1), QPointF(1, 1), QPointF(1, 1))
+    qapp.sendEvent(page.batch_help_labels["visual-field"], enter)
+    qapp.processEvents()
+    assert shown and "应用到当前任务" in shown[-1]
+    qapp.sendEvent(page.remember_help_labels["visual-field"], enter)
+    qapp.processEvents()
+    assert "后续相同字段自动匹配" in shown[-1]
 
 
 def test_confirmation_page_scrolls_instead_of_compressing_many_prompts(qtbot, qapp) -> None:

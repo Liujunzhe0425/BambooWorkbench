@@ -277,6 +277,7 @@ class ServiceRequest:
     payload: Mapping[str, Any]
     scope: str | None = None
     requires_user_consent: bool = True
+    response_format: str = "text"
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> ServiceRequest:
@@ -294,6 +295,7 @@ class ServiceRequest:
             purpose=payload["purpose"],
             payload=frozen_payload,
             requires_user_consent=payload.get("requires_user_consent", True),
+            response_format=payload.get("response_format", "text"),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -304,6 +306,7 @@ class ServiceRequest:
             "purpose": self.purpose,
             "payload": _json_value(self.payload),
             "requires_user_consent": self.requires_user_consent,
+            "response_format": self.response_format,
         }
 
 

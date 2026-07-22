@@ -1,8 +1,11 @@
 from collections import Counter, defaultdict
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QCursor, QPalette
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QFrame,
@@ -10,8 +13,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListView,
     QPushButton,
     QScrollArea,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -28,29 +33,101 @@ _FIELD_LABELS = {
     "expansion": "膨胀率结论复核",
     "expansion_ratio": "膨胀率数值冲突",
     "expansion_review": "膨胀情况复核",
+    "template": "表格模板识别",
+    "issue_types": "质量问题类型",
+    "complaint_date": "投诉日期",
+    "enterprise_cost_amount": "企业承担售后费用",
+    "internal_accountability_amount": "内部责任费用",
+    "external_borne_amount": "外部承担费用",
+    "workbook": "工作簿",
+    "fields": "业务字段",
 }
 
 _BATCH_HELP = (
     "勾选后，本次填写的答案会应用到当前任务中其他适用的同类文件或记录。"
     "只有确认本批数据应使用同一答案时才勾选；不同文件情况不一致时请勿勾选。"
 )
+_REMEMBER_HELP = (
+    "勾选后，系统会把当前字段与答案的对应关系保存为本机映射，供后续相同字段自动匹配。"
+    "仅在字段含义长期稳定、以后仍应采用同一映射时勾选；一次性判断或可能变化的内容请勿勾选。"
+)
+
+
+class InstantHelpBadge(QLabel):
+    def __init__(self, help_text: str, accessible_name: str) -> None:
+        super().__init__("!")
+        self.help_text = help_text
+        self.setProperty("helpBadge", True)
+        self.setToolTip(help_text)
+        self.setAccessibleName(accessible_name)
+        self.setAccessibleDescription(help_text)
+        self.setCursor(Qt.CursorShape.WhatsThisCursor)
+
+    def enterEvent(self, event: object) -> None:
+        QToolTip.showText(QCursor.pos(), self.help_text, self)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event: object) -> None:
+        QToolTip.hideText()
+        super().leaveEvent(event)
+
+
+class ConfirmationComboBox(QComboBox):
+    """Use a fully painted popup instead of the platform's dark native container."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        view = QListView()
+        view.setObjectName("confirmationOptions")
+        view.setFrameShape(QFrame.Shape.NoFrame)
+        view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        view.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        view.viewport().setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        palette = view.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#FFFDF8"))
+        palette.setColor(QPalette.ColorRole.Base, QColor("#FFFDF8"))
+        palette.setColor(QPalette.ColorRole.Text, QColor("#294D3C"))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor("#DDECD9"))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#294D3C"))
+        view.setPalette(palette)
+        view.viewport().setAutoFillBackground(True)
+        self.setView(view)
+        popup = view.window()
+        popup.setWindowFlag(Qt.WindowType.NoDropShadowWindowHint, True)
+        popup.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        popup.setAutoFillBackground(True)
+
+    def showPopup(self) -> None:
+        super().showPopup()
+        # Qt creates QComboBoxPrivateContainer lazily, so it can only be painted here.
+        popup = self.view().window()
+        palette = popup.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#FFFDF8"))
+        palette.setColor(QPalette.ColorRole.Base, QColor("#FFFDF8"))
+        popup.setPalette(palette)
+        popup.setAutoFillBackground(True)
+        popup.setStyleSheet("background: #FFFDF8; border: 0; margin: 0; padding: 0;")
+        popup.update()
 
 
 class ConfirmationsPage(QWidget):
     submitted = Signal(str, list)
     job_selected = Signal(str)
 
-    def __init__(self) -> None:
+    def __init__(self, task_number_resolver: Callable[[str], int] | None = None) -> None:
         super().__init__()
         self.setObjectName("page-confirmations")
         self.current_job_id = ""
         self._models: dict[str, list[ConfirmationPrompt]] = {}
+        self._task_numbers: dict[str, int] = {}
+        self._task_number_resolver = task_number_resolver
         self._submitting_jobs: set[str] = set()
         self.prompts: list[ConfirmationPrompt] = []
         self.answer_inputs: dict[str, QLineEdit | QComboBox] = {}
         self.batch_checks: dict[str, QCheckBox] = {}
         self.batch_help_labels: dict[str, QLabel] = {}
         self.remember_checks: dict[str, QCheckBox] = {}
+        self.remember_help_labels: dict[str, QLabel] = {}
         self.reason_labels: dict[str, QLabel] = {}
         self.source_labels: dict[str, QLabel] = {}
         self.file_group_frames: dict[str, QFrame] = {}
@@ -109,8 +186,16 @@ class ConfirmationsPage(QWidget):
         is_new = job_id not in self._models
         self._models[job_id] = list(prompts)
         if is_new:
+            if self._task_number_resolver is not None:
+                try:
+                    task_number = self._task_number_resolver(job_id)
+                except KeyError:
+                    task_number = max(self._task_numbers.values(), default=0) + 1
+            else:
+                task_number = len(self._task_numbers) + 1
+            self._task_numbers[job_id] = task_number
             self.job_selector.blockSignals(True)
-            self.job_selector.addItem(job_id, job_id)
+            self.job_selector.addItem(f"任务 {task_number}", job_id)
             self.job_selector.blockSignals(False)
         if not self.current_job_id:
             self.select_job(job_id, user_selected=False)
@@ -135,6 +220,7 @@ class ConfirmationsPage(QWidget):
 
     def remove(self, job_id: str) -> None:
         self._models.pop(job_id, None)
+        self._task_numbers.pop(job_id, None)
         self._submitting_jobs.discard(job_id)
         index = self.job_selector.findData(job_id)
         if index >= 0:
@@ -162,7 +248,9 @@ class ConfirmationsPage(QWidget):
         self.current_job_id = job_id
         prompts = self._models[job_id]
         self.prompts = list(prompts)
-        self.status_label.setText(f"任务 {job_id} 需要确认 {len(prompts)} 项")
+        self.status_label.setText(
+            f"任务 {self._task_numbers[job_id]} 需要确认 {len(prompts)} 项"
+        )
         grouped = self._group_prompts(prompts)
         file_group_total = sum(bool(group_key) for group_key, _items in grouped)
         file_group_position = 0
@@ -199,6 +287,7 @@ class ConfirmationsPage(QWidget):
         self.batch_checks.clear()
         self.batch_help_labels.clear()
         self.remember_checks.clear()
+        self.remember_help_labels.clear()
         self.reason_labels.clear()
         self.source_labels.clear()
         self.file_group_frames.clear()
@@ -299,9 +388,10 @@ class ConfirmationsPage(QWidget):
         if suggested is None and prompt.options:
             suggested = prompt.options[0]
         if prompt.options:
-            answer: QLineEdit | QComboBox = QComboBox()
+            answer: QLineEdit | QComboBox = ConfirmationComboBox()
             for option in prompt.options:
                 answer.addItem(str(option), option)
+            answer.setMaxVisibleItems(max(1, len(prompt.options)))
             suggested_text = "" if suggested is None else str(suggested)
             selected_index = answer.findText(suggested_text)
             if selected_index < 0 and suggested_text:
@@ -338,11 +428,7 @@ class ConfirmationsPage(QWidget):
             batch.setAccessibleDescription(_BATCH_HELP)
             batch.setToolTip(_BATCH_HELP)
             self.batch_checks[prompt.confirmation_id] = batch
-            help_label = QLabel("!")
-            help_label.setProperty("helpBadge", True)
-            help_label.setToolTip(_BATCH_HELP)
-            help_label.setAccessibleName("应用到本批次说明")
-            help_label.setAccessibleDescription(_BATCH_HELP)
+            help_label = InstantHelpBadge(_BATCH_HELP, "应用到本批次说明")
             self.batch_help_labels[prompt.confirmation_id] = help_label
             batch_row = QWidget()
             batch_layout = QHBoxLayout(batch_row)
@@ -355,8 +441,18 @@ class ConfirmationsPage(QWidget):
         if prompt.rememberable:
             remember = QCheckBox("记住该映射")
             remember.setAccessibleName(f"记住{prompt.field}映射")
+            remember.setAccessibleDescription(_REMEMBER_HELP)
             self.remember_checks[prompt.confirmation_id] = remember
-            editor_layout.addWidget(remember)
+            help_label = InstantHelpBadge(_REMEMBER_HELP, "记住该映射说明")
+            self.remember_help_labels[prompt.confirmation_id] = help_label
+            remember_row = QWidget()
+            remember_layout = QHBoxLayout(remember_row)
+            remember_layout.setContentsMargins(0, 0, 0, 0)
+            remember_layout.setSpacing(7)
+            remember_layout.addWidget(remember)
+            remember_layout.addWidget(help_label)
+            remember_layout.addStretch()
+            editor_layout.addWidget(remember_row)
         editor_layout.addStretch()
         return editor_host
 

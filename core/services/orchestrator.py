@@ -82,6 +82,7 @@ class ServiceOrchestrator:
                 provider_id=self.provider_id,
                 model=self.model,
                 payload=request.payload,
+                response_format=request.response_format,
             )
         )
 
@@ -186,6 +187,7 @@ class ServiceOrchestrator:
                     provider_id=self.provider_id,
                     model=self.model,
                     payload=request.payload,
+                    response_format=request.response_format,
                 ),
                 allowed,
             )
