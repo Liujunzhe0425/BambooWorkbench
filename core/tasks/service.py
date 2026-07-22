@@ -29,8 +29,11 @@ from core.platform.path_safety import (
 from core.platform.paths import AppPaths
 from core.storage.repositories.confirmations import ConfirmationRepository
 from core.storage.repositories.tasks import TaskRepository
+from core.storage.settings import SettingsStore
 from core.tasks.job_builder import build_draft_job
 from core.tasks.models import InvalidTaskTransition, TaskLifecycleState, TaskStateMachine
+from core.tasks.output_publisher import publish_outputs
+from core.tasks.result_status import normalized_result
 from core.tasks.snapshots import remove_snapshots, snapshot_inputs
 
 if TYPE_CHECKING:
@@ -39,6 +42,7 @@ if TYPE_CHECKING:
 _JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{6,64}$")
 _TERMINAL_MARKER = ".terminal-pending.json"
 _SERVICE_CONSENT_PREFIX = "service-consent:"
+_REDACTED_PREVIEW_MARKER = "[[REDACTED_PREVIEW]]"
 _LOG = logging.getLogger("bamboo_workbench")
 
 
@@ -65,6 +69,18 @@ def _atomic_write_text(path: Path, content: str) -> None:
         raise
 
 
+def _preview_record_count(payload: object) -> int:
+    if isinstance(payload, list):
+        return len(payload)
+    if not isinstance(payload, dict):
+        return 1
+    for key in ("candidates", "records", "items", "rows", "cases"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return len(value)
+    return 1
+
+
 class TaskService(QObject):
     progress = Signal(str, object)
     finished = Signal(object)
@@ -72,6 +88,7 @@ class TaskService(QObject):
     failed = Signal(str, str)
     orchestration_error = Signal(str, str)
     status_changed = Signal(str, str)
+    publication_warning = Signal(str, str)
 
     def __init__(
         self,
@@ -82,6 +99,7 @@ class TaskService(QObject):
         runner_factory: Callable[[], ModuleProcessRunner] = ModuleProcessRunner,
         job_id_factory: Callable[[], str] = _new_job_id,
         service_orchestrator: "ServiceOrchestrator | None" = None,
+        settings: SettingsStore | None = None,
     ) -> None:
         super().__init__()
         self.paths = paths
@@ -91,6 +109,7 @@ class TaskService(QObject):
         self.runner_factory = runner_factory
         self.job_id_factory = job_id_factory
         self.service_orchestrator = service_orchestrator
+        self.settings = settings
         self.runners: dict[str, ModuleProcessRunner] = {}
         self._states: dict[str, TaskStateMachine] = {}
         self._jobs: dict[str, JobRequest] = {}
@@ -534,12 +553,22 @@ class TaskService(QObject):
                     auto_finalize = True
                 task_terminal = False
             else:
-                target = TaskLifecycleState(result.status.value)
-                if result.status in {TaskStatus.SUCCESS, TaskStatus.PARTIAL_SUCCESS}:
-                    self.task_repository.replace_outputs(job_id, result.outputs)
+                host_result = normalized_result(result)
+                if host_result.status is not result.status:
+                    _LOG.warning(
+                        "module task status normalized job=%s module_status=%s host_status=%s",
+                        job_id,
+                        result.status.value,
+                        host_result.status.value,
+                    )
+                target = TaskLifecycleState(host_result.status.value)
+                display_result = host_result
+                if host_result.status in {TaskStatus.SUCCESS, TaskStatus.PARTIAL_SUCCESS}:
+                    display_result = self._publish_result(job_id, job, host_result)
+                    self.task_repository.replace_outputs(job_id, display_result.outputs)
                 self._persist_transition(job_id, target, result_path=result_path)
                 _LOG.info("task terminal job=%s status=%s", job_id, target.value)
-                self.finished.emit(result)
+                self.finished.emit(display_result)
                 task_terminal = True
         except Exception as exc:
             self._record_failure(job_id, self._error_message(exc), runner)
@@ -550,6 +579,38 @@ class TaskService(QObject):
                 self._auto_finalize_services(job_id)
             except Exception as exc:
                 self._record_failure(job_id, self._error_message(exc))
+
+    def _publish_result(
+        self,
+        job_id: str,
+        job: JobRequest,
+        result: ModuleResult,
+    ) -> ModuleResult:
+        configured_root = self.settings.get("output_dir", "") if self.settings else ""
+        if not configured_root:
+            return result
+        try:
+            published = publish_outputs(
+                result,
+                task_number=self.task_repository.get_number(job_id),
+                task_dir=self.paths.tasks / job_id,
+                task_output_dir=Path(job.output_dir),
+                configured_root=configured_root,
+            )
+        except Exception as error:
+            message = (
+                "成果已保留在本机任务目录，但复制到设置的输出目录失败："
+                f"{type(error).__name__}: {error}"
+            )
+            _LOG.warning("task output publication failed job=%s error=%s", job_id, error)
+            self.publication_warning.emit(job_id, message)
+            return result
+        _LOG.info(
+            "task outputs published job=%s output_count=%d",
+            job_id,
+            len(published.outputs),
+        )
+        return published
 
     def _cancelled(self, job_id: str, runner: ModuleProcessRunner) -> None:
         if job_id in self._blocked_callbacks:
@@ -873,15 +934,26 @@ class TaskService(QObject):
                 job.module_id.value,
                 request,
             )
-            preview_text = json.dumps(preview.payload, ensure_ascii=False, sort_keys=True)
-            categories = "、".join(preview.categories) or "无敏感类别"
+            preview_text = json.dumps(
+                preview.payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                indent=2,
+            )
+            categories = "、".join(preview.categories) or "未识别到需替换的敏感类别"
+            record_count = _preview_record_count(preview.payload)
+            field_count = len(preview.payload) if isinstance(preview.payload, dict) else 0
             prompts.append(
                 ConfirmationPrompt(
                     confirmation_id=f"{_SERVICE_CONSENT_PREFIX}{request.request_id}",
                     field=f"AI联网授权：{request.purpose}",
                     reason=(
-                        f"发送内容已脱敏；识别类别：{categories}；"
-                        f"脱敏预览：{preview_text[:800]}"
+                        f"用途：{request.purpose}。拟发送约 {record_count} 条候选记录、"
+                        f"{field_count} 个顶层字段至 {self.service_orchestrator.provider_id} "
+                        f"({self.service_orchestrator.model})，请求 AI 提供辅助复核。"
+                        f"框架不会发送 API 密钥或原始文件；脱敏检查：{categories}。"
+                        "AI 结果仅作辅助，最终成果仍受模块规则与人工确认约束。"
+                        f"\n\n{_REDACTED_PREVIEW_MARKER}\n{preview_text}"
                     ),
                     suggested_value="拒绝",
                     options=["允许", "拒绝"],

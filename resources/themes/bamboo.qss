@@ -486,3 +486,34 @@ QMessageBox {
 #windowSizeGrip {
     background: transparent;
 }
+
+#pageHost {
+    background: #F7F8F3;
+}
+
+QPushButton#pageBackButton {
+    margin: 12px 0 2px 30px;
+    padding: 6px 14px;
+    min-height: 24px;
+}
+
+QToolButton[detailToggle="true"] {
+    color: #2F6F56;
+    background: transparent;
+    border: 0;
+    padding: 5px 2px;
+    text-align: left;
+    font-weight: 600;
+}
+
+QToolButton[detailToggle="true"]:hover {
+    color: #1D5942;
+    background: #E8F1E4;
+    border-radius: 5px;
+}
+
+QFrame[failureDetails="true"] {
+    background: #FFF7E8;
+    border: 1px solid #E6C98C;
+    border-radius: 7px;
+}
