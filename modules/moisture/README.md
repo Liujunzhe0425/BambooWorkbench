@@ -98,6 +98,18 @@ powershell -ExecutionPolicy Bypass -File modules\moisture\build_portable_runtime
 
 不得提交 `.exe`、`runtime/`、`build/`、`dist/`、`.venv`。
 
+## 当前验收状态
+
+- 模块全量测试：418 passed；
+- Ruff、合同 CLI、Schema 同步、`version=1.0.1`、`self-check=ok`：通过；
+- 完整便携构建及 portable verification：通过；
+- 冻结 EXE 经真实 Registry/TaskService/Runner 的普通汇总、AI 报告和管理入口闭环：5 passed；
+- 当前 PR #41 指向 `integration`，已进入负责人评审，尚未合并。
+
+GitHub Actions 当前红叉不是代码失败：`quality` job 因仓库账户付款失败或 Actions
+spending limit 不足，在 Runner 分配前即被 GitHub 拒绝启动（无任何测试步骤）。
+仓库负责人处理 Billing 后重新运行即可；不得通过修改模块或工作流掩盖该外部阻塞。
+
 ## 当前指导文档
 
 | 文档 | 内容 |
