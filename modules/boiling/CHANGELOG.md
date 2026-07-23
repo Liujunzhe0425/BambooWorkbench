@@ -1,7 +1,10 @@
 ﻿# 更新记录
 
-## 1.0.1 - 2026-07-22 客户验收第一轮整改
+## 1.0.1 - 2026-07-23 客户验收第一轮整改与 AI 触发追加整改
 
+- Draft 完成确定性解析与候选筛查后，只要存在 AI 辅助候选即生成统一 `service_requests`，不再依赖框架 Draft 固定为 `false` 的 `ai_enabled` 字段。
+- 无候选时继续返回 `service_requests=[]`；Finalize 仍只读取框架提供的 `service_response_file`，不读取 API Key、不直接联网。
+- 新增真实 `TaskService.create_and_start(ModuleId.BOILING, ...)` 回归，覆盖候选授权允许、拒绝离线降级、无候选不授权，并验证 AI 允许/拒绝后的确定性业务 JSON 完全一致。
 - 所有输入文件均已成功处理且没有待确认项时，任务状态返回 `success`，即使报告中存在业务异常或信息不足记录。
 - 密度、膨胀率、浸渍剥离、结论冲突和信息不足仍完整保留在业务状态、异常列表、Excel、Markdown 和 JSON 中。
 - 只有成功文件与真实失败文件同时存在时使用 `partial_success`；重复文件单独计入 `skipped_count`，不再把业务异常或重复跳过误报为任务失败。
