@@ -137,7 +137,15 @@ def run_host(
         and arguments[:2] == ["run", "--job"]
         and Path(arguments[2]).is_absolute()
     )
-    if not valid_self_check and not valid_run:
+    valid_manage = (
+        len(arguments) == 5
+        and arguments[0] == "manage"
+        and arguments[1] == "--request"
+        and Path(arguments[2]).is_absolute()
+        and arguments[3] == "--response"
+        and Path(arguments[4]).is_absolute()
+    )
+    if not valid_self_check and not valid_run and not valid_manage:
         print("module host rejected command", file=sys.stderr, flush=True)
         return HOST_CHILD_START_ERROR
     if sys.platform != "win32":
@@ -250,12 +258,18 @@ def _windows_error(operation: str) -> str:
 def main(arguments: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--launcher", required=True, type=Path)
-    parser.add_argument("command", choices=["self-check", "run"])
+    parser.add_argument("command", choices=["self-check", "run", "manage"])
     parser.add_argument("--job", type=Path)
+    parser.add_argument("--request", type=Path)
+    parser.add_argument("--response", type=Path)
     parsed = parser.parse_args(arguments)
     launcher_arguments = [parsed.command]
     if parsed.job is not None:
         launcher_arguments.extend(["--job", str(parsed.job.resolve())])
+    if parsed.request is not None:
+        launcher_arguments.extend(["--request", str(parsed.request.resolve())])
+    if parsed.response is not None:
+        launcher_arguments.extend(["--response", str(parsed.response.resolve())])
     return run_host(parsed.launcher, launcher_arguments)
 
 

@@ -13,6 +13,7 @@ class AppPaths:
     tasks: Path
     logs: Path
     cache: Path
+    module_data: Path
 
     @classmethod
     def for_root(cls, root: Path | None = None) -> "AppPaths":
@@ -25,6 +26,7 @@ class AppPaths:
             tasks=resolved / "tasks",
             logs=resolved / "logs",
             cache=resolved / "cache",
+            module_data=resolved / "module-data",
         )
 
     def ensure(self) -> None:
@@ -35,6 +37,7 @@ class AppPaths:
             self.tasks,
             self.logs,
             self.cache,
+            self.module_data,
         )
         for directory in directories:
             directory.mkdir(parents=True, exist_ok=True)

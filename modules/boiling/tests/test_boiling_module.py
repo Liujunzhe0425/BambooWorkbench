@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import openpyxl
@@ -88,6 +89,48 @@ def make_job(sample, output, phase="draft", **extra):
     return job
 
 
+def write_ai_service_response(path, *, task_id, request_id, status="ok", text=None):
+    response = {
+        "request_id": request_id,
+        "service": "ai",
+        "status": status,
+        "text": text,
+    }
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "task_id": task_id,
+                "module_id": "boiling",
+                "responses": [response],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def make_ai_response_payload(request, *, overall_summary="规则结果需要复核", evidence_refs=None):
+    items = []
+    for candidate in request["payload"]["candidates"]:
+        items.append(
+            {
+                "candidate_id": candidate["candidate_id"],
+                "summary": "该候选由确定性规则筛出。",
+                "risk_level": "medium",
+                "review_recommendation": "核对原始读数并由业务人员确认。",
+                "evidence_refs": evidence_refs or candidate["evidence_refs"],
+            }
+        )
+    return {
+        "schema_version": "1.0",
+        "overall_summary": overall_summary,
+        "items": items,
+        "limitations": ["AI 不改变公式、阈值和业务结论。"],
+    }
+
+
 def make_labeled_sample(
     path,
     *,
@@ -103,11 +146,12 @@ def make_labeled_sample(
     expansions=None,
     labels=None,
     batch_no="DEMO-001",
+    specification="100×100×10",
 ):
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "水煮实验"
-    sheet.append(["批号", batch_no, "产品名称", "脱敏竹集成材", "规格型号", "100×100×10"])
+    sheet.append(["批号", batch_no, "产品名称", "脱敏竹集成材", "规格型号", specification])
     sheet.append(["压制日期", dt.date(2026, 7, 10), "班长", "脱敏班长", "产品用途", product_usage])
     sheet.append(
         [
@@ -275,6 +319,7 @@ def test_draft_job_generates_result_without_modifying_source(tmp_path):
     assert boiling_module.run_job(job_path) == 0
     assert before == digest(sample)
     assert (output / "boiling_summary.xlsx").is_file()
+    assert (output / "boiling_analysis.xlsx").is_file()
     workbook = openpyxl.load_workbook(output / "boiling_summary.xlsx")
     summary_sheet = workbook["水煮检测汇总"]
     summary_headers = [cell.value for cell in summary_sheet[1]]
@@ -311,6 +356,55 @@ def test_draft_job_generates_result_without_modifying_source(tmp_path):
     assert result["status"] == "needs_confirmation"
     assert result["summary"]["processed_count"] == 1
     assert result["confirmations"][0]["field"] == "product_usage"
+
+
+def test_expansion_chart_aggregates_specimen_values_by_specification(tmp_path):
+    first = tmp_path / "spec-a-first.xlsx"
+    second = tmp_path / "spec-a-second.xlsx"
+    third = tmp_path / "spec-b.xlsx"
+    make_labeled_sample(
+        first,
+        batch_no="A-001",
+        specification="100×100×10",
+        sample_count=1,
+        expansion=0.04,
+    )
+    make_labeled_sample(
+        second,
+        batch_no="A-002",
+        specification="100×100×10",
+        sample_count=3,
+        expansion=0.08,
+    )
+    make_labeled_sample(
+        third,
+        batch_no="B-001",
+        specification="120×80×12",
+        sample_count=2,
+        expansion=0.10,
+    )
+    output = tmp_path / "output"
+    job_path = tmp_path / "job.json"
+    job = make_job(first, output)
+    job["run_mode"] = "batch"
+    job["input_files"] = [str(first), str(second), str(third)]
+    job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+
+    assert boiling_module.run_job(job_path) == 0
+    workbook_path = output / "boiling_summary.xlsx"
+    workbook = openpyxl.load_workbook(workbook_path)
+    chart_sheet = workbook["分析图表"]
+    assert chart_sheet["D1"].value == "规格型号"
+    assert chart_sheet["E1"].value == "平均膨胀率"
+    assert chart_sheet["D2"].value == "100×100×10"
+    assert chart_sheet["E2"].value == pytest.approx(0.07)
+    assert chart_sheet["D3"].value == "120×80×12"
+    assert chart_sheet["E3"].value == pytest.approx(0.10)
+    workbook.close()
+    with zipfile.ZipFile(workbook_path) as archive:
+        expansion_chart_xml = archive.read("xl/charts/chart2.xml").decode("utf-8")
+    assert "各型号规格平均膨胀率对比" in expansion_chart_xml
+    assert "各批次平均膨胀率对比" not in expansion_chart_xml
 
 
 def test_finalize_applies_confirmation(tmp_path):
@@ -386,7 +480,8 @@ def test_empty_sheet_does_not_enter_normal_summary(tmp_path):
     job_path.write_text(json.dumps(make_job(sample, output), ensure_ascii=False), encoding="utf-8")
     assert boiling_module.run_job(job_path) == 0
     result = json.loads((output / "result.json").read_text(encoding="utf-8"))
-    assert result["status"] == "partial_success"
+    assert result["status"] == "success"
+    assert result["summary"]["skipped_count"] == 0
     assert result["summary"]["processed_count"] == 1
     assert (output / "boiling_summary.xlsx").is_file()
 
@@ -431,8 +526,164 @@ def test_product_usage_in_source_does_not_request_confirmation(tmp_path):
     assert {item["type"] for item in result["outputs"]} == {
         "summary_excel",
         "analysis_report",
+        "analysis_report_markdown",
         "business_records",
     }
+
+
+def test_ai_enabled_draft_builds_consent_required_privacy_minimal_request(tmp_path):
+    sample = tmp_path / "private-source-name.xlsx"
+    output = tmp_path / "output"
+    job_path = tmp_path / "job.json"
+    make_labeled_sample(sample, product_usage="家具", density=1.45)
+    job = make_job(sample, output, ai_enabled=True)
+    job["job_id"] = "AI-DRAFT-001"
+    job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+
+    assert boiling_module.run_job(job_path) == 0
+    result = load_result(output)
+    assert ModuleResult.model_validate(result).service_requests[0].service == "ai"
+    assert len(result["service_requests"]) == 1
+    request = result["service_requests"][0]
+    assert request["service"] == "ai"
+    assert request["requires_user_consent"] is True
+    assert request["response_format"] == "json_object"
+    assert request["request_id"].startswith("boiling-ai-")
+    serialized = json.dumps(request["payload"], ensure_ascii=False)
+    assert sample.name not in serialized
+    assert "DEMO-001" not in serialized
+    assert "ORDER-DEMO-001" not in serialized
+    assert "脱敏班长" not in serialized
+    assert not re.search(r"(?i)[a-z]:[\\/]", serialized)
+    assert request["payload"]["candidate_sent"] == 1
+    assert request["payload"]["candidates"][0]["candidate_id"].startswith("candidate-")
+    assert request["payload"]["candidates"][0]["evidence_refs"]
+    workbook = openpyxl.load_workbook(output / "boiling_analysis.xlsx")
+    assert workbook.sheetnames[-1] == "AI辅助建议"
+    assert workbook["AI辅助建议"]["B4"].value == "pending"
+    workbook.close()
+
+
+def test_ai_response_is_report_only_and_sanitized(tmp_path):
+    sample = tmp_path / "source.xlsx"
+    draft_output = tmp_path / "draft"
+    final_output = tmp_path / "final"
+    offline_output = tmp_path / "offline"
+    make_labeled_sample(sample, product_usage="家具", density=1.45)
+
+    draft_job = make_job(sample, draft_output, ai_enabled=True)
+    draft_job["job_id"] = "AI-DRAFT-002"
+    draft_job_path = tmp_path / "draft-job.json"
+    draft_job_path.write_text(json.dumps(draft_job, ensure_ascii=False), encoding="utf-8")
+    assert boiling_module.run_job(draft_job_path) == 0
+    request = load_result(draft_output)["service_requests"][0]
+
+    response_path = write_ai_service_response(
+        tmp_path / "service-response.json",
+        task_id="AI-DRAFT-002",
+        request_id=request["request_id"],
+        text=json.dumps(
+            make_ai_response_payload(
+                request,
+                overall_summary="总体稳定。优先复核规则候选。不得读取 C:\\private\\customer.xlsx。",
+            ),
+            ensure_ascii=False,
+        ),
+    )
+    confirmation_path = tmp_path / "confirmation.json"
+    confirmation_path.write_text(
+        json.dumps({"job_id": "AI-DRAFT-002", "answers": []}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    final_job = make_job(
+        sample,
+        final_output,
+        phase="finalize",
+        parent_job_id="AI-DRAFT-002",
+        confirmation_file=str(confirmation_path),
+        service_response_file=str(response_path),
+        ai_enabled=True,
+    )
+    final_job["job_id"] = "AI-FINAL-002"
+    final_job_path = tmp_path / "final-job.json"
+    final_job_path.write_text(json.dumps(final_job, ensure_ascii=False), encoding="utf-8")
+    assert boiling_module.run_job(final_job_path) == 0
+
+    result = load_result(final_output)
+    assert result["status"] == "success"
+    assert result["service_requests"] == []
+    assert "AI辅助状态：ok" in result["analysis_summary"]
+    markdown = (final_output / "boiling_analysis.md").read_text(encoding="utf-8")
+    assert "总体稳定" in markdown
+    assert "C:\\private" not in markdown
+    assert "[已脱敏路径]" in markdown
+    workbook = openpyxl.load_workbook(final_output / "boiling_analysis.xlsx")
+    assert workbook["AI辅助建议"]["B4"].value == "ok"
+    assert "总体稳定" in workbook["AI辅助建议"]["B6"].value
+    workbook.close()
+
+    offline_job = make_job(
+        sample,
+        offline_output,
+        phase="finalize",
+        parent_job_id="AI-DRAFT-002",
+        confirmation_file=str(confirmation_path),
+        ai_enabled=False,
+    )
+    offline_job["job_id"] = "AI-OFFLINE-002"
+    offline_job_path = tmp_path / "offline-job.json"
+    offline_job_path.write_text(json.dumps(offline_job, ensure_ascii=False), encoding="utf-8")
+    assert boiling_module.run_job(offline_job_path) == 0
+    assert (final_output / "boiling_records.json").read_text(encoding="utf-8") == (
+        offline_output / "boiling_records.json"
+    ).read_text(encoding="utf-8")
+
+
+def test_denied_ai_response_degrades_to_offline_report(tmp_path):
+    sample = tmp_path / "source.xlsx"
+    draft_output = tmp_path / "draft"
+    final_output = tmp_path / "final"
+    make_labeled_sample(sample, product_usage="家具", density=1.45)
+    draft_job = make_job(sample, draft_output, ai_enabled=True)
+    draft_job["job_id"] = "AI-DRAFT-003"
+    draft_job_path = tmp_path / "draft-job.json"
+    draft_job_path.write_text(json.dumps(draft_job, ensure_ascii=False), encoding="utf-8")
+    assert boiling_module.run_job(draft_job_path) == 0
+    request = load_result(draft_output)["service_requests"][0]
+
+    response_path = write_ai_service_response(
+        tmp_path / "service-response.json",
+        task_id="AI-DRAFT-003",
+        request_id=request["request_id"],
+        status="denied",
+    )
+    confirmation_path = tmp_path / "confirmation.json"
+    confirmation_path.write_text(
+        json.dumps({"job_id": "AI-DRAFT-003", "answers": []}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    final_job = make_job(
+        sample,
+        final_output,
+        phase="finalize",
+        parent_job_id="AI-DRAFT-003",
+        confirmation_file=str(confirmation_path),
+        service_response_file=str(response_path),
+        ai_enabled=False,
+    )
+    final_job["job_id"] = "AI-FINAL-003"
+    final_job_path = tmp_path / "final-job.json"
+    final_job_path.write_text(json.dumps(final_job, ensure_ascii=False), encoding="utf-8")
+
+    assert boiling_module.run_job(final_job_path) == 0
+    result = load_result(final_output)
+    assert result["status"] == "success"
+    assert result["service_requests"] == []
+    assert "AI辅助状态：denied" in result["analysis_summary"]
+    workbook = openpyxl.load_workbook(final_output / "boiling_analysis.xlsx")
+    assert workbook["AI辅助建议"]["B4"].value == "denied"
+    assert "离线规则报告" in workbook["AI辅助建议"]["B6"].value
+    workbook.close()
 
 
 def test_density_rule_uses_every_sample_and_difference(tmp_path):
@@ -508,6 +759,7 @@ def test_batch_mode_isolates_bad_file_and_skips_duplicate(tmp_path):
     job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
     assert boiling_module.run_job(job_path) == 0
     result = load_result(output)
+    assert result["status"] == "partial_success"
     assert result["summary"]["processed_count"] == 1
     assert result["summary"]["skipped_count"] == 1
     assert result["summary"]["failed_count"] == 1
@@ -531,16 +783,93 @@ def test_invalid_json_returns_two_without_creating_output(tmp_path):
     assert boiling_module.run_job(job_path) == 2
 
 
-def test_ai_disabled_and_enabled_never_calls_external_service(tmp_path):
+def test_ai_toggle_only_emits_framework_request_when_enabled(tmp_path):
     sample = tmp_path / "sample.xlsx"
-    make_labeled_sample(sample)
+    make_labeled_sample(sample, density=1.45)
     for enabled in (False, True):
         output = tmp_path / f"output-{enabled}"
         job_path = tmp_path / f"job-{enabled}.json"
         job = make_job(sample, output, ai_enabled=enabled)
         job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
         assert boiling_module.run_job(job_path) == 0
-        assert load_result(output)["service_requests"] == []
+        requests = load_result(output)["service_requests"]
+        assert bool(requests) is enabled
+        if enabled:
+            assert requests[0]["service"] == "ai"
+            assert requests[0]["requires_user_consent"] is True
+
+
+def test_ai_enabled_without_candidate_stays_offline(tmp_path):
+    sample = tmp_path / "incomplete.xlsx"
+    output = tmp_path / "output"
+    job_path = tmp_path / "job.json"
+    make_sample(sample, include_samples=False)
+    job = make_job(sample, output, ai_enabled=True)
+    job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+    assert boiling_module.run_job(job_path) == 0
+    result = load_result(output)
+    assert result["service_requests"] == []
+    workbook = openpyxl.load_workbook(output / "boiling_analysis.xlsx")
+    assert "AI辅助建议" not in workbook.sheetnames
+    workbook.close()
+
+
+def test_ai_timeout_error_invalid_json_and_evidence_mismatch_degrade(tmp_path):
+    sample = tmp_path / "candidate.xlsx"
+    draft_output = tmp_path / "draft"
+    draft_path = tmp_path / "draft-job.json"
+    make_labeled_sample(sample, density=1.45)
+    draft_job = make_job(sample, draft_output, ai_enabled=True)
+    draft_job["job_id"] = "AI-DEGRADE-001"
+    draft_path.write_text(json.dumps(draft_job, ensure_ascii=False), encoding="utf-8")
+    assert boiling_module.run_job(draft_path) == 0
+    request = load_result(draft_output)["service_requests"][0]
+    confirmation_path = tmp_path / "confirmation.json"
+    confirmation_path.write_text(
+        json.dumps({"job_id": "AI-DEGRADE-001", "answers": []}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    cases = [
+        ("timeout", None, "timeout"),
+        ("error", None, "error"),
+        ("ok", "{not-json", "invalid"),
+        (
+            "ok",
+            json.dumps(
+                make_ai_response_payload(request, evidence_refs=["rule:UNKNOWN"]),
+                ensure_ascii=False,
+            ),
+            "invalid",
+        ),
+    ]
+    for index, (service_status, text, expected_status) in enumerate(cases, 1):
+        response_path = write_ai_service_response(
+            tmp_path / f"service-response-{index}.json",
+            task_id="AI-DEGRADE-001",
+            request_id=request["request_id"],
+            status=service_status,
+            text=text,
+        )
+        output = tmp_path / f"final-{index}"
+        final_job = make_job(
+            sample,
+            output,
+            phase="finalize",
+            parent_job_id="AI-DEGRADE-001",
+            confirmation_file=str(confirmation_path),
+            service_response_file=str(response_path),
+            ai_enabled=True,
+        )
+        final_job["job_id"] = f"AI-DEGRADE-FINAL-{index}"
+        final_path = tmp_path / f"final-job-{index}.json"
+        final_path.write_text(json.dumps(final_job, ensure_ascii=False), encoding="utf-8")
+        assert boiling_module.run_job(final_path) == 0
+        result = load_result(output)
+        assert result["service_requests"] == []
+        assert f"AI辅助状态：{expected_status}" in result["analysis_summary"]
+        assert "离线规则报告" in (output / "boiling_analysis.md").read_text(
+            encoding="utf-8"
+        )
 
 
 def test_outputs_are_inside_declared_output_directory(tmp_path):
@@ -604,6 +933,34 @@ def test_summary_lists_five_fixed_position_density_and_expansion_values(tmp_path
     assert summary["M2"].number_format == "0.000"
     assert summary["N2"].number_format == "0.00%"
     workbook.close()
+    analysis_workbook = openpyxl.load_workbook(output / "boiling_analysis.xlsx")
+    assert analysis_workbook.sheetnames == [
+        "分析报告",
+        "需要关注",
+        "未纳入统计",
+        "阅读说明",
+    ]
+    analysis_sheet = analysis_workbook["分析报告"]
+    assert analysis_sheet["A1"].value == "水煮实验分析报告"
+    assert analysis_sheet["A5"].value == "整体状态"
+    assert analysis_sheet["A6"].value == "本批次未发现异常"
+    assert [cell.value for cell in analysis_sheet[9]] == [
+        "来源文件",
+        "批号",
+        "产品",
+        "产品用途",
+        "平均密度(g/cm³)",
+        "密度判定",
+        "平均膨胀率",
+        "自动等级",
+        "需人工复核",
+        "浸渍剥离",
+        "业务状态",
+        "阅读提示",
+    ]
+    attention_sheet = analysis_workbook["需要关注"]
+    assert attention_sheet["A2"].value == "无"
+    analysis_workbook.close()
 
 
 def test_density_boundaries_and_difference_are_inclusive(tmp_path):
@@ -692,7 +1049,8 @@ def test_product_usage_confirmation_is_created_once_and_applied_to_batch(tmp_pat
     records = json.loads((final_output / "boiling_records.json").read_text(encoding="utf-8"))
     assert {record["product_usage"] for record in records["records"]} == {"家具"}
     result = load_result(final_output)
-    assert result["status"] in {"success", "partial_success", "failed"}
+    assert result["status"] == "success"
+    assert result["summary"]["skipped_count"] == 1
     assert result["confirmations"] == []
 
 
@@ -765,8 +1123,10 @@ def test_41_file_sanitized_history_regression_and_source_hashes(tmp_path):
     job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
     assert boiling_module.run_job(job_path) == 0
     result = load_result(output)
+    assert result["status"] == "success"
     assert result["summary"]["input_count"] == 41
     assert len(result["file_results"]) == 41
+    assert {item["status"] for item in result["file_results"]} == {"success"}
     assert result["summary"]["input_count"] == sum(
         result["summary"][key] for key in ("processed_count", "skipped_count", "failed_count")
     )
@@ -774,6 +1134,14 @@ def test_41_file_sanitized_history_regression_and_source_hashes(tmp_path):
     assert sum(len(record["samples"]) for record in records["records"]) == 193
     assert len(records["records"]) == 39
     assert len(records["excluded_records"]) == 2
+    report = (output / "boiling_analysis.md").read_text(encoding="utf-8")
+    assert len(report.splitlines()) < 80
+    assert "## 一、运行概况" in report
+    assert "## 四、异常与待复核明细" in report
+    assert "## 五、数据风险（按类别汇总）" in report
+    assert "FIVE-00.xlsx" not in report
+    assert "INCOMPLETE-1.xlsx" in report
+    assert "Traceback (most recent call last)" not in report
     assert before == {path.name: digest(path) for path in paths}
 
 
@@ -900,7 +1268,7 @@ def test_finalize_closes_usage_and_dependent_conclusion_conflicts_in_one_round(t
     assert boiling_module.run_job(final_job_path) == 0
     result = load_result(final_output)
 
-    assert result["status"] == "partial_success"
+    assert result["status"] == "success"
     assert result["confirmations"] == []
     assert {item["field"] for item in result["anomalies"]} >= {"密度", "膨胀率"}
 
@@ -971,6 +1339,9 @@ def test_repeated_input_and_answers_have_stable_ids_and_business_outputs(tmp_pat
     assert excel_values(final_outputs[0] / "boiling_summary.xlsx") == excel_values(
         final_outputs[1] / "boiling_summary.xlsx"
     )
+    assert excel_values(final_outputs[0] / "boiling_analysis.xlsx") == excel_values(
+        final_outputs[1] / "boiling_analysis.xlsx"
+    )
 
 
 def test_formal_business_outputs_do_not_leak_absolute_windows_paths(tmp_path):
@@ -1012,7 +1383,7 @@ def test_outputs_do_not_leak_absolute_paths_even_with_anomalies(tmp_path):
     assert boiling_module.run_job(job_path) == 0
     absolute_path = re.compile(r"(?i)[a-z]:[\\/]")
     result = json.loads((output / "result.json").read_text(encoding="utf-8"))
-    assert result["status"] in ("needs_confirmation", "partial_success")
+    assert result["status"] == "needs_confirmation"
     for path in (output / "boiling_analysis.md", output / "boiling_records.json"):
         text = path.read_text(encoding="utf-8")
         matches = absolute_path.findall(text)
@@ -1087,6 +1458,7 @@ def test_real_task_service_closes_after_one_confirmation_round(qtbot, tmp_path):
         assert {item.type for item in final_result.outputs} == {
             "summary_excel",
             "analysis_report",
+            "analysis_report_markdown",
             "business_records",
         }
     finally:

@@ -1,5 +1,7 @@
+import json
 import sqlite3
 from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from uuid import UUID
 
@@ -47,6 +49,51 @@ def test_task_service_snapshots_input_persists_outputs_and_finishes(
     assert len(task_repository.list_outputs(job_id)) == 3
     assert source.read_bytes() == b"source-bytes"
     assert job_id not in service.runners
+
+
+def test_module_config_requires_declared_ai_report_capability(
+    app_services: dict[str, object], tmp_path: Path
+) -> None:
+    source = tmp_path / "summary.xlsx"
+    source.write_bytes(b"source")
+    service = _service(app_services)
+
+    with pytest.raises(ValueError, match="不支持独立 AI"):
+        service.create_and_start(
+            ModuleId.MOISTURE,
+            [source],
+            module_config={"schema_version": "1.0", "operation": "ai_report"},
+        )
+
+
+def test_supported_ai_report_config_is_task_local_and_contains_no_secret(
+    qtbot, app_services: dict[str, object], tmp_path: Path
+) -> None:
+    registry = app_services["registry"]
+    module = registry.get(ModuleId.MOISTURE)
+    registry._modules[ModuleId.MOISTURE] = replace(
+        module,
+        manifest=module.manifest.model_copy(update={"capabilities": ["ai_report"]}),
+    )
+    source = tmp_path / "summary.xlsx"
+    source.write_bytes(b"source")
+    service = _service(app_services)
+    config = {
+        "schema_version": "1.0",
+        "operation": "ai_report",
+        "question": "请给出复核提示",
+    }
+
+    with qtbot.waitSignal(service.finished, timeout=15_000):
+        job_id = service.create_and_start(
+            ModuleId.MOISTURE,
+            [source],
+            module_config=config,
+        )
+
+    config_path = app_services["paths"].tasks / job_id / "module-config.json"
+    assert json.loads(config_path.read_text(encoding="utf-8")) == config
+    assert "api_key" not in config_path.read_text(encoding="utf-8").casefold()
 
 
 def test_task_service_publishes_outputs_after_module_finishes(

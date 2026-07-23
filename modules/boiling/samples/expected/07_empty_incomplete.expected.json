@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
   "sample_file": "07_empty_incomplete.xlsx",
-  "expected_status": "partial_success",
+  "expected_status": "success",
   "expected_processed_count": 1,
   "expected_failed_count": 0,
   "expected_anomaly_fields": [

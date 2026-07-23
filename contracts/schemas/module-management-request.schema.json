@@ -1,0 +1,80 @@
+{
+  "$defs": {
+    "ModuleId": {
+      "enum": [
+        "moisture",
+        "boiling",
+        "after_sales"
+      ],
+      "title": "ModuleId",
+      "type": "string"
+    },
+    "ModuleManagementOperation": {
+      "enum": [
+        "list_approved_experiences",
+        "import_history_summary",
+        "list_history_summaries",
+        "retire_history_summary"
+      ],
+      "title": "ModuleManagementOperation",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "data_dir": {
+      "title": "Data Dir",
+      "type": "string"
+    },
+    "history_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "History Id"
+    },
+    "input_file": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Input File"
+    },
+    "module_id": {
+      "$ref": "#/$defs/ModuleId"
+    },
+    "operation": {
+      "$ref": "#/$defs/ModuleManagementOperation"
+    },
+    "request_id": {
+      "pattern": "^[A-Za-z0-9-]{6,64}$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "pattern": "^1\\.0$",
+      "title": "Schema Version",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "request_id",
+    "module_id",
+    "operation",
+    "data_dir"
+  ],
+  "title": "ModuleManagementRequest",
+  "type": "object"
+}
