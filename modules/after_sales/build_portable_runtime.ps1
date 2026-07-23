@@ -27,6 +27,11 @@ if (Test-Path -LiteralPath $BuildRoot) {
     Remove-Item -LiteralPath $BuildRoot -Recurse -Force
 }
 New-Item -ItemType Directory -Path (Join-Path $BuildRoot 'spec') -Force | Out-Null
+$env:PYINSTALLER_CONFIG_DIR = Join-Path $BuildRoot 'pyinstaller-cache'
+$env:TEMP = Join-Path $BuildRoot 'temp'
+$env:TMP = $env:TEMP
+New-Item -ItemType Directory -Path $env:PYINSTALLER_CONFIG_DIR -Force | Out-Null
+New-Item -ItemType Directory -Path $env:TEMP -Force | Out-Null
 
 $Python = Join-Path $RepoRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
@@ -36,7 +41,6 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
 & $Python -m PyInstaller --noconfirm --clean --onedir `
     --name after_sales_agent `
     --paths (Join-Path $ModuleRoot 'src') `
-    --collect-submodules keyring.backends `
     --workpath (Join-Path $BuildRoot 'work') `
     --distpath (Join-Path $BuildRoot 'dist') `
     --specpath (Join-Path $BuildRoot 'spec') `

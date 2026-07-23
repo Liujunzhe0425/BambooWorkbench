@@ -92,7 +92,8 @@ def test_offline_complete_file_enters_required_business_review(tmp_path: Path) -
     records = json.loads(
         (tmp_path / "output" / "after_sales_records.json").read_text(encoding="utf-8")
     )
-    assert records[0]["analysis_status"] == "离线规则分析完成"
+    assert records[0]["analysis_status"] == "规则预分析完成（等待AI授权）"
+    assert result["service_requests"]
     assert records[0]["enterprise_cost_amount"] == 1000
 
 

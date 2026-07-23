@@ -209,9 +209,6 @@ def effective_after_sales_fee(record: dict[str, Any]) -> float | None:
     explicit_results = re.findall(r"=\s*(\d+(?:\.\d+)?)\s*元", solution)
     if explicit_results:
         return round(float(explicit_results[-1]), 2)
-    api_candidate = _amount(record, "api_cost_candidate")
-    if api_candidate is not None:
-        return api_candidate
     return None
 
 

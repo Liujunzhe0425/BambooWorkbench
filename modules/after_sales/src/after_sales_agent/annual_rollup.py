@@ -1164,9 +1164,13 @@ def _analysis_status(record: dict[str, Any], included: bool) -> str:
         return "分析失败"
     source = _text(record.get("issue_analysis_source"))
     status = _text(record.get("analysis_status"))
-    if source == "api" or "智能" in status or "AI" in status:
-        return "智能分析完成"
-    return "规则分析完成"
+    if "降级" in status:
+        return status
+    if source == "api":
+        return status or "AI辅助分析完成"
+    if "等待AI授权" in status:
+        return "规则预分析完成（等待AI授权）"
+    return "离线规则分析完成"
 
 
 def _amount(record: dict[str, Any], *keys: str) -> float | None:

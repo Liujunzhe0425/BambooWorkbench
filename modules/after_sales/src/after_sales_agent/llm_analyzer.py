@@ -98,21 +98,19 @@ after_sales_year 必须填 null，after_sales_month 按原字段填写；
 4. primary_issue_type：最主要的问题原因类型，只能选一个。
 5. selected_solution：提取最终采用的售后解决方案。若调查中列出多个备选方案，
 必须以“售后解决方案”栏最终明确采用的方案为准，不得把未采用方案混入。
-6. responsible_factory：提取最终承担责任的工厂、生产单位或内部部门。
-客户、项目、外部供应商不是责任工厂；原文没有明确结论时填“未知”。
-7. cost_items：只提取最终采用方案所需的售后费用，包括材料费、人工费、
+6. cost_items：只提取最终采用方案所需的售后费用，包括材料费、人工费、
 差旅费、运费、返工费、补发成本和赔偿等。每项必须包含名称、金额、
 是否纳入本公司统计、原文证据。
-8. cost_amount：只作为模型候选金额，最终金额由后端确定性复核。
+7. cost_amount：只作为模型候选金额，最终金额由后端确定性复核。
 费用取值优先级为“售后解决方案”明确金额 > “方案申请明细”明确金额 >
 “售后负责人调查情况”中与最终方案对应的金额 > “反馈内容”。
 若原文已有总计/合计/小计，优先采用明确总额；不要把未采用备选方案、
 单价、数量、中间数和公式结果重复相加。没有明确金额必须填 null，绝不能填 0；
 只有原文明确定义费用为0元时才填0。
-9. cost_included：如果全部费用均转嫁给供应商/合作方或原文明确不纳入统计，
+8. cost_included：如果全部费用均转嫁给供应商/合作方或原文明确不纳入统计，
 填 false；否则填 true。费用由本公司多个部门承担仍应纳入。
 转嫁但金额未知时 cost_amount 仍为 null。
-10. resolution_status：只能填写“已解决”“处理中”“未解决”。
+9. resolution_status：只能填写“已解决”“处理中”“未解决”。
 只有原文明确表示已经完成更换、返工、处理、客户自行解决或已经结案，
 才能填“已解决”；只是“建议执行、下售后单、重新生产、补数生产、安排人员、
 待更换/返修”时填“处理中”；没有解决方案或仍要求出方案时填“未解决”。
@@ -145,8 +143,6 @@ JSON格式：
   "primary_issue_type": "性能",
   "reason_summary": "从原表提取的具体售后原因或故障现象",
   "evidence": ["原文证据1", "原文证据2"],
-  "responsible_factory": "责任工厂或未知",
-  "responsible_factory_reason": "责任判断依据",
   "selected_solution": "最终采用的解决方案",
   "cost_items": [
     {{"name": "材料费", "amount": 2500, "included": true, "evidence": "材料费用2500元"}},
@@ -214,8 +210,6 @@ def normalize_analysis(parsed: dict[str, Any], categories: list[str]) -> dict[st
         "primary_issue_type": primary,
         "reason_summary": clean_text(parsed.get("reason_summary")),
         "evidence": [clean_text(item) for item in evidence if clean_text(item)][:8],
-        "responsible_factory": normalize_brand_name(parsed.get("responsible_factory")),
-        "responsible_factory_reason": clean_text(parsed.get("responsible_factory_reason")),
         "selected_solution": clean_text(parsed.get("selected_solution")),
         "cost_items": cost_items,
         "cost_amount": parse_optional_float(parsed.get("cost_amount"), default=None),

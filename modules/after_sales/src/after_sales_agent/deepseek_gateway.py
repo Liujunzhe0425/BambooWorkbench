@@ -45,7 +45,6 @@ class DeepSeekGatewayError(RuntimeError):
 @dataclass(frozen=True)
 class GatewayConfig:
     api_key: str
-    provider: str = "deepseek"
     base_url: str = DEFAULT_BASE_URL
     model: str = DEFAULT_MODEL
     timeout: float = 120.0
@@ -92,7 +91,6 @@ class GatewayConfig:
             raise DeepSeekGatewayError("重试次数和重试间隔必须是数字。", 400) from exc
         return cls(
             api_key=api_key,
-            provider=str(values.get("provider") or "deepseek").strip().casefold(),
             base_url=base_url,
             model=model or DEFAULT_MODEL,
             timeout=max(1.0, min(timeout, 900.0)),
@@ -168,16 +166,11 @@ def create_model_response(
         "messages": messages,
         "stream": False,
     }
-    # ``thinking`` is a DeepSeek extension. Generic OpenAI-compatible
-    # endpoints must receive only the common Chat Completions fields.
-    if gateway_config.provider == "deepseek":
-        if effort in {"none", "minimal", "low"}:
-            upstream_payload["thinking"] = {"type": "disabled"}
-        else:
-            upstream_payload["thinking"] = {"type": "enabled"}
-            upstream_payload["reasoning_effort"] = (
-                "max" if effort in {"xhigh", "max"} else "high"
-            )
+    if effort in {"none", "minimal", "low"}:
+        upstream_payload["thinking"] = {"type": "disabled"}
+    else:
+        upstream_payload["thinking"] = {"type": "enabled"}
+        upstream_payload["reasoning_effort"] = "max" if effort in {"xhigh", "max"} else "high"
 
     max_tokens = request_payload.get("max_tokens", request_payload.get("max_output_tokens", 4096))
     try:
