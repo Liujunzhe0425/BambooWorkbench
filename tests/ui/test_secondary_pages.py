@@ -452,6 +452,37 @@ def test_result_center_expands_public_file_failure_details(qtbot) -> None:
     assert "D:/private" not in details
 
 
+def test_result_center_explains_ai_report_degradation(qtbot) -> None:
+    from ui.pages.result_center_page import ResultCenterPage
+
+    now = datetime.now(UTC)
+    result = ModuleResult(
+        schema_version="1.0",
+        job_id="ai-degraded",
+        module_id=ModuleId.MOISTURE,
+        module_version="1.0.1",
+        status=TaskStatus.SUCCESS,
+        summary=ResultSummary(
+            input_count=1,
+            processed_count=1,
+            skipped_count=0,
+            failed_count=0,
+            anomaly_count=0,
+            confirmation_count=0,
+        ),
+        errors=["AI_REPORT_DEGRADED: provider_error"],
+        started_at=now,
+        finished_at=now,
+    )
+    page = ResultCenterPage()
+    qtbot.addWidget(page)
+
+    page.show_result(result)
+
+    assert page.ai_notice.isVisibleTo(page)
+    assert "未生成虚假报告" in page.ai_notice.text()
+
+
 def test_structured_json_business_view_uses_readable_table(qtbot) -> None:
     from ui.widgets.output_files import OutputFilesWidget
 

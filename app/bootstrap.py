@@ -18,6 +18,7 @@ from core.ai.providers import (
 from core.confirmations.service import ConfirmationService
 from core.knowledge.models import KnowledgeRecord, KnowledgeSourceKind
 from core.knowledge.repository import KnowledgeRepository
+from core.modules.management_service import ModuleManagementService
 from core.modules.registry import ModuleRegistry, RegisteredModule
 from core.platform.logging import close_logging, configure_logging
 from core.platform.paths import AppPaths
@@ -49,6 +50,7 @@ class AppContext:
     service_orchestrator: ServiceOrchestrator
     registry: ModuleRegistry
     task_service: TaskService
+    module_management_service: ModuleManagementService
     confirmation_service: ConfirmationService
     scan_results: dict[object, RegisteredModule]
     stylesheet: str
@@ -59,8 +61,9 @@ class AppContext:
         if self._closed:
             return
         try:
+            management_ok = self.module_management_service.shutdown()
             cleanup_ok = self.task_service.shutdown()
-            if not cleanup_ok:
+            if not cleanup_ok or not management_ok:
                 self.logger.error("application task cleanup failure before database close")
         finally:
             self.database.close()
@@ -138,6 +141,7 @@ def build_context(data_root: Path | None = None, use_mocks: bool = False) -> App
             service_orchestrator=service_orchestrator,
             settings=settings,
         )
+        module_management_service = ModuleManagementService(paths, registry)
         confirmation_service = ConfirmationService(
             paths,
             confirmation_repository,
@@ -158,6 +162,7 @@ def build_context(data_root: Path | None = None, use_mocks: bool = False) -> App
             service_orchestrator=service_orchestrator,
             registry=registry,
             task_service=task_service,
+            module_management_service=module_management_service,
             confirmation_service=confirmation_service,
             scan_results=scan_results,
             stylesheet=load_stylesheet(resource_root),

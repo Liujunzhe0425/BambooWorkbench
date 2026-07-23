@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.contracts.enums import TaskStatus
+from core.contracts.enums import ModuleId, TaskStatus
 from core.contracts.progress import ProgressEvent
 from core.contracts.result import ModuleResult
 from core.platform.path_safety import resolve_contained_file
@@ -27,6 +27,7 @@ from ui.pages.confirmations_page import ConfirmationsPage
 from ui.pages.history_page import HistoryPage
 from ui.pages.knowledge_page import KnowledgePage
 from ui.pages.module_task_page import ModuleTaskPage
+from ui.pages.moisture_ai_report_page import MoistureAIReportPage
 from ui.pages.result_center_page import ResultCenterPage
 from ui.pages.settings_page import SettingsPage
 from ui.pages.task_progress_page import TaskProgressPage
@@ -91,10 +92,15 @@ class MainWindow(QMainWindow):
         self.module_task_page = ModuleTaskPage()
         self.task_progress_page = TaskProgressPage()
         self.result_center_page = ResultCenterPage()
+        self.moisture_ai_report_page = MoistureAIReportPage(
+            context.module_management_service,
+            context.settings,
+        )
         for page in (
             self.module_task_page,
             self.task_progress_page,
             self.result_center_page,
+            self.moisture_ai_report_page,
         ):
             self.stack.addWidget(page)
 
@@ -131,6 +137,11 @@ class MainWindow(QMainWindow):
         self.history_page.result_requested.connect(self._open_history_result)
         self.workbench_page.module_selected.connect(self._open_module)
         self.module_task_page.task_requested.connect(self._start_task)
+        self.module_task_page.ai_report_requested.connect(self._open_moisture_ai_report)
+        self.moisture_ai_report_page.task_requested.connect(self._start_moisture_ai_report)
+        self.moisture_ai_report_page.action_failed.connect(
+            lambda message: self._show_failure("AI汇总报告", message)
+        )
         self.task_progress_page.cancel_requested.connect(self._cancel_task)
         self.confirmations_page.submitted.connect(self._submit_confirmation)
         self.confirmations_page.job_selected.connect(self._select_confirmation_job)
@@ -272,6 +283,7 @@ class MainWindow(QMainWindow):
             module_id,
             module.manifest.module_name,
             module.manifest.supported_extensions,
+            ai_report_available="ai_report" in module.manifest.capabilities,
         )
         self._show_widget(self.module_task_page, nav_page=PageId.WORKBENCH)
 
@@ -282,6 +294,48 @@ class MainWindow(QMainWindow):
             job_id = self.context.task_service.create_and_start(module_id, files)
         except Exception as error:
             self._show_failure("任务创建失败", str(error))
+            return
+        finally:
+            self._starting_task = False
+        if self._start_failure_job_id == job_id:
+            return
+        self._foreground_job_id = job_id
+        self.task_progress_page.bind(job_id)
+        self._show_widget(self.task_progress_page)
+
+    def _open_moisture_ai_report(self, module_id: object) -> None:
+        if getattr(module_id, "value", module_id) != "moisture":
+            self._show_failure("功能不可用", "AI汇总报告入口当前只属于竹丝水分模块")
+            return
+        try:
+            module = self.context.registry.get(ModuleId.MOISTURE)
+        except KeyError:
+            self._show_failure("功能不可用", "竹丝水分模块尚未安装")
+            return
+        if "ai_report" not in module.manifest.capabilities:
+            self._show_failure("功能不可用", "当前竹丝水分模块版本尚未提供独立 AI 汇总报告")
+            return
+        self.moisture_ai_report_page.activate()
+        self._show_widget(
+            self.moisture_ai_report_page,
+            nav_page=PageId.WORKBENCH,
+        )
+
+    def _start_moisture_ai_report(
+        self,
+        current_summary: Path,
+        module_config: dict[str, object],
+    ) -> None:
+        self._starting_task = True
+        self._start_failure_job_id = None
+        try:
+            job_id = self.context.task_service.create_and_start(
+                ModuleId.MOISTURE,
+                [current_summary],
+                module_config=module_config,
+            )
+        except Exception as error:
+            self._show_failure("AI汇总报告任务创建失败", str(error))
             return
         finally:
             self._starting_task = False

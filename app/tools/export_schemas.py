@@ -4,6 +4,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from core.contracts.job import JobRequest
+from core.contracts.management import ModuleManagementRequest, ModuleManagementResponse
 from core.contracts.manifest import ModuleManifest
 from core.contracts.result import ModuleResult
 
@@ -11,6 +12,8 @@ MODELS: tuple[tuple[str, type[BaseModel]], ...] = (
     ("module-manifest.schema.json", ModuleManifest),
     ("job-request.schema.json", JobRequest),
     ("module-result.schema.json", ModuleResult),
+    ("module-management-request.schema.json", ModuleManagementRequest),
+    ("module-management-response.schema.json", ModuleManagementResponse),
 )
 
 EXAMPLES: tuple[tuple[str, dict[str, object]], ...] = (
@@ -22,6 +25,8 @@ EXAMPLES: tuple[tuple[str, dict[str, object]], ...] = (
             "module_name": "示例模块",
             "module_version": "0.1.0",
             "entrypoint": "run_module.bat",
+            "management_entrypoint": None,
+            "capabilities": [],
             "supported_extensions": [".csv"],
             "supports_single_file": True,
             "supports_batch": True,

@@ -1,6 +1,13 @@
 from .confirmation import ConfirmationAnswer, ConfirmationBundle
 from .enums import JobPhase, ModuleId, RunMode, Severity, TaskStatus
 from .job import JobRequest
+from .management import (
+    ApprovedExperienceItem,
+    HistorySummaryItem,
+    ModuleManagementOperation,
+    ModuleManagementRequest,
+    ModuleManagementResponse,
+)
 from .manifest import ModuleManifest
 from .progress import ProgressEvent
 from .result import (
@@ -24,6 +31,11 @@ __all__ = [
     "JobRequest",
     "ModuleId",
     "ModuleManifest",
+    "ModuleManagementOperation",
+    "ModuleManagementRequest",
+    "ModuleManagementResponse",
+    "HistorySummaryItem",
+    "ApprovedExperienceItem",
     "ModuleResult",
     "OutputArtifact",
     "ProgressEvent",
