@@ -30,6 +30,13 @@ from after_sales_agent.manual_review import (
 )
 from after_sales_agent.report import write_summary_workbook
 from after_sales_agent.rules import load_rules
+from after_sales_agent.visual_reports import (
+    write_annual_monthly_fee_workbook,
+    write_brand_share_workbook,
+    write_issue_share_workbook,
+    write_yearly_chart_dashboard_workbook,
+)
+from after_sales_agent.word_report import write_word_analysis_report
 
 
 def _configure_standard_streams() -> None:
@@ -299,11 +306,21 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
         annual_rollup_path = output_dir / "after_sales_annual_rollup.xlsx"
         detail_path = output_dir / "after_sales_records.json"
         analysis_path = output_dir / "after_sales_analysis.md"
+        analysis_word_path = output_dir / "after_sales_analysis_report.docx"
+        brand_chart_path = output_dir / "after_sales_brand_share.xlsx"
+        issue_chart_path = output_dir / "after_sales_reason_share.xlsx"
+        monthly_fee_chart_path = output_dir / "after_sales_monthly_fee.xlsx"
+        yearly_dashboard_path = output_dir / "after_sales_yearly_dashboard.xlsx"
         write_annual_rollup_workbook(records, annual_rollup_path, rules)
         write_summary_workbook(records, summary_path, rules)
         with detail_path.open("w", encoding="utf-8") as f:
             json.dump(records, f, ensure_ascii=False, indent=2)
         write_analysis_report(records, result, analysis_path)
+        write_word_analysis_report(records, result, analysis_word_path)
+        write_brand_share_workbook(records, brand_chart_path)
+        write_issue_share_workbook(records, issue_chart_path)
+        write_annual_monthly_fee_workbook(records, monthly_fee_chart_path)
+        write_yearly_chart_dashboard_workbook(records, yearly_dashboard_path)
 
         result["outputs"] = [
             {
@@ -330,6 +347,39 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 "label": "售后分析报告",
                 "mime_type": "text/markdown",
             },
+            {
+                "type": "analysis_word",
+                "path": str(analysis_word_path),
+                "label": "售后分析报告（Word）",
+                "mime_type": (
+                    "application/vnd.openxmlformats-officedocument."
+                    "wordprocessingml.document"
+                ),
+            },
+            {
+                "type": "brand_share_chart_excel",
+                "path": str(brand_chart_path),
+                "label": "品牌方占比图表",
+                "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
+            {
+                "type": "issue_share_chart_excel",
+                "path": str(issue_chart_path),
+                "label": "售后原因数量占比图表",
+                "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
+            {
+                "type": "monthly_fee_chart_excel",
+                "path": str(monthly_fee_chart_path),
+                "label": "年度月度售后费用图表",
+                "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
+            {
+                "type": "yearly_chart_dashboard_excel",
+                "path": str(yearly_dashboard_path),
+                "label": "售后年度图表总览",
+                "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
         ]
         ai_completed = sum(
             1 for record in records if record.get("issue_analysis_source") == "api"
@@ -353,7 +403,8 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
             f"已对账 {len(input_files)} 个输入文件，成功处理 "
             f"{result['summary']['processed_count']} 个，失败 "
             f"{result['summary']['failed_count']} 个；已生成按报修时间排序的全量汇总、"
-            f"三类金额统计、分析图表和分析报告{ai_summary}。"
+            f"三类金额统计、Word 分析报告、年度占比图、费用图和年度图表总览"
+            f"{ai_summary}。"
         )
         return 0
     finally:

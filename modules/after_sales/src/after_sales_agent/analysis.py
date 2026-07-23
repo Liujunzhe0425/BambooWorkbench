@@ -12,6 +12,8 @@ ISSUE_ORDER = ("性能", "外观", "加工", "其他")
 def build_analysis_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
     summary_records = [record for record in records if record.get("included_in_summary", True)]
     issue_counts: Counter[str] = Counter()
+    primary_issue_counts: Counter[str] = Counter()
+    brand_counts: Counter[str] = Counter()
     status_counts: Counter[str] = Counter()
     monthly: dict[tuple[int | None, int | None], dict[str, float | int | str]] = defaultdict(
         lambda: {
@@ -30,6 +32,10 @@ def build_analysis_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
     offline_rule_count = 0
 
     for record in summary_records:
+        brand = str(record.get("brand") or "").strip()
+        if not brand or brand in {"待确认", "未识别"}:
+            brand = "未知"
+        brand_counts[brand] += 1
         key = (_as_int(record.get("year")), _as_int(record.get("month")))
         bucket = monthly[key]
         bucket["case_count"] = int(bucket["case_count"]) + 1
@@ -52,6 +58,10 @@ def build_analysis_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
             tags = [record.get("primary_issue_type") or "其他"]
         normalized = {str(tag) if str(tag) in ISSUE_ORDER else "其他" for tag in tags}
         issue_counts.update(normalized)
+        primary_issue = str(record.get("primary_issue_type") or "其他").strip()
+        primary_issue_counts[
+            primary_issue if primary_issue in ISSUE_ORDER else "其他"
+        ] += 1
 
         status = str(
             record.get("resolution_status") or ("已解决" if record.get("closed") else "未解决")
@@ -93,7 +103,13 @@ def build_analysis_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
 
     return {
         "case_count": len(summary_records),
+        "brand_counts": dict(
+            sorted(brand_counts.items(), key=lambda item: (-item[1], item[0]))
+        ),
         "issue_counts": {issue: int(issue_counts.get(issue, 0)) for issue in ISSUE_ORDER},
+        "primary_issue_counts": {
+            issue: int(primary_issue_counts.get(issue, 0)) for issue in ISSUE_ORDER
+        },
         "status_counts": {
             "已解决": int(status_counts.get("已解决", 0)),
             "处理中": int(status_counts.get("处理中", 0)),
