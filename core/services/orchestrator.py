@@ -1,9 +1,13 @@
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
 
-from core.ai.gateway import AIGateway, ConsentDenied, GatewayRequest
+import httpx
+
+from core.ai.gateway import AIGateway, ConsentDenied, ConsentRequired, GatewayRequest
+from core.ai.providers import ProviderConfigurationError, ProviderResponseError
 from core.contracts.service_request import ServiceRequest
 from core.knowledge.models import KnowledgeRecord
 from core.knowledge.repository import KnowledgeRepository
@@ -21,6 +25,9 @@ class KnowledgeScopeDenied(RuntimeError):
 
 class InvalidServiceRequest(RuntimeError):
     pass
+
+
+_LOG = logging.getLogger("bamboo_workbench")
 
 
 def _knowledge_payload(record: KnowledgeRecord) -> dict[str, object]:
@@ -197,6 +204,47 @@ class ServiceOrchestrator:
                 "service": "ai",
                 "status": "denied",
                 "text": None,
+            }
+        except ConsentRequired:
+            raise
+        except httpx.TimeoutException as error:
+            _LOG.warning(
+                "AI provider timeout provider=%s error_type=%s",
+                self.provider_id,
+                type(error).__name__,
+            )
+            return {
+                "request_id": request.request_id,
+                "service": "ai",
+                "status": "timeout",
+                "text": None,
+                "error": "provider_timeout",
+            }
+        except (ProviderConfigurationError, ProviderResponseError, httpx.HTTPError) as error:
+            _LOG.warning(
+                "AI provider unavailable provider=%s error_type=%s",
+                self.provider_id,
+                type(error).__name__,
+            )
+            return {
+                "request_id": request.request_id,
+                "service": "ai",
+                "status": "error",
+                "text": None,
+                "error": "provider_error",
+            }
+        except Exception as error:
+            _LOG.exception(
+                "AI provider failed unexpectedly provider=%s error_type=%s",
+                self.provider_id,
+                type(error).__name__,
+            )
+            return {
+                "request_id": request.request_id,
+                "service": "ai",
+                "status": "error",
+                "text": None,
+                "error": "provider_error",
             }
         return {
             "request_id": request.request_id,

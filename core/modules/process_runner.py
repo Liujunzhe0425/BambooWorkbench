@@ -55,6 +55,7 @@ class ModuleProcessRunner(QObject):
         self._generation = 0
         self._active_generation: int | None = None
         self._pending_terminal: tuple[str, object | None] | None = None
+        self._environment_overrides: dict[str, str] = {}
 
     @property
     def is_running(self) -> bool:
@@ -109,6 +110,8 @@ class ModuleProcessRunner(QObject):
         environment.insert("PATH", f"{runtime_dir};{environment.value('PATH')}")
         environment.insert("PYTHONPATH", str(Path(__file__).parents[2]))
         environment.insert("PYTHONUTF8", "1")
+        for name, value in self._environment_overrides.items():
+            environment.insert(name, value)
         add_packaged_host_environment(environment)
         process.setProcessEnvironment(environment)
         process.setWorkingDirectory(str(module.path))
@@ -117,6 +120,20 @@ class ModuleProcessRunner(QObject):
             self.timeout_ms,
             lambda: self._timeout(generation, process),
         )
+
+    def set_environment_overrides(self, values: dict[str, str]) -> None:
+        if self.is_running:
+            raise RuntimeError("cannot change module environment while running")
+        for name, value in values.items():
+            if (
+                name != name.upper()
+                or not name.startswith("BAMBOO_")
+                or not name.replace("_", "").isalnum()
+            ):
+                raise ValueError("module environment name is not allowed")
+            if not isinstance(value, str) or "\x00" in value:
+                raise ValueError("module environment value is invalid")
+        self._environment_overrides = dict(values)
 
     def cancel(self) -> bool:
         if (

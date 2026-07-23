@@ -43,6 +43,10 @@ _JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{6,64}$")
 _TERMINAL_MARKER = ".terminal-pending.json"
 _SERVICE_CONSENT_PREFIX = "service-consent:"
 _REDACTED_PREVIEW_MARKER = "[[REDACTED_PREVIEW]]"
+_SENSITIVE_CONFIG_KEY = re.compile(
+    r"(?:api[_-]?key|authorization|password|secret|access[_-]?token)",
+    re.IGNORECASE,
+)
 _LOG = logging.getLogger("bamboo_workbench")
 
 
@@ -218,7 +222,16 @@ class TaskService(QObject):
             self._cancellation_pending.discard(job_id)
             raise InvalidTaskTransition(f"job {job_id} cancellation was not accepted")
 
-    def create_and_start(self, module_id: ModuleId, inputs: list[Path]) -> str:
+    def create_and_start(
+        self,
+        module_id: ModuleId,
+        inputs: list[Path],
+        *,
+        module_config: dict[str, object] | None = None,
+    ) -> str:
+        module = self.registry.get(module_id)
+        if module_config is not None:
+            self._validate_module_config_support(module_id, module, module_config)
         timestamp = datetime.now().astimezone()
         job_id = self.job_id_factory()
         if not _JOB_ID_PATTERN.fullmatch(job_id):
@@ -240,7 +253,6 @@ class TaskService(QObject):
         self._states[job_id] = TaskStateMachine()
         runner: ModuleProcessRunner | None = None
         try:
-            module = self.registry.get(module_id)
             snapshots = snapshot_inputs(
                 inputs,
                 task_dir,
@@ -262,11 +274,24 @@ class TaskService(QObject):
             except Exception:
                 remove_snapshots(snapshots)
                 raise
+            module_config_file: Path | None = None
+            if module_config is not None:
+                module_config_file = resolve_contained_target(
+                    task_dir / "module-config.json",
+                    task_dir,
+                    "module configuration",
+                    reject_link=True,
+                )
+                _atomic_write_text(
+                    module_config_file,
+                    self._module_config_text(module_config),
+                )
             job = build_draft_job(
                 job_id,
                 module_id,
                 [snapshot.copy for snapshot in snapshots],
                 task_dir,
+                module_config_file=module_config_file,
             )
             job_path = task_dir / "job-draft.json"
             job_path.write_text(job.model_dump_json(indent=2), encoding="utf-8")
@@ -275,7 +300,7 @@ class TaskService(QObject):
             runner = self.runner_factory()
             self.runners[job_id] = runner
             self._connect_runner(job_id, runner)
-            runner.start(module, job_path)
+            self._start_runner(runner, module, job_path, job)
         except Exception as exc:
             self._record_failure(job_id, self._error_message(exc), runner)
         return job_id
@@ -400,7 +425,12 @@ class TaskService(QObject):
             runner = self.runner_factory()
             self.runners[job_id] = runner
             self._connect_runner(job_id, runner)
-            runner.start(self.registry.get(trusted_draft.module_id), final_path)
+            self._start_runner(
+                runner,
+                self.registry.get(trusted_draft.module_id),
+                final_path,
+                final_job,
+            )
         except Exception as exc:
             self._record_failure(job_id, self._error_message(exc), runner)
 
@@ -454,16 +484,109 @@ class TaskService(QObject):
             raise ValueError("job-draft ai_enabled must remain false")
         if draft.allowed_knowledge_scopes != ["shared", draft.module_id.value]:
             raise ValueError("job-draft knowledge scopes are not canonical")
+        if draft.module_config_file is not None:
+            expected_config = resolve_contained_file(
+                task_dir / "module-config.json",
+                task_dir,
+                "module configuration",
+                reject_link=True,
+            )
+            actual_config = resolve_contained_file(
+                Path(draft.module_config_file),
+                task_dir,
+                "module configuration",
+                reject_link=True,
+            )
+            if actual_config != expected_config:
+                raise ValueError("job-draft module configuration is not canonical")
+            payload = json.loads(actual_config.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("module configuration must be a JSON object")
+            self._module_config_text(payload)
         if any(
             value is not None
             for value in (
-                draft.module_config_file,
                 draft.service_response_file,
                 draft.parent_job_id,
                 draft.confirmation_file,
             )
         ):
             raise ValueError("job-draft finalize-only or config fields must be empty")
+
+    def _start_runner(
+        self,
+        runner: ModuleProcessRunner,
+        module: object,
+        job_path: Path,
+        job: JobRequest,
+    ) -> None:
+        if job.module_config_file is not None:
+            data_dir = self._module_data_dir(job.module_id)
+            configure = getattr(runner, "set_environment_overrides", None)
+            if callable(configure):
+                module_key = job.module_id.value.upper()
+                configure(
+                    {
+                        "BAMBOO_MODULE_DATA_DIR": str(data_dir),
+                        f"BAMBOO_{module_key}_DATA_DIR": str(data_dir),
+                    }
+                )
+        runner.start(module, job_path)
+
+    def _module_data_dir(self, module_id: ModuleId) -> Path:
+        root = resolve_contained_directory(
+            self.paths.module_data,
+            self.paths.root,
+            "module data root",
+            reject_link=True,
+        )
+        target = resolve_contained_target(
+            root / module_id.value,
+            root,
+            "module data directory",
+            reject_link=True,
+        )
+        target.mkdir(exist_ok=True)
+        return resolve_contained_directory(
+            target,
+            root,
+            "module data directory",
+            reject_link=True,
+        )
+
+    @staticmethod
+    def _module_config_text(payload: dict[str, object]) -> str:
+        if not isinstance(payload, dict):
+            raise ValueError("module configuration must be a JSON object")
+
+        def visit(value: object) -> None:
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if not isinstance(key, str) or _SENSITIVE_CONFIG_KEY.search(key):
+                        raise ValueError("module configuration contains a forbidden key")
+                    visit(item)
+            elif isinstance(value, list):
+                for item in value:
+                    visit(item)
+
+        visit(payload)
+        content = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
+        if len(content.encode("utf-8")) > 65_536:
+            raise ValueError("module configuration exceeds 65536 bytes")
+        return content
+
+    @staticmethod
+    def _validate_module_config_support(
+        module_id: ModuleId,
+        module: object,
+        payload: dict[str, object],
+    ) -> None:
+        manifest = getattr(module, "manifest", None)
+        capabilities = getattr(manifest, "capabilities", [])
+        if module_id is not ModuleId.MOISTURE or "ai_report" not in capabilities:
+            raise ValueError("当前模块版本不支持独立 AI 汇总报告")
+        if payload.get("schema_version") != "1.0" or payload.get("operation") != "ai_report":
+            raise ValueError("AI 汇总报告配置版本或操作类型无效")
 
     @staticmethod
     def _sha256(path: Path) -> str:

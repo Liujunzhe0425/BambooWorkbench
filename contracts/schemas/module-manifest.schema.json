@@ -12,10 +12,31 @@
   },
   "additionalProperties": false,
   "properties": {
+    "capabilities": {
+      "items": {
+        "type": "string"
+      },
+      "maxItems": 32,
+      "title": "Capabilities",
+      "type": "array"
+    },
     "entrypoint": {
       "minLength": 1,
       "title": "Entrypoint",
       "type": "string"
+    },
+    "management_entrypoint": {
+      "anyOf": [
+        {
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Management Entrypoint"
     },
     "module_id": {
       "$ref": "#/$defs/ModuleId"

@@ -97,3 +97,34 @@ def test_host_keeps_launcher_and_arguments_out_of_cmd_text(tmp_path: Path) -> No
     assert "/v:off" in command
     assert environment["BAMBOO_HOST_LAUNCHER"] == str(launcher.resolve())
     assert environment["BAMBOO_HOST_ARG_2"] == str(job_path)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows Job Object")
+def test_host_accepts_contained_management_command(tmp_path: Path) -> None:
+    launcher = tmp_path / "manage_module.cmd"
+    launcher.write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
+    request = tmp_path / "request.json"
+    response = tmp_path / "response.json"
+    request.write_text("{}", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    class HostExited(Exception):
+        pass
+
+    def child_runner(command: str, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(command, 0)
+
+    with pytest.raises(HostExited):
+        run_host(
+            launcher,
+            ["manage", "--request", str(request), "--response", str(response)],
+            job_factory=lambda: object(),
+            child_runner=child_runner,
+            host_exit=lambda _code: (_ for _ in ()).throw(HostExited),
+        )
+
+    environment = captured["env"]
+    assert environment["BAMBOO_HOST_ARG_0"] == "manage"
+    assert environment["BAMBOO_HOST_ARG_2"] == str(request)
+    assert environment["BAMBOO_HOST_ARG_4"] == str(response)

@@ -2,7 +2,7 @@
   "schema_version": 1,
   "schemas": {
     "schemas/contracts/job-request.schema.json": "f84593eb8df8fe9363c059afca62e0f80e67228be54b1352fa674f0000305abe",
-    "schemas/contracts/module-manifest.schema.json": "313f7f894d6300bc5421e89b66ac3583a5b27c1983de10400f0195e54e62a13f",
+    "schemas/contracts/module-manifest.schema.json": "8a281bff11e5e10c96e8206801661abb2206dbaecd9b5796311d750ecd99b84c",
     "schemas/contracts/module-result.schema.json": "709304ef4a6fa95ce2fe129bc9a67e400e7b7ae0beb9e48fe83fb8df81f698a0"
   }
 }
