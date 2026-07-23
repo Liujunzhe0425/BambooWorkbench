@@ -17,7 +17,6 @@ from moisture.adapters.experience.local_approved_repository import (
 )
 from moisture.adapters.rules.builtin_evaluators import evaluate_rules
 from moisture.adapters.rules.package_loader import RulePackageLoader
-from moisture.application.ai_request_builder import candidates_from_batches
 from moisture.application.decision_aggregation import ordered_decisions, primary_decision
 from moisture.application.run_result import InternalAnomaly, ReviewState
 from moisture.application.screening_presentation import (
@@ -33,7 +32,6 @@ from moisture.domain.models import (
     AIReviewDecision,
     BusinessConfirmationIssue,
 )
-from moisture.domain.review import AIReviewCandidate
 from moisture.domain.rules import PendingRuleMatch, RulePackageSnapshot
 from moisture.domain.statistics import compute_batch_statistics
 from moisture.infrastructure.file_integrity import FileIntegrityGuard
@@ -53,7 +51,6 @@ class DeterministicPipelineResult:
     failed_count: int
     rule_package: RulePackageSnapshot
     pending_rule_matches: tuple[PendingRuleMatch, ...] = ()
-    ai_review_candidates: tuple[AIReviewCandidate, ...] = ()
     anomalies: tuple[InternalAnomaly, ...] = ()
     errors: tuple[str, ...] = ()
     confirmation_issues: tuple[BusinessConfirmationIssue, ...] = ()
@@ -325,7 +322,6 @@ class DeterministicPipeline:
             failed_count=failed,
             rule_package=snapshot,
             pending_rule_matches=tuple(pending_matches),
-            ai_review_candidates=candidates_from_batches(frozen_batches, snapshot),
             anomalies=tuple(anomalies),
             errors=tuple(errors),
             confirmation_issues=tuple(confirmation_issues),

@@ -34,23 +34,12 @@
 - 无已审核经验引用。
 {% endfor %}
 
-## 辅助服务记录与降级
+## Knowledge 参考
 
-- 候选总数：{{ report.candidate_total }}；发送数：{{ report.candidate_sent }}；省略数：{{ report.candidate_omitted }}。
 {% for citation in report.knowledge_citations %}
 - Knowledge `{{ citation.namespace }}/{{ citation.record_id }}`《{{ citation.title }}》：{{ citation.content }}（来源：`{{ citation.source }}`）。该内容仅供复核引用，不参与颜色或责任判定。
 {% else %}
 - 无 Knowledge 报告引用。
-{% endfor %}
-{% for batch in report.reviewed_batches %}
-- `{{ batch.record.record_id }}`：{{ batch.ai_review.rationale }}；辅助颜色{{ report.color_label(batch) }}。
-{% else %}
-- 无辅助服务复判记录。
-{% endfor %}
-{% for batch in report.degraded_batches %}
-- `{{ batch.record.record_id }}`：{{ batch.ai_degradation_reason }}；确定性结果仍保留。
-{% else %}
-- 无服务降级记录。
 {% endfor %}
 
 ## 数据质量与处理限制
@@ -65,6 +54,4 @@
 
 - 橙色：确定性规则发现偏高疑似。
 - 绿色：确定性规则发现偏低疑似。
-- 红色：有效辅助证据支持的高度偏高疑似。
-- 蓝色：有效辅助证据支持的高度偏低疑似。
-- 上述颜色均不表示正式错误、不合格或责任认定，异常记录仍需按业务流程核验。
+- 上述颜色不表示正式错误、不合格或责任认定，异常记录仍需按业务流程核验。

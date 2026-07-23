@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bamboo:moisture:approved-experience-catalog:1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "entries"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "entries": {
+      "type": "array",
+      "maxItems": 1000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "entry_id",
+          "title",
+          "version",
+          "scope",
+          "effective_from",
+          "effective_to",
+          "sha256"
+        ],
+        "properties": {
+          "entry_id": {"$ref": "#/$defs/stable_id"},
+          "title": {"type": "string", "minLength": 1, "maxLength": 200},
+          "version": {"$ref": "#/$defs/stable_id"},
+          "scope": {"type": "string", "minLength": 1, "maxLength": 500},
+          "effective_from": {"type": ["string", "null"], "format": "date"},
+          "effective_to": {"type": ["string", "null"], "format": "date"},
+          "sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stable_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

@@ -128,24 +128,22 @@ def report() -> AnalysisReportView:
         started_at=datetime(2026, 7, 13, 8, 0, tzinfo=UTC),
         status="partial_success",
         batches=(
-            _batch("R1", DisplayColor.ORANGE, experience=True, degradation="AI 服务超时"),
+            _batch("R1", DisplayColor.ORANGE, experience=True),
             _batch("R2", DisplayColor.GREEN),
-            _batch("R3", DisplayColor.RED),
-            _batch("R4", DisplayColor.BLUE),
         ),
         rule_version="rules-v1",
         rule_hash="b" * 64,
         rule_source="rules/active/rule-package.json",
         rule_applicable_scope="竹丝/原竹丝；全年",
         rule_confirmation_status="pending_confirmation",
-        candidate_total=7,
-        candidate_sent=4,
-        candidate_omitted=3,
+        candidate_total=0,
+        candidate_sent=0,
+        candidate_omitted=0,
         errors=("一个输入文件未能解析，其他文件已继续处理",),
     )
 
 
-def test_report_separates_deterministic_and_auxiliary_evidence(
+def test_report_contains_deterministic_results_and_knowledge_boundary(
     tmp_path: Path, report: AnalysisReportView
 ) -> None:
     output = write_analysis_markdown(report, tmp_path / "output")
@@ -156,7 +154,7 @@ def test_report_separates_deterministic_and_auxiliary_evidence(
         "## 确定性分析结果",
         "## 规则快照与适用状态",
         "## 已审核经验引用",
-        "## 辅助服务记录与降级",
+        "## Knowledge 参考",
         "## 颜色语义与使用限制",
     ):
         assert heading in text
@@ -171,20 +169,20 @@ def test_report_separates_deterministic_and_auxiliary_evidence(
     assert "pending_human_review" not in text
     assert "；None。" not in text
     assert "EXP-001" in text and "1.2.0" in text
-    assert "候选总数：7；发送数：4；省略数：3" in text
-    assert "AI 服务超时" in text
+    assert "候选总数" not in text
+    assert "AI 服务" not in text
 
 
-def test_report_explains_orange_green_red_blue_without_formal_conclusion(
+def test_report_explains_only_deterministic_orange_green(
     tmp_path: Path, report: AnalysisReportView
 ) -> None:
     text = write_analysis_markdown(report, tmp_path).read_text(encoding="utf-8")
 
     assert "橙色：确定性规则发现偏高疑似" in text
     assert "绿色：确定性规则发现偏低疑似" in text
-    assert "红色：有效辅助证据支持的高度偏高疑似" in text
-    assert "蓝色：有效辅助证据支持的高度偏低疑似" in text
-    assert "均不表示正式错误、不合格或责任认定" in text
+    assert "红色：" not in text
+    assert "蓝色：" not in text
+    assert "上述颜色不表示正式错误、不合格或责任认定" in text
 
 
 def test_report_contains_no_responsibility_conclusion_prompt(
@@ -206,10 +204,10 @@ def test_report_handles_empty_experience_and_no_degradation(
     clean = replace(report, batches=batches, errors=())
     text = write_analysis_markdown(clean, tmp_path).read_text(encoding="utf-8")
 
-    experience = text.split("## 已审核经验引用", 1)[1].split("## 辅助服务记录与降级", 1)[0]
-    degradation = text.split("## 辅助服务记录与降级", 1)[1].split("## 数据质量与处理限制", 1)[0]
+    experience = text.split("## 已审核经验引用", 1)[1].split("## Knowledge 参考", 1)[0]
+    knowledge = text.split("## Knowledge 参考", 1)[1].split("## 数据质量与处理限制", 1)[0]
     assert "- 无已审核经验引用。" in experience
-    assert "- 无服务降级记录。" in degradation
+    assert "- 无 Knowledge 报告引用。" in knowledge
 
 
 def test_report_cites_knowledge_without_changing_decision_language(

@@ -1,0 +1,131 @@
+# AI 辅助分析报告
+
+> **声明**：本报告由 AI 辅助生成，内容仅供人工复核参考，**不构成正式质量结论**。
+> 所有颜色标记、疑似判定和建议步骤均非最终责任认定，异常批次需经业务流程核验后方可确认。
+
+## 总体情况
+
+- 报告生成时间：`{{ report.generated_at }}`
+- 分析周期：`{{ report.period_start }}` 至 `{{ report.period_end }}`
+- 当前周期批次数：`{{ report.current_batch_count }}`
+- 确定性规则命中批次数：`{{ report.rule_triggered_count }}`
+  {% if report.rule_triggered_count > 0 %}
+  - 偏高疑似（橙色）：`{{ report.high_suspect_count }}`
+  - 偏低疑似（绿色）：`{{ report.low_suspect_count }}`
+  {% endif %}
+- 已审核经验引用数：`{{ report.experience_citation_count }}`
+- 关联 Knowledge 条目数：`{{ report.knowledge_citation_count }}`
+
+{% if report.summary_text %}
+### 简要概述
+
+{{ report.summary_text }}
+{% endif %}
+
+## 历史比较
+
+{% if report.history_available %}
+- 对比历史周期：`{{ report.history_period_start }}` 至 `{{ report.history_period_end }}`
+- 历史周期批次数：`{{ report.history_batch_count }}`
+- 历史规则命中批次数：`{{ report.history_rule_triggered_count }}`
+
+{% for change in report.historical_changes %}
+- **`{{ change.metric }}`**：当前 `{{ change.current_value }}`，历史 `{{ change.history_value }}`，变化 {{ change.direction }} `{{ change.delta }}`（{{ change.interpretation }}）
+{% endfor %}
+{% else %}
+- 无可用的历史对比数据。
+{% endif %}
+
+## 需复核批次
+
+{% if report.batches_needing_review %}
+下表列出建议人工复核的批次：
+
+| 批次编号 | 供应方 | 材料 | 均值 | 颜色标记 | 确定性判定 | AI 建议 |
+| -------- | ------ | ---- | ---- | -------- | ---------- | ------- |
+{% for batch in report.batches_needing_review %}
+| `{{ batch.record_id }}` | {{ batch.supplier }} | {{ batch.material }} | {{ batch.mean }} | {{ batch.display_color_label }} | {{ batch.screen_status }} | {{ batch.ai_recommendation }} |
+{% endfor %}
+{% else %}
+- 当前周期无需特别关注的人工复核批次。
+{% endif %}
+
+## 可能原因
+
+{% if report.possible_causes %}
+{% for cause in report.possible_causes %}
+### {{ cause.heading }}
+
+- 关联批次：{% for rid in cause.related_records %}`{{ rid }}`{% if not loop.last %}, {% endif %}{% endfor %}
+- 可能性评估：{{ cause.likelihood }}
+- 分析依据：
+{% for basis in cause.basis_points %}
+  - {{ basis }}
+{% endfor %}
+{% if cause.evidence_refs %}
+- 证据引用：{% for ref in cause.evidence_refs %}`{{ ref }}`{% if not loop.last %}, {% endif %}{% endfor %}
+{% endif %}
+
+{% endfor %}
+{% else %}
+- 未识别出明确可能原因，建议人工排查。
+{% endif %}
+
+## 建议步骤
+
+{% if report.recommended_steps %}
+{% for step in report.recommended_steps %}
+{{ step.index }}. **{{ step.title }}**
+   - 关联批次：{% for rid in step.related_records %}`{{ rid }}`{% if not loop.last %}, {% endif %}{% endfor %}
+   - {{ step.description }}
+{% if step.expected_outcome %}
+   - 预期结果：{{ step.expected_outcome }}
+{% endif %}
+{% endfor %}
+{% else %}
+- 暂无自动化建议步骤，请按常规流程进行人工复核。
+{% endif %}
+
+## 证据引用
+
+{% if report.evidence_references %}
+{% for evidence in report.evidence_references %}
+- **`{{ evidence.ref_id }}`** — {{ evidence.source_type }}：{{ evidence.description }}
+  {% if evidence.relevant_period %}
+  - 相关周期：{{ evidence.relevant_period }}
+  {% endif %}
+  {% if evidence.remarks %}
+  - 备注：{{ evidence.remarks }}
+  {% endif %}
+{% endfor %}
+{% else %}
+- 未引用外部证据。
+{% endif %}
+
+## 已审核经验目录快照
+
+{% if report.approved_catalog_snapshot %}
+- 目录版本：`{{ report.approved_catalog_snapshot.schema_version }}`
+- 有效经验条目数：`{{ report.approved_catalog_snapshot.entry_count }}`
+
+{% for entry in report.approved_catalog_snapshot.entries %}
+- **`{{ entry.entry_id }}`** v{{ entry.version }} — {{ entry.title }}
+  - 适用范围：{{ entry.scope }}
+  - 生效日期：{{ entry.effective_from }}{% if entry.effective_to %} 至 {{ entry.effective_to }}{% else %}（无截止）{% endif %}
+  - SHA-256：`{{ entry.sha256 }}`
+{% endfor %}
+{% else %}
+- 无可用的已审核经验目录。
+{% endif %}
+
+## 处理限制与免责声明
+
+{% if report.limitations %}
+{% for limitation in report.limitations %}
+- {{ limitation }}
+{% endfor %}
+{% endif %}
+
+- 本报告中的"偏高疑似"（橙色）和"偏低疑似"（绿色）仅为确定性规则的初步筛选标记，**不表示正式不合格判定或责任认定**。
+- AI 分析结论基于已审核经验和 Knowledge 参考生成，其可信度受限于训练数据和提示词范围，**不可替代人工专业判断**。
+- 所有异常批次均须依据业务流程进行独立核验后方可做出最终处置决定。
