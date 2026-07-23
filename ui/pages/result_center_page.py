@@ -38,6 +38,10 @@ class ResultCenterPage(QWidget):
         subtitle.setProperty("subtle", True)
         self.status_label = QLabel("暂无任务结果")
         self.summary_label = QLabel()
+        self.ai_notice = QLabel()
+        self.ai_notice.setWordWrap(True)
+        self.ai_notice.setProperty("subtle", True)
+        self.ai_notice.setVisible(False)
         self.failure_toggle = QToolButton()
         self.failure_toggle.setCheckable(True)
         self.failure_toggle.setProperty("detailToggle", True)
@@ -64,6 +68,7 @@ class ResultCenterPage(QWidget):
         summary_row.addWidget(self.failure_toggle)
         card_layout.addLayout(summary_row)
         card_layout.addWidget(self.failure_panel)
+        card_layout.addWidget(self.ai_notice)
         card_layout.addWidget(self.output_files)
         layout.addWidget(title)
         layout.addWidget(subtitle)
@@ -84,7 +89,28 @@ class ResultCenterPage(QWidget):
             f"已处理 {result.summary.processed_count}"
         )
         self._set_failures(result)
+        self._set_ai_notice(result)
         self.output_files.set_outputs(result.outputs)
+
+    def _set_ai_notice(self, result: ModuleResult) -> None:
+        notices = [error for error in result.errors if error.startswith("AI_REPORT_DEGRADED:")]
+        if notices:
+            reason = notices[0].split(":", 1)[1].strip()
+            descriptions = {
+                "provider_denied": "本次未授权联网，未生成 AI 报告。",
+                "provider_error": "AI 服务暂不可用，已保留结构化降级记录，未生成虚假报告。",
+                "provider_timeout": "AI 服务响应超时，已保留结构化降级记录，未生成虚假报告。",
+                "invalid_ai_response": "AI 返回内容不符合报告契约，已保留结构化降级记录。",
+            }
+            self.ai_notice.setText(descriptions.get(reason, "AI 报告已安全降级，未生成虚假结论。"))
+            self.ai_notice.setVisible(True)
+            return
+        generated = any(
+            "ai_analysis_report" in Path(output.path).stem.casefold()
+            for output in result.outputs
+        )
+        self.ai_notice.setText("AI 辅助报告已生成；业务规则和人工复核结论仍具有更高优先级。")
+        self.ai_notice.setVisible(generated)
 
     def _set_failures(self, result: ModuleResult) -> None:
         while self.failure_layout.count():

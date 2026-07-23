@@ -71,6 +71,8 @@ modules/<module_id>/
 | `module_name` | 中文展示名，1–80 字符 |
 | `module_version` | 三段式版本，如 `0.1.0` |
 | `entrypoint` | 模块内相对路径，只允许 `.bat` 或 `.cmd` |
+| `management_entrypoint` | 可选的资料管理入口；仅在模块需要由框架管理历史/经验目录时填写，同样只允许模块内 `.bat`/`.cmd` |
+| `capabilities` | 可选能力列表；独立 AI 报告模块填写 `ai_report`，未实现的能力不得提前声明 |
 | `supported_extensions` | 至少一种带点扩展名，如 `[".xlsx"]` |
 | `supports_single_file` | 是否支持单文件 |
 | `supports_batch` | 是否支持批量 |
@@ -78,6 +80,20 @@ modules/<module_id>/
 | `requires_network` | 是否必须联网；能离线时应为 `false` |
 
 不要添加未定义字段。健康检查由框架调用入口脚本的 `self-check` 命令，不在 `module.json` 增加自定义命令字段。
+
+声明 `ai_report` 时，框架才会显示独立 AI 报告入口并允许传入任务级
+`module-config.json`。若同时提供历史汇总或已批准经验选择，必须填写
+`management_entrypoint`，且该入口只接受：
+
+```powershell
+run_management.bat manage --request D:\absolute\request.json --response D:\absolute\response.json
+```
+
+管理请求与响应必须符合
+[`module-management-request.schema.json`](../../contracts/schemas/module-management-request.schema.json)
+和
+[`module-management-response.schema.json`](../../contracts/schemas/module-management-response.schema.json)。
+模块只能在框架传入的 `data_dir` 中持久化资料；面向界面的名称和消息不得包含绝对路径、堆栈或密钥。
 
 ## 5. 三条强制命令
 

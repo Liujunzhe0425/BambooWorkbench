@@ -17,6 +17,7 @@ MODULE_ROOT = Path(__file__).resolve().parents[1]
 WORKSPACE_ROOT = MODULE_ROOT.parent
 sys.path.insert(0, str(MODULE_ROOT / "src"))
 
+from after_sales_agent.ai_service import build_ai_service_requests  # noqa: E402
 from after_sales_agent.annual_rollup import write_annual_rollup_workbook  # noqa: E402
 from after_sales_agent.deepseek_gateway import (  # noqa: E402
     chat_completions_url,
@@ -747,7 +748,7 @@ def test_annual_rollup_keeps_every_input_and_sorts_by_full_complaint_date():
         assert sheet_unknown["V4"].value == "否"
 
 
-def test_arbitrary_excel_layout_is_sent_to_ai_and_new_brand_is_preserved():
+def test_arbitrary_excel_layout_uses_rules_then_builds_sanitized_ai_request():
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / "任意模板.xlsx"
         workbook = openpyxl.Workbook()
@@ -759,39 +760,21 @@ def test_arbitrary_excel_layout_is_sent_to_ai_and_new_brand_is_preserved():
         sheet.append(["处理结果", "已重新加工，费用500元"])
         workbook.save(source)
 
-        fake_analysis = {
-            "brand_name": "清竹",
-            "brand_reason": "工作簿原文明确写有品牌方清竹",
-            "after_sales_year": 2026,
-            "after_sales_month": 7,
-            "issue_types": ["加工"],
-            "primary_issue_type": "加工",
-            "reason_summary": "开片尺寸错误导致无法安装",
-            "evidence": ["开片尺寸错误", "无法安装"],
-            "cost_amount": 500,
-            "cost_included": True,
-            "cost_reason": "原文写明费用500元",
-            "closed": True,
-            "closed_reason": "已重新加工",
-            "confidence": 0.95,
-            "needs_manual_review": False,
-            "model": "deepseek-v4-flash",
-            "response_id": "test",
-        }
-        with patch(
-            "after_sales_agent.extractor.analyze_issue_with_api", return_value=fake_analysis
-        ):
-            record, anomalies, confirmations = process_workbook(
-                source,
-                load_rules(MODULE_ROOT),
-                {"api_key": "sk-test", "strict": True},
-            )
+        record, anomalies, confirmations = process_workbook(source, load_rules(MODULE_ROOT))
         assert not anomalies
         assert record is not None
-        assert record["brand"] == "清竹"
+        record.update(input_index=1, included_in_summary=True)
+        requests = build_ai_service_requests(root_job_id="arbitrary", records=[record])
+        assert requests
+        outbound = json.dumps(requests, ensure_ascii=False)
+        assert "客户" not in outbound
+        assert "brand_name" not in outbound
+        assert "responsible_factory" not in outbound
+        assert "cost_amount" not in outbound
         assert record["primary_issue_type"] == "加工"
         assert record["cost"] == 500
-        assert record["closed"] is True
+        # “已重新加工”只说明动作，不等于已有明确验收/结案证据。
+        assert record["closed"] is False
         assert any(item["field"] == "template" for item in confirmations)
 
 
@@ -829,41 +812,15 @@ def test_unknown_brand_never_uses_customer_and_does_not_block_analysis():
         sheet.append(["解决方案", "已更换，售后费用648元"])
         workbook.save(source)
 
-        fake_analysis = {
-            "brand_name": "未识别",
-            "brand_reason": "原文没有品牌字段",
-            "after_sales_year": 2026,
-            "after_sales_month": 4,
-            "issue_types": ["性能"],
-            "primary_issue_type": "性能",
-            "reason_summary": "板材含水率变化导致收缩开裂",
-            "evidence": ["含水率变化", "收缩开裂"],
-            "cost_amount": 648,
-            "cost_included": True,
-            "cost_reason": "原文写明售后费用648元",
-            "closed": True,
-            "closed_reason": "已更换",
-            "confidence": 0.9,
-            "needs_manual_review": True,
-            "model": "deepseek-v4-flash",
-            "response_id": "test-unknown-brand",
-        }
-        with patch(
-            "after_sales_agent.extractor.analyze_issue_with_api", return_value=fake_analysis
-        ):
-            record, anomalies, confirmations = process_workbook(
-                source,
-                load_rules(MODULE_ROOT),
-                {"api_key": "sk-test", "strict": True},
-            )
+        record, anomalies, confirmations = process_workbook(source, load_rules(MODULE_ROOT))
 
         assert not anomalies
         assert record is not None
         assert record["brand"] == "未知"
         assert record["customer"] == "示例建材公司"
-        assert record["issue_reason_summary"] == "板材含水率变化导致收缩开裂"
+        assert "板材含水率变化导致收缩开裂" in record["issue_reason_summary"]
         assert record["cost"] == 648
-        assert record["closed"] is True
+        assert record["closed"] is False
         assert not any(item["field"] == "brand" for item in confirmations)
         assert not any(item["field"] == "issue_types" for item in confirmations)
 
@@ -945,8 +902,8 @@ def test_every_input_file_has_one_output_record_including_duplicates_and_failure
         assert records[0]["file_sha256"] == records[1]["file_sha256"]
         assert records[0]["included_in_summary"] is True
         assert records[1]["included_in_summary"] is True
-        assert records[0]["analysis_status"] == "离线规则分析完成"
-        assert records[1]["analysis_status"] == "离线规则分析完成"
+        assert records[0]["analysis_status"] == "规则预分析完成（等待AI授权）"
+        assert records[1]["analysis_status"] == "规则预分析完成（等待AI授权）"
         assert records[2]["analysis_status"] == "分析失败"
         assert records[2]["error_code"] == "WORKBOOK_INVALID_OR_CORRUPTED"
         assert "工作簿损坏或不是有效的 XLSX 文件" in records[2]["analysis_error"]
@@ -959,7 +916,7 @@ def test_every_input_file_has_one_output_record_including_duplicates_and_failure
         assert [detail.cell(row, 1).value for row in range(2, 5)] == [1, 2, 3]
 
 
-def test_rule_cost_recovery_prevents_ai_zero_from_losing_explicit_amount():
+def test_rule_cost_recovery_keeps_explicit_amount_without_ai_override():
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / "费用恢复.xlsx"
         workbook = openpyxl.Workbook()
@@ -971,34 +928,7 @@ def test_rule_cost_recovery_prevents_ai_zero_from_losing_explicit_amount():
         sheet.append(["解决方案", "材料费2480元，运费450元，合计费用2930元，已完成更换"])
         workbook.save(source)
 
-        fake_analysis = {
-            "brand_name": "未知",
-            "brand_reason": "无品牌字段",
-            "after_sales_year": 2026,
-            "after_sales_month": 7,
-            "issue_types": ["性能"],
-            "primary_issue_type": "性能",
-            "reason_summary": "地板发霉",
-            "evidence": ["地板发霉"],
-            "cost_items": [],
-            "cost_amount": 0,
-            "cost_included": True,
-            "cost_reason": "",
-            "closed": True,
-            "closed_reason": "已完成更换",
-            "confidence": 0.9,
-            "needs_manual_review": False,
-            "model": "deepseek-v4-flash",
-            "response_id": "test-cost-recovery",
-        }
-        with patch(
-            "after_sales_agent.extractor.analyze_issue_with_api", return_value=fake_analysis
-        ):
-            record, anomalies, _ = process_workbook(
-                source,
-                load_rules(MODULE_ROOT),
-                {"api_key": "sk-test", "strict": True},
-            )
+        record, anomalies, _ = process_workbook(source, load_rules(MODULE_ROOT))
 
         assert not anomalies
         assert record is not None
@@ -1007,7 +937,7 @@ def test_rule_cost_recovery_prevents_ai_zero_from_losing_explicit_amount():
         assert record["fee_status"] == "exact"
 
 
-def test_api_explicit_zero_cost_is_not_overridden_by_rule_amount():
+def test_unadopted_application_amount_is_not_counted_as_final_cost():
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / "API明确零费用.xlsx"
         workbook = openpyxl.Workbook()
@@ -1020,34 +950,7 @@ def test_api_explicit_zero_cost_is_not_overridden_by_rule_amount():
         sheet.append(["售后解决方案", "客户自行处理解决，原申请方案未采用"])
         workbook.save(source)
 
-        fake_analysis = {
-            "brand_name": "未知",
-            "brand_reason": "无品牌字段",
-            "after_sales_year": 2026,
-            "after_sales_month": 7,
-            "issue_types": ["加工"],
-            "primary_issue_type": "加工",
-            "reason_summary": "板材间隙过大",
-            "evidence": ["板材间隙过大"],
-            "cost_items": [],
-            "cost_amount": 0,
-            "cost_included": False,
-            "cost_reason": "最终采用客户自行处理方案，原申请3200元未采用",
-            "resolution_status": "已解决",
-            "resolution_reason": "客户自行处理完成",
-            "closed": True,
-            "closed_reason": "客户自行处理完成",
-            "confidence": 0.95,
-            "needs_manual_review": False,
-            "model": "deepseek-v4-flash",
-            "response_id": "test-explicit-zero",
-        }
-        with patch(
-            "after_sales_agent.extractor.analyze_issue_with_api", return_value=fake_analysis
-        ):
-            record, anomalies, _ = process_workbook(
-                source, load_rules(MODULE_ROOT), {"api_key": "sk-test", "strict": True}
-            )
+        record, anomalies, _ = process_workbook(source, load_rules(MODULE_ROOT))
         assert not anomalies
         assert record is not None
         assert record["cost"] is None

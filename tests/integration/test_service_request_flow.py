@@ -5,7 +5,7 @@ import pytest
 
 from core.ai.audit import ConsentAuditRepository
 from core.ai.gateway import AIGateway, ConsentRequired
-from core.ai.providers import MockProvider
+from core.ai.providers import MockProvider, ProviderConfigurationError
 from core.confirmations.service import ConfirmationService
 from core.contracts.confirmation import ConfirmationAnswer
 from core.contracts.enums import ModuleId
@@ -127,6 +127,39 @@ def test_missing_consent_and_forbidden_namespace_are_typed(database, tmp_path: P
             task_dir,
         )
 
+
+def test_unavailable_ai_provider_is_written_as_degraded_response(
+    database, tmp_path: Path
+) -> None:
+    class Unavailable:
+        def complete(self, _request):
+            raise ProviderConfigurationError("sensitive local provider detail")
+
+    knowledge = KnowledgeRepository(database)
+    audit = ConsentAuditRepository(database)
+    gateway = AIGateway(Unavailable(), RedactionService(), audit)
+    orchestrator = ServiceOrchestrator(knowledge, gateway, provider_id="deepseek")
+    task_dir = tmp_path / "task-provider-error"
+    task_dir.mkdir()
+
+    path = orchestrator.resolve(
+        "task-provider-error",
+        "moisture",
+        {"shared", "moisture"},
+        [_requests()[1]],
+        {"ai-1": True},
+        task_dir,
+    )
+
+    response = json.loads(path.read_text(encoding="utf-8"))["responses"][0]
+    assert response == {
+        "request_id": "ai-1",
+        "service": "ai",
+        "status": "error",
+        "text": None,
+        "error": "provider_error",
+    }
+    assert "sensitive" not in path.read_text(encoding="utf-8")
 
 def _task_service(app_services: dict[str, object]) -> TaskService:
     orchestrator, _audit = _orchestrator(app_services["database"])
