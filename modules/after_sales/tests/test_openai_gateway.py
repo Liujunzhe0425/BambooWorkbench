@@ -121,6 +121,33 @@ def test_create_model_response_uses_deepseek_chat_api_and_returns_normalized_sha
     assert result["reasoning_content"] == "推理过程"
 
 
+def test_openai_compatible_provider_omits_deepseek_only_thinking_fields():
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return FakeHTTPResponse(
+            {
+                "id": "compatible-test",
+                "model": "compatible-model",
+                "choices": [{"finish_reason": "stop", "message": {"content": "成功"}}],
+            }
+        )
+
+    with patch("after_sales_agent.deepseek_gateway.urllib.request.urlopen", fake_urlopen):
+        create_model_response(
+            {"model": "compatible-model", "input": "分析售后问题"},
+            {
+                "provider": "openai-compatible",
+                "api_key": "sk-test",
+                "base_url": "https://example.invalid/v1",
+            },
+        )
+
+    assert "thinking" not in captured["payload"]
+    assert "reasoning_effort" not in captured["payload"]
+
+
 def test_deepseek_gateway_retries_rate_limit_then_succeeds():
     attempts = {"count": 0}
 

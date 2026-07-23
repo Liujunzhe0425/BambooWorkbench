@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "module_id": "after_sales",
   "module_name": "售后统计",
-  "module_version": "1.5.0",
+  "module_version": "1.6.0",
   "entrypoint": "run_module.bat",
   "supported_extensions": [".xlsx", ".xlsm"],
   "supports_single_file": true,

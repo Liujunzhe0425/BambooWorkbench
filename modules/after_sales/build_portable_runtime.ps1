@@ -36,6 +36,7 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
 & $Python -m PyInstaller --noconfirm --clean --onedir `
     --name after_sales_agent `
     --paths (Join-Path $ModuleRoot 'src') `
+    --collect-submodules keyring.backends `
     --workpath (Join-Path $BuildRoot 'work') `
     --distpath (Join-Path $BuildRoot 'dist') `
     --specpath (Join-Path $BuildRoot 'spec') `

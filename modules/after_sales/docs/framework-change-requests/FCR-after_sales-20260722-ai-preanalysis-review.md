@@ -3,16 +3,18 @@ request_id: FCR-after_sales-20260722-ai-preanalysis-review
 module_id: after_sales
 module_version: 1.5.0
 owner: 售后分析模块负责人
-status: proposed
+status: superseded
 framework_areas:
   - workflow
   - service
   - ui
 breaking_change: false
-required_before_module_merge: true
+required_before_module_merge: false
 ---
 
 # 框架适配请求：AI 预分析完成后再进入逐文件人工复核
+
+> 本请求已被 `FCR-after_sales-20260723-module-local-ai-config.md` 取代。新请求采用售后模块页一次配置与一次显式启动授权，避免生成逐请求“允许/拒绝”确认项。
 
 ## 1. 业务目标与使用场景
 

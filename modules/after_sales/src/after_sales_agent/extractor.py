@@ -312,6 +312,12 @@ def process_workbook(
         "selected_solution": api_analysis.get("selected_solution")
         if api_analysis
         else fields.get("solution", ""),
+        "responsible_factory": api_analysis.get("responsible_factory", "")
+        if api_analysis
+        else "",
+        "responsible_factory_reason": api_analysis.get("responsible_factory_reason", "")
+        if api_analysis
+        else "",
         "resolution_status": resolution_status,
         "resolution_reason": resolution_reason,
         "resolution_analysis_source": resolution_analysis_source,

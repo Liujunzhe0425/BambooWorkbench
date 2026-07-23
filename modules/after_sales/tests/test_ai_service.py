@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MODULE_ROOT / "src"))
@@ -179,7 +180,7 @@ def test_incomplete_response_rejects_the_whole_chunk_and_keeps_every_record(tmp_
     assert all(record["needs_review"] is True for record in records)
 
 
-def test_cli_draft_declares_ai_request_and_finalize_consumes_valid_response(
+def test_cli_uses_module_ai_before_review_without_refusal_and_reuses_draft_snapshot(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "source.xlsx"
@@ -189,9 +190,9 @@ def test_cli_draft_declares_ai_request_and_finalize_consumes_valid_response(
         brand_text="桃花江户外竹地板",
         date_text="2026-05-10",
         feedback="产品尺寸不符",
-        solution="补发产品，材料费1200元、运费300元，正在处理中。",
+        solution="补发产品，费用以人工复核为准，正在处理中。",
     )
-    draft_output = tmp_path / "draft"
+    draft_output = tmp_path / "output-draft"
     draft_job = {
         "schema_version": "1.0",
         "job_id": "ai-draft",
@@ -209,10 +210,42 @@ def test_cli_draft_declares_ai_request_and_finalize_consumes_valid_response(
     }
     draft_job_path = tmp_path / "draft-job.json"
     draft_job_path.write_text(json.dumps(draft_job, ensure_ascii=False), encoding="utf-8")
-    assert run_job(draft_job_path) == 0
+    calls: list[str] = []
+
+    def fake_analysis(*_args, **_kwargs):
+        calls.append("analysis")
+        return _analysis("ai-draft-1")
+
+    with patch(
+        "after_sales_agent.extractor.analyze_issue_with_api",
+        side_effect=fake_analysis,
+    ):
+        assert (
+            run_job(
+                draft_job_path,
+                {
+                    "api": {
+                        "provider": "deepseek",
+                        "api_key": "sk-test",
+                        "base_url": "https://api.deepseek.com",
+                        "model": "deepseek-v4-flash",
+                    }
+                },
+            )
+            == 0
+        )
     draft = json.loads((draft_output / "result.json").read_text(encoding="utf-8"))
-    assert len(draft["service_requests"]) == 1
-    assert draft["service_requests"][0]["service"] == "ai"
+    assert draft["service_requests"] == []
+    assert calls == ["analysis"]
+    assert {item["field"] for item in draft["confirmations"]} >= {
+        "售后费用",
+        "责任工厂",
+        "投诉类型",
+    }
+    prompts = {item["field"]: item for item in draft["confirmations"]}
+    assert prompts["售后费用"]["suggested_value"] == 1500
+    assert prompts["责任工厂"]["suggested_value"] == "二厂"
+    assert all("拒绝" not in json.dumps(item, ensure_ascii=False) for item in draft["confirmations"])
 
     confirmation_path = tmp_path / "confirmation.json"
     confirmation_path.write_text(
@@ -232,19 +265,15 @@ def test_cli_draft_declares_ai_request_and_finalize_consumes_valid_response(
         ),
         encoding="utf-8",
     )
-    response_path = tmp_path / "service-response.json"
-    _write_response(response_path, draft["service_requests"], task_id="ai-draft")
-
-    final_output = tmp_path / "final"
+    final_output = tmp_path / "output-final"
     final_job = {
         **draft_job,
         "job_id": "ai-final",
         "phase": "finalize",
         "output_dir": str(final_output.resolve()),
-        "ai_enabled": True,
         "parent_job_id": "ai-draft",
         "confirmation_file": str(confirmation_path.resolve()),
-        "service_response_file": str(response_path.resolve()),
+        "service_response_file": None,
     }
     final_job_path = tmp_path / "final-job.json"
     final_job_path.write_text(json.dumps(final_job, ensure_ascii=False), encoding="utf-8")
@@ -253,6 +282,7 @@ def test_cli_draft_declares_ai_request_and_finalize_consumes_valid_response(
     records = json.loads((final_output / "after_sales_records.json").read_text(encoding="utf-8"))
 
     assert final["service_requests"] == []
-    assert records[0]["ai_service_status"] == "智能分析完成"
+    assert calls == ["analysis"]
     assert records[0]["issue_analysis_source"] == "api"
     assert records[0]["issue_reason_summary"] == "开片指令错误导致尺寸不符"
+    assert records[0]["responsible_factory"] == "二厂"

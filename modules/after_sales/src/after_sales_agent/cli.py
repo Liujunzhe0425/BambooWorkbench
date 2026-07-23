@@ -16,11 +16,6 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from after_sales_agent import MODULE_ID, MODULE_NAME, MODULE_VERSION
-from after_sales_agent.ai_service import (
-    apply_ai_service_outcome,
-    build_ai_service_requests,
-    read_ai_service_responses,
-)
 from after_sales_agent.analysis import write_analysis_report
 from after_sales_agent.annual_rollup import write_annual_rollup_workbook
 from after_sales_agent.extractor import file_sha256, process_workbook
@@ -28,8 +23,36 @@ from after_sales_agent.manual_review import (
     apply_business_review_value,
     build_required_review_prompts,
 )
+from after_sales_agent.module_ai_config import load_saved_module_ai_config
 from after_sales_agent.report import write_summary_workbook
 from after_sales_agent.rules import load_rules
+
+
+_DRAFT_AI_SNAPSHOT_FIELDS = {
+    "api_analysis",
+    "api_cost_candidate",
+    "api_cost_evidence",
+    "analysis_note",
+    "brand",
+    "brand_confidence",
+    "brand_evidence",
+    "brand_reason",
+    "closed",
+    "closed_analysis_source",
+    "closed_reason",
+    "issue_analysis_source",
+    "issue_confidence",
+    "issue_evidence",
+    "issue_reason_summary",
+    "issue_types",
+    "primary_issue_type",
+    "responsible_factory",
+    "responsible_factory_reason",
+    "resolution_analysis_source",
+    "resolution_reason",
+    "resolution_status",
+    "selected_solution",
+}
 
 
 def _configure_standard_streams() -> None:
@@ -91,9 +114,9 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
     output_dir = Path(job["output_dir"]).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     rules = load_rules(module_root, job.get("module_config_file"))
-    # 统一工作台不会把 API Key 交给业务模块。只有独立网站通过进程内
-    # runtime_config 调用本函数时才允许使用直连配置。
-    api_config = (runtime_config or {}).get("api") if job.get("ai_enabled") else None
+    api_config = (runtime_config or {}).get("api")
+    if api_config is None and job.get("phase") == "draft":
+        api_config = load_saved_module_ai_config()
     progress_callback = (runtime_config or {}).get("progress_callback")
     result = _empty_result(job, rules, started_at)
     root_job_id = (
@@ -106,6 +129,9 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
         input_files = expand_inputs(job.get("input_files", []))
         result["summary"]["input_count"] = len(input_files)
         records: list[dict[str, Any]] = []
+        draft_snapshots = (
+            _load_draft_ai_snapshots(output_dir) if job.get("phase") == "finalize" else {}
+        )
         seen_hashes: dict[str, str] = {}
         _notify_progress(
             progress_callback,
@@ -156,7 +182,17 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 duplicate_of = seen_hashes.get(digest)
                 seen_hashes.setdefault(digest, str(input_file))
 
-                record, anomalies, confirmations = process_workbook(input_file, rules, api_config)
+                record, anomalies, extractor_confirmations = process_workbook(
+                    input_file, rules, api_config
+                )
+                if record:
+                    _restore_draft_ai_snapshot(record, draft_snapshots)
+                confirmations = [
+                    item
+                    for item in extractor_confirmations
+                    if item.get("field")
+                    not in {"enterprise_cost_amount", "issue_types", "primary_issue_type"}
+                ]
                 if record:
                     confirmations.extend(build_required_review_prompts(record, rules))
                 result["anomalies"].extend(
@@ -219,23 +255,6 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                         "current_file": input_file.name,
                     },
                 )
-
-        ai_service_requests = build_ai_service_requests(
-            root_job_id=root_job_id,
-            records=records,
-        )
-        if job.get("phase") == "draft":
-            result["service_requests"] = ai_service_requests
-        else:
-            ai_outcome = read_ai_service_responses(
-                Path(job["service_response_file"])
-                if job.get("service_response_file")
-                else None,
-                root_job_id=root_job_id,
-                requests=ai_service_requests,
-            )
-            apply_ai_service_outcome(records, ai_outcome)
-            result["errors"].extend(ai_outcome.errors)
 
         answered_confirmation_ids: set[str] = set()
         if job.get("phase") == "finalize":
@@ -302,13 +321,9 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
             },
         ]
         ai_completed = sum(
-            1 for record in records if record.get("ai_service_status") == "智能分析完成"
+            1 for record in records if record.get("issue_analysis_source") == "api"
         )
-        ai_summary = (
-            f"；AI智能分析完成 {ai_completed} 个，其余保留离线结果并由人工复核"
-            if job.get("phase") == "finalize"
-            else f"；已生成 {len(ai_service_requests)} 个脱敏AI分析请求，等待用户联网授权"
-        )
+        ai_summary = f"；AI智能分析完成 {ai_completed} 个，其余保留离线结果并由人工复核"
         result["analysis_summary"] = (
             f"已对账 {len(input_files)} 个输入文件，成功处理 "
             f"{result['summary']['processed_count']} 个，失败 "
@@ -321,6 +336,38 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
         result_path = output_dir / "result.json"
         with result_path.open("w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
+
+
+def _load_draft_ai_snapshots(output_dir: Path) -> dict[str, dict[str, Any]]:
+    """Read validated draft suggestions so finalize never calls a paid API twice."""
+
+    path = output_dir.parent / "output-draft" / "after_sales_records.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError):
+        return {}
+    if not isinstance(payload, list):
+        return {}
+    snapshots: dict[str, dict[str, Any]] = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        digest = str(item.get("file_sha256") or "").strip().casefold()
+        if re.fullmatch(r"[0-9a-f]{64}", digest):
+            snapshots[digest] = item
+    return snapshots
+
+
+def _restore_draft_ai_snapshot(
+    record: dict[str, Any], snapshots: dict[str, dict[str, Any]]
+) -> None:
+    digest = str(record.get("file_sha256") or "").strip().casefold()
+    snapshot = snapshots.get(digest)
+    if not snapshot or snapshot.get("issue_analysis_source") != "api":
+        return
+    for field in _DRAFT_AI_SNAPSHOT_FIELDS:
+        if field in snapshot:
+            record[field] = snapshot[field]
 
 
 def _notify_progress(callback: Any, payload: dict[str, Any]) -> None:
