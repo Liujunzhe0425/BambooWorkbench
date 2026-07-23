@@ -1,57 +1,105 @@
 # 竹丝含水率分析报告
 
-## 数据范围和处理概况
+> 本报告用于辅助业务复核，不替代质量放行、处置或责任认定。
+
+## 运行概况
 
 - 开始时间：`{{ report.started_at.isoformat() }}`
 - 处理状态：{{ report.status_label }}
-- 批次记录数：{{ report.batches | length }}。
+- 输入 {{ report.total_input_count }} 个，成功处理 {{ report.successful_count }} 个，跳过 {{ report.skipped_count }} 个，失败 {{ report.failed_count }} 个。
+- 待人工复核 {{ report.pending_batches | length }} 个。
+- 使用规则版本：`{{ report.rule_version }}`（{{ report.rule_confirmation_label }}）。
 
-## 确定性分析结果
+## 总体结论
 
-{% for batch in report.batches %}
-- `{{ batch.record.record_id }}`：均值 {{ batch.statistics.mean }}，样本数 {{ batch.statistics.sample_count }}，确定性初筛为{{ report.screening_label(batch) }}；{{ report.screening_reason(batch) }}。
-{% else %}
-- 无可报告的确定性分析结果。
+- 正常批次：{{ report.normal_batches | length }} 个。
+- 偏高疑似批次：{{ report.high_batches | length }} 个。
+- 偏低疑似批次：{{ report.low_batches | length }} 个。
+- 信息不足批次：{{ report.data_quality_batches | length }} 个。
+- 处理失败文件：{{ report.failed_count }} 个。
+
+正常批次仅作数量汇总；异常、失败和待人工复核项目在下方展开。所有筛查结果均为辅助复核线索，不构成正式不合格、放行、处置或责任结论。
+
+## 异常、失败与待复核批次
+
+{% for batch in report.detailed_batches %}
+### `{{ batch.record.record_id }}`
+
+- 筛查结果：{{ report.screening_label(batch) }}。
+- 观测均值：{{ report.format_percent(batch.statistics.mean) }}；样本数：{{ batch.statistics.sample_count }}。
+- 异常原因：{{ report.screening_reason(batch) }}。
+- 处理建议：{{ report.review_advice(batch) }}
+{% if report.is_pending(batch) %}
+- 人工复核：待确认。
+{% endif %}
+
 {% endfor %}
+{% for error in report.public_errors %}
+### 处理失败
 
-## 规则快照与适用状态
-
-- 版本：`{{ report.rule_version }}`
-- SHA-256：`{{ report.rule_hash }}`
-- 来源：`{{ report.rule_source }}`
-- 材料适用范围：{{ report.rule_applicable_scope }}
-- 适用状态：{{ report.rule_confirmation_label }}
-
-{% for batch in report.batches %}
-- `{{ batch.record.record_id }}`：下限 {{ batch.lower_threshold if batch.lower_threshold is not none else "无适用规则" }}，上限 {{ batch.upper_threshold if batch.upper_threshold is not none else "无适用规则" }}。
-{% endfor %}
-
-## 已审核经验引用
-
-{% for record_id, citation in report.experience_citations %}
-- `{{ record_id }}`：{{ citation.entry_id }} v{{ citation.version }}《{{ citation.title }}》，来源 `{{ citation.source }}`。
-{% else %}
-- 无已审核经验引用。
-{% endfor %}
-
-## Knowledge 参考
-
-{% for citation in report.knowledge_citations %}
-- Knowledge `{{ citation.namespace }}/{{ citation.record_id }}`《{{ citation.title }}》：{{ citation.content }}（来源：`{{ citation.source }}`）。该内容仅供复核引用，不参与颜色或责任判定。
-{% else %}
-- 无 Knowledge 报告引用。
-{% endfor %}
-
-## 数据质量与处理限制
-
-{% for error in report.errors %}
 - {{ error }}
+
+{% endfor %}
+{% if not report.detailed_batches and not report.errors %}
+- 未发现需要展开的异常、失败或待人工复核项目。
+{% endif %}
+
+## 规则口径
+
+- 材料适用范围：{{ report.rule_applicable_scope }}。
+- 适用状态：{{ report.rule_confirmation_label }}。
+{% for lower, upper in report.threshold_pairs %}
+- 均值初筛范围：下限 {{ report.format_percent(lower) }}，上限 {{ report.format_percent(upper) }}。
 {% else %}
-- 未记录数据质量问题。
+- 本次没有可概括的阈值。
+{% endfor %}
+- 已引用 approved 经验 {{ report.experience_citations | length }} 条，Knowledge {{ report.knowledge_citations | length }} 条；完整追溯信息见技术附录。
+
+## 处理建议
+
+- 对偏高、偏低、信息不足和待人工复核批次，优先核对原始称量、样本状态、日期及来源记录。
+- 对处理失败文件，修正文件结构或数据后单独重试，不影响其他成功批次。
+- 业务处置须由授权人员结合现场情况、现行标准和复核结果决定。
+
+{% if report.has_data_quality_risks %}
+## 数据质量风险
+
+{% for batch in report.data_quality_batches %}
+- `{{ batch.record.record_id }}`：{{ report.screening_reason(batch) }}。
+{% endfor %}
+{% for error in report.public_errors %}
+- {{ error }}
 {% endfor %}
 
+{% endif %}
 ## 颜色语义与使用限制
 
 - 橙色：确定性规则发现偏高疑似。
 - 绿色：确定性规则发现偏低疑似。
-- 上述颜色不表示正式错误、不合格或责任认定，异常记录仍需按业务流程核验。
+- 上述颜色仅用于提示复核优先级，不表示正式错误、不合格、放行、处置或责任认定。
+
+## 技术附录
+
+### 规则追溯
+
+- 版本：`{{ report.rule_version }}`
+- SHA-256：`{{ report.rule_hash }}`
+- 来源：`{{ report.rule_source }}`
+- 适用范围：{{ report.rule_applicable_scope }}
+- 适用状态：{{ report.rule_confirmation_label }}
+
+{% if report.experience_citations %}
+### 已审核经验追溯
+
+{% for record_id, citation in report.experience_citations %}
+- `{{ record_id }}`：{{ citation.entry_id }} v{{ citation.version }}《{{ citation.title }}》，来源 `{{ citation.source }}`。
+{% endfor %}
+{% endif %}
+
+{% if report.knowledge_citations %}
+### Knowledge 追溯
+
+{% for citation in report.knowledge_citations %}
+- Knowledge `{{ citation.namespace }}/{{ citation.record_id }}`《{{ citation.title }}》：{{ citation.content }}（来源：`{{ citation.source }}`）。该内容仅供报告引用，不参与确定性筛查或责任判定。
+{% endfor %}
+{% endif %}

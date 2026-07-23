@@ -5,6 +5,8 @@
 ### 独立 AI 报告与四表汇总
 
 - 普通汇总固定输出四张工作表，删除“模型分析记录”，停止普通任务中的 AI 辅助复判和红蓝提升。
+- 精简普通 `analysis_report.md`：正常批次聚合计数，仅展开异常、失败、信息不足和待复核批次；
+  阈值集中概括，规则哈希、内部来源及完整经验/Knowledge 引用移至技术附录。
 - 新增独立 `ai_report` draft/finalize 路径：当前汇总表必选，历史资料和 approved 经验可选，合法响应生成独立 Markdown/JSON。
 - 新增受控历史资料库和 `run_management.bat` 管理入口，支持四表/旧五表导入、列举、停用和 SHA-256 去重。
 - 新增 approved 经验只读目录；draft、retired 或过期经验不会进入 AI 上下文。
