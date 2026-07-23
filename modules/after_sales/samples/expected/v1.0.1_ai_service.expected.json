@@ -1,0 +1,52 @@
+{
+  "scenario": "售后统一AI服务与三项人工复核",
+  "module_version": "1.0.1",
+  "draft": {
+    "direct_network_call_count": 0,
+    "credential_read_count": 0,
+    "requires_user_consent": true,
+    "response_format": "json_object",
+    "mandatory_review_fields": [
+      "售后费用",
+      "责任工厂",
+      "投诉类型"
+    ],
+    "forbidden_payload_fields": [
+      "customer",
+      "source_file",
+      "api_key",
+      "local_path"
+    ]
+  },
+  "ai_may_suggest": [
+    "issue_types",
+    "primary_issue_type",
+    "reason_summary",
+    "evidence_refs",
+    "review_suggestion",
+    "confidence"
+  ],
+  "ai_must_not_decide": [
+    "brand",
+    "after_sales_fee",
+    "responsible_factory",
+    "responsibility",
+    "compensation",
+    "resolution_status",
+    "closed"
+  ],
+  "degraded_modes": [
+    "denied",
+    "missing_key",
+    "timeout",
+    "rate_limited",
+    "invalid_response",
+    "missing_response"
+  ],
+  "finalize": {
+    "keeps_every_successful_input": true,
+    "human_values_override_suggestions": true,
+    "writes_ai_source_label": true,
+    "raw_ai_json_in_reports": false
+  }
+}

@@ -16,6 +16,11 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from after_sales_agent import MODULE_ID, MODULE_NAME, MODULE_VERSION
+from after_sales_agent.ai_service import (
+    apply_ai_service_outcome,
+    build_ai_service_requests,
+    read_ai_service_responses,
+)
 from after_sales_agent.analysis import write_analysis_report
 from after_sales_agent.annual_rollup import write_annual_rollup_workbook
 from after_sales_agent.extractor import file_sha256, process_workbook
@@ -86,11 +91,13 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
     output_dir = Path(job["output_dir"]).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     rules = load_rules(module_root, job.get("module_config_file"))
-    # 统一工作台不会把 API Key 交给业务模块。只有独立网站通过进程内
-    # runtime_config 调用本函数时才允许使用直连配置。
-    api_config = (runtime_config or {}).get("api") if job.get("ai_enabled") else None
     progress_callback = (runtime_config or {}).get("progress_callback")
     result = _empty_result(job, rules, started_at)
+    root_job_id = (
+        str(job["parent_job_id"])
+        if job.get("phase") == "finalize"
+        else str(job.get("job_id") or "")
+    )
 
     try:
         input_files = expand_inputs(job.get("input_files", []))
@@ -117,7 +124,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
             _notify_progress(
                 progress_callback,
                 {
-                    "phase": "智能辅助分析" if api_config else "离线规则分析",
+                    "phase": "规则解析",
                     "message": progress_message,
                     "total": len(input_files),
                     "completed": input_index - 1,
@@ -146,7 +153,15 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 duplicate_of = seen_hashes.get(digest)
                 seen_hashes.setdefault(digest, str(input_file))
 
-                record, anomalies, confirmations = process_workbook(input_file, rules, api_config)
+                # 桌面入口只执行确定性解析。AI 必须经统一 service_requests 协议，
+                # 这里不得读取密钥、调用模块网关或接收运行时凭据。
+                record, anomalies, extractor_confirmations = process_workbook(input_file, rules)
+                confirmations = [
+                    item
+                    for item in extractor_confirmations
+                    if item.get("field")
+                    not in {"enterprise_cost_amount", "issue_types", "primary_issue_type"}
+                ]
                 if record:
                     confirmations.extend(build_required_review_prompts(record, rules))
                 result["anomalies"].extend(
@@ -158,12 +173,8 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 file_result["anomaly_count"] = len(anomalies)
                 if record:
                     record["input_index"] = input_index
-                    record["case_id"] = f"{job.get('job_id', 'batch')}-{input_index}"
-                    record["analysis_status"] = (
-                        "智能分析完成"
-                        if record.get("issue_analysis_source") == "api"
-                        else "离线规则分析完成"
-                    )
+                    record["case_id"] = f"{root_job_id}-{input_index}"
+                    record["analysis_status"] = "离线规则分析完成"
                     record["analysis_error"] = ""
                     record["included_in_summary"] = True
                     if duplicate_of:
@@ -200,7 +211,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 _notify_progress(
                     progress_callback,
                     {
-                        "phase": "智能辅助分析" if api_config else "离线规则分析",
+                        "phase": "规则解析",
                         "message": f"已完成 {input_index}/{len(input_files)} 个文件",
                         "total": len(input_files),
                         "completed": input_index,
@@ -208,6 +219,42 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                         "failed": result["summary"]["failed_count"],
                         "current_file": input_file.name,
                     },
+                )
+
+        ai_requests = build_ai_service_requests(root_job_id=root_job_id, records=records)
+        if job.get("phase") == "draft":
+            result["service_requests"] = ai_requests
+            for record in records:
+                if record.get("ai_candidate_id"):
+                    record["analysis_status"] = "规则预分析完成（等待AI授权）"
+                    record["analysis_note"] = (
+                        "已生成脱敏AI辅助请求；授权与调用由竹简工作台统一处理"
+                    )
+        elif ai_requests:
+            response_path = (
+                Path(job["service_response_file"])
+                if job.get("service_response_file")
+                else None
+            )
+            outcome = read_ai_service_responses(
+                response_path,
+                root_job_id=root_job_id,
+                requests=ai_requests,
+            )
+            apply_ai_service_outcome(records, outcome)
+            for warning in outcome.warnings:
+                result["anomalies"].extend(
+                    _normalize_anomalies(
+                        [
+                            {
+                                "severity": "warning",
+                                "field": "AI辅助状态",
+                                "message": warning,
+                                "suggestion": "继续使用离线规则结果并完成人工复核",
+                            }
+                        ],
+                        len(result["anomalies"]),
+                    )
                 )
 
         answered_confirmation_ids: set[str] = set()
@@ -222,6 +269,16 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 for item in result["confirmations"]
                 if item["confirmation_id"] not in answered_confirmation_ids
             ]
+            for record in records:
+                if not record.get("manual_review_completed"):
+                    continue
+                current_status = str(record.get("analysis_status") or "")
+                if record.get("issue_analysis_source") == "api":
+                    record["analysis_status"] = "AI辅助分析完成（已人工复核）"
+                elif "降级" in current_status:
+                    record["analysis_status"] = "AI不可用，已降级为离线规则（已人工复核）"
+                elif record.get("included_in_summary"):
+                    record["analysis_status"] = "离线规则分析完成（已人工复核）"
 
         _notify_progress(
             progress_callback,
@@ -274,11 +331,29 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 "mime_type": "text/markdown",
             },
         ]
+        ai_completed = sum(
+            1 for record in records if record.get("issue_analysis_source") == "api"
+        )
+        ai_degraded = sum(
+            1
+            for record in records
+            if "降级" in str(record.get("analysis_status") or "")
+        )
+        if job.get("phase") == "draft":
+            ai_summary = (
+                f"；生成 {len(ai_requests)} 个脱敏AI辅助请求，须由用户逐次授权，"
+                "费用、责任工厂和投诉类型仍须人工复核"
+            )
+        else:
+            ai_summary = (
+                f"；AI辅助完成 {ai_completed} 个，AI降级 {ai_degraded} 个，"
+                "其余使用离线规则，所有高风险字段均以人工复核为准"
+            )
         result["analysis_summary"] = (
             f"已对账 {len(input_files)} 个输入文件，成功处理 "
             f"{result['summary']['processed_count']} 个，失败 "
             f"{result['summary']['failed_count']} 个；已生成按报修时间排序的全量汇总、"
-            "三类金额统计、分析图表和分析报告。"
+            f"三类金额统计、分析图表和分析报告{ai_summary}。"
         )
         return 0
     finally:

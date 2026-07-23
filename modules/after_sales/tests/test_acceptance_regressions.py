@@ -92,7 +92,8 @@ def test_offline_complete_file_enters_required_business_review(tmp_path: Path) -
     records = json.loads(
         (tmp_path / "output" / "after_sales_records.json").read_text(encoding="utf-8")
     )
-    assert records[0]["analysis_status"] == "离线规则分析完成"
+    assert records[0]["analysis_status"] == "规则预分析完成（等待AI授权）"
+    assert result["service_requests"]
     assert records[0]["enterprise_cost_amount"] == 1000
 
 
@@ -273,7 +274,7 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
     draft_output = tmp_path / "draft-output"
     draft = _run(tmp_path, _job([source], draft_output), "draft-job")
     expected_fields = {
-        "enterprise_cost_amount",
+        "售后费用",
         "internal_accountability_amount",
         "external_borne_amount",
     }
@@ -281,7 +282,7 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
     assert expected_fields <= prompts.keys()
 
     values = {
-        "enterprise_cost_amount": 1200,
+        "售后费用": 1200,
         "internal_accountability_amount": 200,
         "external_borne_amount": 300,
     }
@@ -322,8 +323,10 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
 
     assert final["status"] == "success"
     assert final["summary"]["confirmation_count"] == 0
-    for field, amount in values.items():
-        assert record[field] == amount
+    assert record["after_sales_fee_amount"] == 1200
+    assert record["enterprise_cost_amount"] == 1200
+    assert record["internal_accountability_amount"] == 200
+    assert record["external_borne_amount"] == 300
     assert record["fee_amount"] == 1200
     assert detail.cell(2, headers["企业售后成本"]).value == 1200
     assert detail.cell(2, headers["内部责任扣款"]).value == 200

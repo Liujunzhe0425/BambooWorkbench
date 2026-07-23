@@ -56,7 +56,7 @@ def test_draft_and_finalize_write_manual_fee_to_final_excel(tmp_path):
     answers = []
     for prompt in draft_result["confirmations"]:
         value = (
-            3200 if prompt["field"] == "enterprise_cost_amount" else prompt.get("suggested_value")
+            3200 if prompt["field"] == "售后费用" else prompt.get("suggested_value")
         )
         answers.append(
             {

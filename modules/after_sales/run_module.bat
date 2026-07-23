@@ -13,6 +13,11 @@ if defined PYTHON_EXE (
   exit /b %ERRORLEVEL%
 )
 
+if exist "%MODULE_DIR%..\..\.venv\Scripts\python.exe" (
+  "%MODULE_DIR%..\..\.venv\Scripts\python.exe" "%MODULE_DIR%src\after_sales_agent\cli.py" %*
+  exit /b %ERRORLEVEL%
+)
+
 where python >nul 2>nul
 if not errorlevel 1 (
   python "%MODULE_DIR%src\after_sales_agent\cli.py" %*
