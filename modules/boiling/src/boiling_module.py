@@ -6,6 +6,7 @@ import math
 import re
 import sys
 import tempfile
+from copy import copy
 from pathlib import Path
 
 
@@ -30,7 +31,10 @@ except ImportError as exc:  # pragma: no cover - exercised in a clean environmen
 
 
 MODULE_ID = "boiling"
-MODULE_VERSION = "1.0.0"
+MODULE_VERSION = "1.0.1"
+MAX_AI_RECORDS = 50
+MAX_AI_PAYLOAD_BYTES = 65_536
+MAX_AI_RESPONSE_CHARS = 8_000
 
 
 def resolve_module_root():
@@ -1426,22 +1430,44 @@ def write_summary(records, output_path, rules, excluded_records=None):
 
     if records:
         chart_sheet = workbook.create_sheet("分析图表")
-        chart_sheet.append(["批号/文件", "平均密度(g/cm³)", "平均膨胀率"])
+        chart_sheet.append(["批号/文件", "平均密度(g/cm³)"])
         for record in records:
             chart_sheet.append(
                 [
                     record["batch_no"] or Path(record["source_file"]).stem,
                     record["average_density_g_cm3"],
-                    record["average_expansion_ratio"],
                 ]
             )
-        style_header(chart_sheet[1])
+        specification_expansions = {}
+        for record in records:
+            specification = as_text(record.get("specification")) or "未填写"
+            values = [
+                sample.get("expansion_ratio")
+                for sample in record.get("samples", [])
+                if sample.get("expansion_ratio") is not None
+            ]
+            if values:
+                specification_expansions.setdefault(specification, []).extend(values)
+        if not specification_expansions:
+            specification_expansions["无可计算数据"] = []
+        chart_sheet.cell(1, 4, "规格型号")
+        chart_sheet.cell(1, 5, "平均膨胀率")
+        for row_index, (specification, values) in enumerate(
+            specification_expansions.items(), start=2
+        ):
+            chart_sheet.cell(row_index, 4, specification)
+            chart_sheet.cell(row_index, 5, mean(values))
+        style_header([chart_sheet.cell(1, 1), chart_sheet.cell(1, 2)])
+        style_header([chart_sheet.cell(1, 4), chart_sheet.cell(1, 5)])
         chart_sheet.column_dimensions["A"].width = 24
         chart_sheet.column_dimensions["B"].width = 18
-        chart_sheet.column_dimensions["C"].width = 18
-        for cell in chart_sheet["C"][1:]:
+        chart_sheet.column_dimensions["D"].width = 24
+        chart_sheet.column_dimensions["E"].width = 18
+        for cell in chart_sheet["E"][1 : len(specification_expansions) + 1]:
             cell.number_format = "0.00%"
-        categories = Reference(chart_sheet, min_col=1, min_row=2, max_row=len(records) + 1)
+        batch_categories = Reference(
+            chart_sheet, min_col=1, min_row=2, max_row=len(records) + 1
+        )
         density_chart = BarChart()
         density_chart.type = "col"
         density_chart.title = "各批次平均密度对比"
@@ -1452,24 +1478,36 @@ def write_summary(records, output_path, rules, excluded_records=None):
             Reference(chart_sheet, min_col=2, min_row=1, max_row=len(records) + 1),
             titles_from_data=True,
         )
-        density_chart.set_categories(categories)
+        density_chart.set_categories(batch_categories)
         density_chart.height = 8
         density_chart.width = 15
-        chart_sheet.add_chart(density_chart, "E2")
+        chart_sheet.add_chart(density_chart, "G2")
         expansion_chart = BarChart()
         expansion_chart.type = "col"
-        expansion_chart.title = "各批次平均膨胀率对比"
+        expansion_chart.title = "各型号规格平均膨胀率对比"
         expansion_chart.y_axis.title = "比例"
         expansion_chart.y_axis.numFmt = "0.0%"
         expansion_chart.legend = None
         expansion_chart.add_data(
-            Reference(chart_sheet, min_col=3, min_row=1, max_row=len(records) + 1),
+            Reference(
+                chart_sheet,
+                min_col=5,
+                min_row=1,
+                max_row=len(specification_expansions) + 1,
+            ),
             titles_from_data=True,
         )
-        expansion_chart.set_categories(categories)
+        expansion_chart.set_categories(
+            Reference(
+                chart_sheet,
+                min_col=4,
+                min_row=2,
+                max_row=len(specification_expansions) + 1,
+            )
+        )
         expansion_chart.height = 8
         expansion_chart.width = 15
-        chart_sheet.add_chart(expansion_chart, "E18")
+        chart_sheet.add_chart(expansion_chart, "G18")
 
         result_counts = {"合格": 0, "不合格": 0}
         for record in records:
@@ -1511,7 +1549,7 @@ def write_summary(records, output_path, rules, excluded_records=None):
         result_chart.dataLabels.showLeaderLines = True
         result_chart.height = 8
         result_chart.width = 15
-        chart_sheet.add_chart(result_chart, "E34")
+        chart_sheet.add_chart(result_chart, "G34")
         chart_sheet.sheet_view.showGridLines = False
 
     thin_gray = Side(style="thin", color="D9E2F3")
@@ -1526,74 +1564,586 @@ def write_summary(records, output_path, rules, excluded_records=None):
     workbook.save(output_path)
 
 
+def write_analysis_workbook(
+    records,
+    anomalies,
+    confirmations,
+    output_path,
+    rules,
+    excluded_records=None,
+    ai_review=None,
+):
+    """Write a concise, human-oriented report without replacing audit outputs."""
+    excluded_records = excluded_records or []
+    workbook = openpyxl.Workbook()
+    overview = workbook.active
+    overview.title = "分析报告"
+    overview.sheet_view.showGridLines = False
+
+    title_fill = PatternFill("solid", fgColor="17365D")
+    section_fill = PatternFill("solid", fgColor="D9EAF7")
+    note_fill = PatternFill("solid", fgColor="FFF2CC")
+    thin_gray = Side(style="thin", color="D9E2F3")
+    all_border = Border(left=thin_gray, right=thin_gray, top=thin_gray, bottom=thin_gray)
+
+    overview.merge_cells("A1:L2")
+    overview["A1"] = "水煮实验分析报告"
+    overview["A1"].font = Font(name="微软雅黑", size=20, bold=True, color="FFFFFF")
+    overview["A1"].fill = title_fill
+    overview["A1"].alignment = Alignment(horizontal="center", vertical="center")
+    overview.merge_cells("A3:L3")
+    overview["A3"] = (
+        "本报告用于快速阅读规则复核结果；人工复核项须由有权限人员确认，不替代最终业务签字。"
+    )
+    overview["A3"].fill = note_fill
+    overview["A3"].font = Font(name="微软雅黑", italic=True, color="7F6000")
+    overview["A3"].alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    status_counts = {"正常": 0, "异常": 0, "待确认": 0}
+    for record in records:
+        status = record.get("business_status", "")
+        if status in status_counts:
+            status_counts[status] += 1
+    if confirmations:
+        overall_status = "待人工确认"
+    elif anomalies:
+        overall_status = "发现异常/观察项"
+    elif excluded_records:
+        overall_status = "部分文件信息不足"
+    else:
+        overall_status = "本批次未发现异常"
+
+    metric_labels = [
+        "整体状态",
+        "纳入统计",
+        "正常",
+        "异常",
+        "待确认",
+        "信息不足",
+    ]
+    metric_values = [
+        overall_status,
+        len(records),
+        status_counts["正常"],
+        status_counts["异常"],
+        status_counts["待确认"],
+        len(excluded_records),
+    ]
+    for index, (label, value) in enumerate(zip(metric_labels, metric_values, strict=True)):
+        start_column = index * 2 + 1
+        label_cell = overview.cell(5, start_column, label)
+        value_cell = overview.cell(6, start_column, value)
+        overview.merge_cells(
+            start_row=5,
+            start_column=start_column,
+            end_row=5,
+            end_column=start_column + 1,
+        )
+        overview.merge_cells(
+            start_row=6,
+            start_column=start_column,
+            end_row=6,
+            end_column=start_column + 1,
+        )
+        label_cell.fill = section_fill
+        label_cell.font = Font(name="微软雅黑", bold=True, color="1F4E78")
+        value_cell.font = Font(name="微软雅黑", size=14, bold=True)
+        label_cell.alignment = value_cell.alignment = Alignment(
+            horizontal="center", vertical="center", wrap_text=True
+        )
+        label_cell.border = value_cell.border = all_border
+        style_result_cell(value_cell, value)
+
+    overview.merge_cells("A8:L8")
+    overview["A8"] = "批次结果一览"
+    overview["A8"].fill = section_fill
+    overview["A8"].font = Font(name="微软雅黑", size=12, bold=True, color="1F4E78")
+    overview["A8"].alignment = Alignment(vertical="center")
+    overview_headers = [
+        "来源文件",
+        "批号",
+        "产品",
+        "产品用途",
+        "平均密度(g/cm³)",
+        "密度判定",
+        "平均膨胀率",
+        "自动等级",
+        "需人工复核",
+        "浸渍剥离",
+        "业务状态",
+        "阅读提示",
+    ]
+    overview.append(overview_headers)
+    style_header(overview[9])
+    for record in records:
+        hints = []
+        if record.get("conflicts"):
+            hints.append(f"复算冲突 {len(record['conflicts'])} 项")
+        if record.get("conclusion_rule_conflicts"):
+            hints.append(f"结论冲突 {len(record['conclusion_rule_conflicts'])} 项")
+        if record.get("expansion_human_review_required"):
+            hints.append("膨胀率需人工复核")
+        overview.append(
+            [
+                Path(record["source_file"]).name,
+                record.get("batch_no", ""),
+                record.get("product", ""),
+                record.get("product_usage", ""),
+                record.get("average_density_g_cm3"),
+                record.get("rule_observations", {}).get("density", ""),
+                record.get("average_expansion_ratio"),
+                record.get("expansion_grade", ""),
+                "是" if record.get("expansion_human_review_required") else "否",
+                record.get("immersion_peel_result", ""),
+                record.get("business_status", ""),
+                "；".join(hints) or "无特别提示",
+            ]
+        )
+    if not records:
+        overview.append(["无可纳入正常统计的文件"] + [""] * 11)
+    overview.freeze_panes = "A10"
+    overview.auto_filter.ref = f"A9:L{overview.max_row}"
+    for row in range(10, overview.max_row + 1):
+        overview[f"E{row}"].number_format = "0.000"
+        overview[f"G{row}"].number_format = "0.00%"
+        for column in ("F", "H", "I", "J", "K"):
+            style_result_cell(overview[f"{column}{row}"], overview[f"{column}{row}"].value)
+    overview.row_dimensions[1].height = 28
+    overview.row_dimensions[2].height = 28
+    overview.row_dimensions[3].height = 32
+    for column, width in {
+        "A": 28,
+        "B": 16,
+        "C": 18,
+        "D": 14,
+        "E": 18,
+        "F": 34,
+        "G": 16,
+        "H": 18,
+        "I": 14,
+        "J": 18,
+        "K": 14,
+        "L": 32,
+    }.items():
+        overview.column_dimensions[column].width = width
+
+    attention = workbook.create_sheet("需要关注")
+    attention.sheet_view.showGridLines = False
+    attention_headers = [
+        "类别",
+        "严重程度",
+        "来源文件",
+        "工作表",
+        "单元格/区域",
+        "业务字段",
+        "原因与处理提示",
+        "稳定标识",
+    ]
+    attention.append(attention_headers)
+    style_header(attention[1])
+    for item in anomalies:
+        source = item.get("source", {})
+        attention.append(
+            [
+                "异常/观察",
+                item.get("severity", ""),
+                Path(source.get("source_file", "")).name,
+                source.get("sheet", ""),
+                source.get("cell_or_range", ""),
+                item.get("field", ""),
+                item.get("message", ""),
+                item.get("anomaly_id", ""),
+            ]
+        )
+    for item in confirmations:
+        source = item.get("source", {})
+        attention.append(
+            [
+                "人工确认",
+                "待确认",
+                Path(source.get("source_file", "")).name,
+                source.get("sheet", ""),
+                source.get("cell_or_range", ""),
+                item.get("field", ""),
+                item.get("reason", ""),
+                item.get("confirmation_id", ""),
+            ]
+        )
+    if not anomalies and not confirmations:
+        attention.append(["无", "", "", "", "", "", "本批次没有异常、观察或确认项。", ""])
+    attention.freeze_panes = "A2"
+    attention.auto_filter.ref = attention.dimensions
+    for row in range(2, attention.max_row + 1):
+        style_result_cell(attention[f"B{row}"], attention[f"B{row}"].value)
+    for column, width in {
+        "A": 14,
+        "B": 14,
+        "C": 28,
+        "D": 18,
+        "E": 18,
+        "F": 18,
+        "G": 72,
+        "H": 34,
+    }.items():
+        attention.column_dimensions[column].width = width
+
+    excluded = workbook.create_sheet("未纳入统计")
+    excluded.sheet_view.showGridLines = False
+    excluded.append(["来源文件", "批号", "产品", "缺失字段", "阻断原因", "处理建议"])
+    style_header(excluded[1])
+    for record in excluded_records:
+        excluded.append(
+            [
+                Path(record["source_file"]).name,
+                record.get("batch_no", ""),
+                record.get("product", ""),
+                "、".join(record.get("missing_fields", [])),
+                "；".join(record.get("blocking_reasons", [])),
+                "补全源表后重新运行；该文件当前未参与批次统计。",
+            ]
+        )
+    if not excluded_records:
+        excluded.append(["无", "", "", "", "本批次没有因信息不足而排除的文件。", ""])
+    excluded.freeze_panes = "A2"
+    excluded.auto_filter.ref = excluded.dimensions
+    for column, width in {"A": 28, "B": 16, "C": 20, "D": 34, "E": 60, "F": 48}.items():
+        excluded.column_dimensions[column].width = width
+
+    notes = workbook.create_sheet("阅读说明")
+    notes.sheet_view.showGridLines = False
+    notes.append(["项目", "说明"])
+    notes.append(["规则版本", rules.get("rule_version", "")])
+    notes.append(["正常", "可计算且未发现异常或待确认项。"])
+    notes.append(["异常", "发现测量、剥离或规则观察异常，需要业务人员复核。"])
+    notes.append(["待确认", "产品用途、数据冲突或规则边界需要人工确认。"])
+    notes.append(["信息不足", "空表、未完成表或无可计算试件，未纳入正常统计。"])
+    notes.append(["自动等级", "按当前模块规则自动计算，仅用于辅助判断。"])
+    notes.append(["责任边界", "框架兼容通过不代表业务结论正确；最终结论由有权限人员确认。"])
+    style_header(notes[1])
+    notes.column_dimensions["A"].width = 20
+    notes.column_dimensions["B"].width = 90
+
+    if ai_review:
+        ai_sheet = workbook.create_sheet("AI辅助建议")
+        ai_sheet.sheet_view.showGridLines = False
+        ai_sheet.merge_cells("A1:H2")
+        ai_sheet["A1"] = "AI 辅助建议（不作为业务结论）"
+        ai_sheet["A1"].fill = title_fill
+        ai_sheet["A1"].font = Font(name="微软雅黑", size=16, bold=True, color="FFFFFF")
+        ai_sheet["A1"].alignment = Alignment(horizontal="center", vertical="center")
+        ai_sheet["A4"] = "状态"
+        ai_sheet["B4"] = ai_review.get("status", "")
+        ai_sheet["A5"] = "责任边界"
+        ai_sheet["B5"] = (
+            "AI 仅解释已脱敏的规则结果并提供复核建议；不得改变公式、阈值、自动等级、"
+            "业务状态或人工确认结论。"
+        )
+        ai_sheet["A6"] = "辅助内容"
+        ai_sheet.merge_cells("B6:H18")
+        ai_sheet["B6"] = ai_review.get("text", "")
+        style_header([ai_sheet["A4"], ai_sheet["A5"], ai_sheet["A6"]])
+        ai_sheet["B4"].fill = note_fill
+        ai_sheet["B5"].fill = note_fill
+        ai_sheet["B6"].alignment = Alignment(vertical="top", wrap_text=True)
+        ai_sheet.column_dimensions["A"].width = 18
+        for column in ("B", "C", "D", "E", "F", "G", "H"):
+            ai_sheet.column_dimensions[column].width = 16
+        for row in range(6, 19):
+            ai_sheet.row_dimensions[row].height = 24
+
+    for sheet in workbook.worksheets:
+        for row in sheet.iter_rows():
+            for cell in row:
+                font = copy(cell.font)
+                font.name = "微软雅黑"
+                cell.font = font
+                cell.alignment = Alignment(vertical="center", wrap_text=True)
+                if sheet.title != "分析报告" or cell.row >= 9:
+                    cell.border = all_border
+        sheet.freeze_panes = sheet.freeze_panes or "A2"
+    workbook.save(output_path)
+
+
 def write_analysis_report(
-    records, anomalies, confirmations, output_path, rules, excluded_records=None
+    records,
+    anomalies,
+    confirmations,
+    output_path,
+    rules,
+    excluded_records=None,
+    ai_review=None,
+    run_summary=None,
+    file_results=None,
+    errors=None,
 ):
     excluded_records = excluded_records or []
+    run_summary = run_summary or {}
+    file_results = file_results or []
+    errors = errors or []
+    all_records = [*records, *excluded_records]
+
+    def markdown_text(value):
+        return as_text(value).replace("|", "｜").replace("\n", " ").strip()
+
+    def risk_category(item):
+        field = as_text(item.get("field"))
+        rule_id = as_text(item.get("rule_id"))
+        combined = f"{field} {rule_id} {item.get('message', '')}"
+        if "密度" in combined or "DENSITY" in combined:
+            return "密度"
+        if "膨胀" in combined or "EXPANSION" in combined:
+            return "膨胀率"
+        if "剥离" in combined or "PEEL" in combined:
+            return "浸渍剥离"
+        if "product_usage" in combined or "用途" in combined:
+            return "产品用途"
+        if "结论" in combined or "CONCLUSION" in combined:
+            return "原表结论与规则"
+        if "INCOMPLETE" in combined or "completion" in combined or "完整" in combined:
+            return "信息完整性"
+        return "数据一致性"
+
+    business_counts = {"正常": 0, "异常": 0, "信息不足": 0, "待确认": 0}
+    for record in all_records:
+        status = record.get("business_status", "信息不足")
+        business_counts[status] = business_counts.get(status, 0) + 1
+
+    density_values = [
+        sample.get("density_g_cm3")
+        for record in records
+        for sample in record.get("samples", [])
+        if sample.get("density_g_cm3") is not None
+    ]
+    expansion_values = [
+        sample.get("expansion_ratio")
+        for record in records
+        for sample in record.get("samples", [])
+        if sample.get("expansion_ratio") is not None
+    ]
+    density_ranges = [
+        record.get("density_range_g_cm3")
+        for record in records
+        if record.get("density_range_g_cm3") is not None
+    ]
+    peel_attention = sum(
+        1
+        for record in records
+        if as_text(record.get("immersion_peel_result"))
+        and "合格" not in as_text(record.get("immersion_peel_result"))
+    )
+    density_value_text = (
+        f"{min(density_values):.3f}～{max(density_values):.3f}"
+        if density_values
+        else "无可计算数据"
+    )
+    density_range_text = (
+        f"{max(density_ranges):.3f}" if density_ranges else "无可计算数据"
+    )
+    expansion_value_text = (
+        f"{min(expansion_values):.2%}～{max(expansion_values):.2%}"
+        if expansion_values
+        else "无可计算数据"
+    )
+
+    input_count = run_summary.get("input_count", len(file_results) or len(all_records))
+    processed_count = run_summary.get("processed_count", len(all_records))
+    failed_count = run_summary.get("failed_count", 0)
+    skipped_count = run_summary.get("skipped_count", 0)
     lines = [
         "# 水煮实验分析报告",
         "",
-        f"- 规则版本：`{rules.get('rule_version', '')}`",
-        f"- 纳入正常汇总的文件：{len(records)}",
-        f"- 因信息不足未纳入正常统计的文件：{len(excluded_records)}",
-        f"- 异常/观察项：{len(anomalies)}",
-        f"- 待确认项：{len(confirmations)}",
+        "## 一、运行概况",
         "",
-        "> 本报告按 2026-07-18 确认的 v0.1 规则复核。产品用途缺失、开裂观察缺失以及"
-        "墙板/栏杆 6.5%～8% 规则缺口均转人工确认。",
+        "| 输入文件 | 已处理 | 处理失败 | 重复跳过 | 未纳入正常统计 | 待确认 |",
+        "|---:|---:|---:|---:|---:|---:|",
+        f"| {input_count} | {processed_count} | {failed_count} | {skipped_count} | "
+        f"{len(excluded_records)} | {len(confirmations)} |",
         "",
-        "## 文件摘要",
+        f"> 规则版本：`{rules.get('rule_version', '')}`。业务异常表示检测结果需要关注，"
+        "不等同于文件处理失败。",
         "",
-        "| 文件 | 批号 | 产品 | 业务状态 | 试件数 | 密度最小值 | 密度最大值 | 密度差 | "
-        "平均膨胀率 | 剥离结果 |",
-        "|---|---|---|---|---:|---:|---:|---:|---:|---|",
+        "## 二、总体结论",
+        "",
+        "| 正常 | 异常 | 信息不足 | 待确认 | 规则/计算冲突 |",
+        "|---:|---:|---:|---:|---:|",
+        f"| {business_counts.get('正常', 0)} | {business_counts.get('异常', 0)} | "
+        f"{business_counts.get('信息不足', 0)} | {business_counts.get('待确认', 0)} | "
+        f"{sum(1 for item in anomalies if 'CONFLICT' in as_text(item.get('rule_id')))} |",
+        "",
+        "## 三、关键指标汇总",
+        "",
+        "| 指标 | 本批结果 | 单位/说明 |",
+        "|---|---:|---|",
+        f"| 试件密度范围 | {density_value_text} | g/cm³ |",
+        f"| 文件内最大密度差 | {density_range_text} | g/cm³ |",
+        f"| 试件膨胀率范围 | {expansion_value_text} | 百分比 |",
+        f"| 浸渍剥离需关注文件 | {peel_attention} | 文件数 |",
     ]
-    for record in records:
-        density_min = (
-            "" if record["density_min_g_cm3"] is None else f"{record['density_min_g_cm3']:.3f}"
+
+    issue_files = {}
+    severity_order = {"critical": 3, "warning": 2, "info": 1}
+    for item in anomalies:
+        source = item.get("source", {})
+        filename = Path(source.get("source_file", "")).name or "未知文件"
+        bucket = issue_files.setdefault(
+            filename,
+            {"severity": "info", "categories": set(), "reasons": [], "sources": set()},
         )
-        density_max = (
-            "" if record["density_max_g_cm3"] is None else f"{record['density_max_g_cm3']:.3f}"
+        if severity_order.get(item.get("severity"), 0) > severity_order.get(
+            bucket["severity"], 0
+        ):
+            bucket["severity"] = item.get("severity", "info")
+        bucket["categories"].add(risk_category(item))
+        message = markdown_text(item.get("message"))
+        if message and message not in bucket["reasons"]:
+            bucket["reasons"].append(message)
+        location = " / ".join(
+            value
+            for value in (
+                markdown_text(source.get("sheet")),
+                markdown_text(source.get("cell_or_range")),
+            )
+            if value
         )
-        density_diff = (
-            "" if record["density_range_g_cm3"] is None else f"{record['density_range_g_cm3']:.3f}"
+        if location:
+            bucket["sources"].add(location)
+    for record in excluded_records:
+        filename = Path(record.get("source_file", "")).name or "未知文件"
+        bucket = issue_files.setdefault(
+            filename,
+            {"severity": "critical", "categories": set(), "reasons": [], "sources": set()},
         )
-        expansion = (
-            ""
-            if record["average_expansion_ratio"] is None
-            else f"{record['average_expansion_ratio']:.2%}"
+        bucket["categories"].add("信息完整性")
+        reason = markdown_text("；".join(record.get("blocking_reasons", [])))
+        if reason and reason not in bucket["reasons"]:
+            bucket["reasons"].append(reason)
+    for item in confirmations:
+        source = item.get("source", {})
+        filename = Path(source.get("source_file", "")).name or "未知文件"
+        bucket = issue_files.setdefault(
+            filename,
+            {"severity": "warning", "categories": set(), "reasons": [], "sources": set()},
         )
-        lines.append(
-            f"| {Path(record['source_file']).name} | {record['batch_no']} | "
-            f"{record['product']} | {record['business_status']} | {len(record['samples'])} | "
-            f"{density_min} | {density_max} | {density_diff} | {expansion} | "
-            f"{record['immersion_peel_result']} |"
+        bucket["categories"].add("待人工确认")
+        reason = markdown_text(item.get("reason"))
+        if reason and reason not in bucket["reasons"]:
+            bucket["reasons"].append(reason)
+    for item in file_results:
+        if item.get("status") != "failed":
+            continue
+        filename = Path(item.get("source_file", "")).name or "未知文件"
+        bucket = issue_files.setdefault(
+            filename,
+            {"severity": "critical", "categories": set(), "reasons": [], "sources": set()},
         )
-    lines.extend(["", "## 未纳入正常统计", ""])
-    if excluded_records:
-        for record in excluded_records:
-            blocking_reasons = "；".join(record.get("blocking_reasons", []))
+        bucket["categories"].add("文件处理失败")
+        reason = markdown_text(item.get("error"))
+        if reason and reason not in bucket["reasons"]:
+            bucket["reasons"].append(reason)
+
+    lines.extend(
+        [
+            "",
+            "## 四、异常与待复核明细",
+            "",
+            "| 文件 | 最高级别 | 问题类别 | 主要原因 | 来源 |",
+            "|---|---|---|---|---|",
+        ]
+    )
+    ordered_issues = sorted(
+        issue_files.items(),
+        key=lambda entry: (-severity_order.get(entry[1]["severity"], 0), entry[0]),
+    )
+    if ordered_issues:
+        for filename, item in ordered_issues[:25]:
+            reasons = "；".join(item["reasons"][:2])
+            if len(item["reasons"]) > 2:
+                reasons += f"；另有{len(item['reasons']) - 2}项"
+            sources = "；".join(sorted(item["sources"])[:2]) or "详见结构化记录"
             lines.append(
-                f"- `{Path(record['source_file']).name}`：信息不足（{blocking_reasons}）。"
+                f"| {markdown_text(filename)} | {item['severity']} | "
+                f"{markdown_text('、'.join(sorted(item['categories'])))} | "
+                f"{markdown_text(reasons)} | {markdown_text(sources)} |"
+            )
+        if len(ordered_issues) > 25:
+            lines.append(
+                f"\n> 其余 {len(ordered_issues) - 25} 个需关注文件请在 `boiling_analysis.xlsx` "
+                "的“需要关注”工作表或 `boiling_records.json` 中查看。"
             )
     else:
-        lines.append("- 无。")
-    lines.extend(["", "## 异常与复核", ""])
-    if anomalies:
-        for item in anomalies:
-            sf = Path(item.get('source', {}).get('source_file', '')).name or '?'
-            sh = item.get('source', {}).get('sheet', '?')
+        lines.append("| 无 | - | 本批次未发现异常或待复核事项 | - | - |")
+
+    risk_groups = {}
+    for item in anomalies:
+        category = risk_category(item)
+        group = risk_groups.setdefault(category, {"count": 0, "files": set(), "examples": []})
+        group["count"] += 1
+        filename = Path(item.get("source", {}).get("source_file", "")).name
+        if filename:
+            group["files"].add(filename)
+        message = markdown_text(item.get("message"))
+        if message and message not in group["examples"]:
+            group["examples"].append(message)
+    lines.extend(
+        [
+            "",
+            "## 五、数据风险（按类别汇总）",
+            "",
+            "| 类别 | 项目数 | 涉及文件 | 代表性说明 |",
+            "|---|---:|---:|---|",
+        ]
+    )
+    if risk_groups:
+        for category, group in sorted(risk_groups.items()):
             lines.append(
-                f"- **{item['severity']} / {item['field']}**"
-                f"（来源：{sf} / {sh}）：{item['message']}"
+                f"| {category} | {group['count']} | {len(group['files'])} | "
+                f"{markdown_text('；'.join(group['examples'][:2]))} |"
             )
-        lines.append("- 无异常或观察项。")
-    lines.extend(["", "## 人工确认", ""])
+    else:
+        lines.append("| 无 | 0 | 0 | 本批次未发现数据风险 |")
+
+    if ai_review:
+        lines.extend(
+            [
+                "",
+                "## 六、AI 辅助分析（不作为业务结论）",
+                "",
+                f"- 状态：`{ai_review.get('status', '')}`",
+                "- AI 不能改变公式、阈值、自动等级、业务状态或人工确认结论。",
+                "",
+                ai_review.get("text", ""),
+            ]
+        )
+    next_steps = []
+    if business_counts.get("信息不足", 0):
+        next_steps.append("补齐空表、未完成表或缺失的核心测量数据后重新运行。")
     if confirmations:
-        for item in confirmations:
-            sf = Path(item.get('source', {}).get('source_file', '')).name or '?'
-            sh = item.get('source', {}).get('sheet', '?')
-            lines.append(f"- `{item['confirmation_id']}`（来源：{sf} / {sh}）：{item['reason']}")
+        next_steps.append("完成产品用途或冲突项的人工确认，再执行 finalize。")
+    if "密度" in risk_groups or "膨胀率" in risk_groups:
+        next_steps.append("优先核对异常试件原始读数、单位和来源单元格，必要时安排复测。")
+    if "浸渍剥离" in risk_groups:
+        next_steps.append("复核浸渍剥离原表结论和试件状态，由业务人员签署最终结论。")
+    if errors or failed_count:
+        next_steps.append("修复损坏或结构无法识别的文件后单独重跑，避免遗漏。")
+    if not next_steps:
+        next_steps.append("本批次未发现需立即处理事项；按既定抽检与归档流程执行。")
+    next_section = "七" if ai_review else "六"
+    appendix_section = "八" if ai_review else "七"
+    lines.extend(["", f"## {next_section}、建议的下一步", ""])
+    lines.extend(f"{index}. {step}" for index, step in enumerate(next_steps, 1))
+    lines.extend(
+        [
+            "",
+            f"## {appendix_section}、技术附录",
+            "",
+            (
+                "- 完整异常、确认项、稳定标识、规则 ID 和来源单元格："
+                "`boiling_analysis.xlsx` 的“需要关注”工作表。"
+            ),
+            "- 全部来源、试件明细、规则命中和冲突审计字段：`boiling_records.json`。",
+            "- 本报告不直接倾倒原始 JSON、技术 warning 或 traceback。",
+        ]
+    )
     Path(output_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -1670,7 +2220,9 @@ def validate_job(job):
             errors.append("finalize 阶段缺少 parent_job_id")
         if not job.get("confirmation_file"):
             errors.append("finalize 阶段缺少 confirmation_file")
-    for key in ("module_config_file", "confirmation_file"):
+    if not isinstance(job.get("ai_enabled"), bool):
+        errors.append("ai_enabled 必须为布尔值")
+    for key in ("module_config_file", "confirmation_file", "service_response_file"):
         path_value = job.get(key)
         if path_value is not None and not isinstance(path_value, str):
             errors.append(f"{key} 必须是字符串或 null")
@@ -1770,6 +2322,347 @@ def unresolved_finalize_anomaly(record, fingerprint, confirmation):
     }
 
 
+def ai_root_job_id(job):
+    return as_text(job.get("parent_job_id") or job["job_id"])
+
+
+def ai_metric_name(item):
+    combined = f"{item.get('field', '')} {item.get('rule_id', '')} {item.get('message', '')}"
+    if "密度" in combined or "DENSITY" in combined:
+        return "密度"
+    if "膨胀" in combined or "EXPANSION" in combined:
+        return "膨胀率"
+    if "剥离" in combined or "PEEL" in combined:
+        return "浸渍剥离"
+    if "用途" in combined or "product_usage" in combined:
+        return "产品用途"
+    if "结论" in combined or "CONCLUSION" in combined:
+        return "原表结论与规则冲突"
+    return "数据一致性"
+
+
+def ai_safe_value(value):
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    return sanitize_ai_text(value)[:120]
+
+
+def ai_deviation_direction(item):
+    message = as_text(item.get("message"))
+    if any(word in message for word in ("超过", "偏高", "高于", "上限")):
+        return "above"
+    if any(word in message for word in ("低于", "偏低", "不足", "下限")):
+        return "below"
+    if "冲突" in message:
+        return "conflict"
+    return "review"
+
+
+def ai_record_summary(record, anomalies):
+    source_path = Path(record["source_file"])
+    fingerprint = sha256_file(source_path)
+    related_anomalies = []
+    for item in anomalies:
+        item_source = Path(item.get("source", {}).get("source_file", ""))
+        if item_source.name != source_path.name:
+            continue
+        evidence_refs = []
+        if item.get("anomaly_id"):
+            evidence_refs.append(f"anomaly:{item['anomaly_id']}")
+        if item.get("rule_id"):
+            evidence_refs.append(f"rule:{item['rule_id']}")
+        related_anomalies.append(
+            {
+                "severity": as_text(item.get("severity")),
+                "metric_name": ai_metric_name(item),
+                "observed_value": ai_safe_value(item.get("value")),
+                "rule_id": as_text(item.get("rule_id")),
+                "deviation_direction": ai_deviation_direction(item),
+                "evidence_refs": evidence_refs,
+            }
+        )
+    has_candidate = bool(related_anomalies) or bool(record.get("conflicts")) or bool(
+        record.get("conclusion_rule_conflicts")
+    ) or bool(record.get("expansion_human_review_required"))
+    if not has_candidate:
+        return None
+    evidence_refs = sorted(
+        {
+            reference
+            for item in related_anomalies
+            for reference in item.get("evidence_refs", [])
+        }
+    )
+    if not evidence_refs:
+        evidence_refs = [f"business_status:{as_text(record.get('business_status')) or '待复核'}"]
+    return {
+        "candidate_id": f"candidate-{fingerprint[:16]}",
+        "product_usage": as_text(record.get("product_usage")) or "未确认",
+        "sample_count": len(record.get("samples", [])),
+        "average_density_g_cm3": record.get("average_density_g_cm3"),
+        "density_min_g_cm3": record.get("density_min_g_cm3"),
+        "density_max_g_cm3": record.get("density_max_g_cm3"),
+        "density_range_g_cm3": record.get("density_range_g_cm3"),
+        "density_rule": as_text(record.get("rule_observations", {}).get("density")),
+        "average_expansion_ratio": record.get("average_expansion_ratio"),
+        "expansion_rule": as_text(record.get("rule_observations", {}).get("expansion")),
+        "automatic_grade": as_text(record.get("expansion_grade")),
+        "manual_review_required": bool(record.get("expansion_human_review_required")),
+        "immersion_peel_result": as_text(record.get("immersion_peel_result")),
+        "business_status": as_text(record.get("business_status")),
+        "calculation_conflict_count": len(record.get("conflicts", [])),
+        "conclusion_conflict_count": len(record.get("conclusion_rule_conflicts", [])),
+        "observations": related_anomalies[:20],
+        "evidence_refs": evidence_refs,
+    }
+
+
+def ai_payload_size(payload):
+    return len(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    )
+
+
+def build_ai_service_request(job, records, anomalies, rules):
+    if not records:
+        return None
+    root_job_id = ai_root_job_id(job)
+    scope_id = stable_input_scope(job["input_files"])
+    identity = hashlib.sha256(
+        f"{root_job_id}:boiling:ai:{scope_id}:{rules.get('rule_version', '')}".encode()
+    ).hexdigest()[:24]
+    candidates = [
+        candidate
+        for record in records
+        if (candidate := ai_record_summary(record, anomalies)) is not None
+    ]
+    if not candidates:
+        return None
+    summaries = []
+    for candidate in candidates[:MAX_AI_RECORDS]:
+        proposed = [*summaries, candidate]
+        payload = {
+            "schema_version": "1.0",
+            "module_id": MODULE_ID,
+            "rule_version": rules.get("rule_version", ""),
+            "instruction": (
+                "仅基于脱敏候选生成中文辅助说明。不得修改或否定模块规则结论，"
+                "不得推断缺失数据，不得给出最终质量签字结论；evidence_refs 只能引用"
+                "对应候选已提供的证据标识。"
+            ),
+            "candidates": proposed,
+            "candidate_total": len(candidates),
+            "candidate_sent": len(proposed),
+            "candidate_omitted": len(candidates) - len(proposed),
+            "response_schema": ai_response_schema(),
+        }
+        if ai_payload_size(payload) > MAX_AI_PAYLOAD_BYTES:
+            break
+        summaries = proposed
+    payload = {
+        "schema_version": "1.0",
+        "module_id": MODULE_ID,
+        "rule_version": rules.get("rule_version", ""),
+        "instruction": (
+            "仅基于脱敏候选生成中文辅助说明。不得修改或否定模块规则结论，"
+            "不得推断缺失数据，不得给出最终质量签字结论；evidence_refs 只能引用"
+            "对应候选已提供的证据标识。"
+        ),
+        "candidates": summaries,
+        "candidate_total": len(candidates),
+        "candidate_sent": len(summaries),
+        "candidate_omitted": len(candidates) - len(summaries),
+        "response_schema": ai_response_schema(),
+    }
+    return {
+        "request_id": f"boiling-ai-{identity}",
+        "service": "ai",
+        "scope": None,
+        "purpose": "生成水煮实验脱敏辅助分析建议",
+        "payload": payload,
+        "requires_user_consent": True,
+        "response_format": "json_object",
+    }
+
+
+def ai_response_schema():
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["schema_version", "overall_summary", "items", "limitations"],
+        "properties": {
+            "schema_version": {"const": "1.0"},
+            "overall_summary": {"type": "string", "maxLength": 1200},
+            "items": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "candidate_id",
+                        "summary",
+                        "risk_level",
+                        "review_recommendation",
+                        "evidence_refs",
+                    ],
+                    "properties": {
+                        "candidate_id": {"type": "string"},
+                        "summary": {"type": "string", "maxLength": 800},
+                        "risk_level": {"enum": ["high", "medium", "low"]},
+                        "review_recommendation": {"type": "string", "maxLength": 800},
+                        "evidence_refs": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "minItems": 1,
+                        },
+                    },
+                },
+            },
+            "limitations": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+        },
+    }
+
+
+def sanitize_ai_text(value):
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", as_text(value)).strip()
+    text = re.sub(r"(?i)[a-z]:[\\/][^\s，。；;]+", "[已脱敏路径]", text)
+    return text[:MAX_AI_RESPONSE_CHARS]
+
+
+def validate_and_render_ai_response(response_text, request):
+    try:
+        payload = json.loads(as_text(response_text))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict) or set(payload) != {
+        "schema_version",
+        "overall_summary",
+        "items",
+        "limitations",
+    }:
+        return None
+    if payload.get("schema_version") != "1.0":
+        return None
+    if not isinstance(payload.get("overall_summary"), str):
+        return None
+    if not isinstance(payload.get("items"), list) or not isinstance(
+        payload.get("limitations"), list
+    ):
+        return None
+    if not all(isinstance(item, str) for item in payload["limitations"]):
+        return None
+    candidates = request.get("payload", {}).get("candidates", [])
+    allowed = {
+        item.get("candidate_id"): set(item.get("evidence_refs", []))
+        for item in candidates
+        if isinstance(item, dict) and item.get("candidate_id")
+    }
+    seen = set()
+    rendered_items = []
+    required_keys = {
+        "candidate_id",
+        "summary",
+        "risk_level",
+        "review_recommendation",
+        "evidence_refs",
+    }
+    for item in payload["items"]:
+        if not isinstance(item, dict) or set(item) != required_keys:
+            return None
+        candidate_id = item.get("candidate_id")
+        evidence_refs = item.get("evidence_refs")
+        if (
+            not isinstance(candidate_id, str)
+            or candidate_id not in allowed
+            or candidate_id in seen
+            or not isinstance(item.get("summary"), str)
+            or item.get("risk_level") not in {"high", "medium", "low"}
+            or not isinstance(item.get("review_recommendation"), str)
+            or not isinstance(evidence_refs, list)
+            or not evidence_refs
+            or not all(isinstance(reference, str) for reference in evidence_refs)
+            or not set(evidence_refs).issubset(allowed[candidate_id])
+        ):
+            return None
+        seen.add(candidate_id)
+        rendered_items.append(
+            "\n".join(
+                [
+                    f"### {candidate_id}",
+                    f"- 风险等级：{item['risk_level']}",
+                    f"- 辅助摘要：{sanitize_ai_text(item['summary'])}",
+                    f"- 复核建议：{sanitize_ai_text(item['review_recommendation'])}",
+                    f"- 证据引用：{', '.join(evidence_refs)}",
+                ]
+            )
+        )
+    if seen != set(allowed):
+        return None
+    lines = [sanitize_ai_text(payload["overall_summary"]), "", *rendered_items]
+    limitations = [sanitize_ai_text(item) for item in payload["limitations"] if item.strip()]
+    if limitations:
+        lines.extend(["", "### 使用限制", *[f"- {item}" for item in limitations]])
+    return sanitize_ai_text("\n".join(lines))
+
+
+def read_ai_service_response(job, request):
+    if request is None:
+        return None
+    if job["phase"] == "draft":
+        return {
+            "status": "pending",
+            "text": "等待用户查看脱敏预览、确认联网授权并完成 AI 服务响应。",
+        }
+    path_value = job.get("service_response_file")
+    if not path_value:
+        return {"status": "unavailable", "text": "未收到 AI 服务响应，已使用离线规则报告。"}
+    try:
+        payload = load_json(path_value, "AI服务响应文件")
+    except ValueError:
+        return {"status": "invalid", "text": "AI 服务响应无法读取，已使用离线规则报告。"}
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != "1.0"
+        or payload.get("task_id") != ai_root_job_id(job)
+        or payload.get("module_id") != MODULE_ID
+        or not isinstance(payload.get("responses"), list)
+    ):
+        return {"status": "invalid", "text": "AI 服务响应合同不匹配，已使用离线规则报告。"}
+    matches = [
+        item
+        for item in payload["responses"]
+        if isinstance(item, dict)
+        and item.get("request_id") == request["request_id"]
+        and item.get("service") == "ai"
+    ]
+    if len(matches) != 1:
+        return {"status": "invalid", "text": "AI 服务响应标识不匹配，已使用离线规则报告。"}
+    response = matches[0]
+    status = response.get("status")
+    if status == "ok":
+        text = validate_and_render_ai_response(response.get("text"), request)
+        if text:
+            return {"status": "ok", "text": text}
+        return {
+            "status": "invalid",
+            "text": "AI 返回内容为空、不是严格 JSON 或证据引用不匹配，已使用离线规则报告。",
+        }
+    status_messages = {
+        "denied": "用户未授权发送脱敏摘要，已使用离线规则报告。",
+        "timeout": "AI 服务响应超时，已使用离线规则报告。",
+        "error": "AI 服务调用失败，已使用离线规则报告。",
+    }
+    return {
+        "status": status if status in status_messages else "invalid",
+        "text": status_messages.get(status, "AI 服务响应状态不合法，已使用离线规则报告。"),
+    }
+
+
 def run_job(job_path):
     try:
         job = load_json(job_path, "任务JSON")
@@ -1828,7 +2721,7 @@ def run_job(job_path):
                 record = extract_file(source)
                 missing_fields = record["missing_fields"]
                 if record["is_incomplete"]:
-                    status = "partial_success"
+                    status = "success"
                     record["business_status"] = "信息不足"
                     anomalies = [
                         make_anomaly(
@@ -1901,12 +2794,7 @@ def run_job(job_path):
                     records.append(record)
                     extracted_records = 1
                     result["summary"]["processed_count"] += 1
-                    if usage_confirmation_pending or pending_confirmations:
-                        status = "needs_confirmation"
-                    elif anomalies:
-                        status = "partial_success"
-                    else:
-                        status = "success"
+                    status = "success"
         except Exception as exc:  # isolate a bad workbook from the remaining batch
             error = str(exc)
             result["summary"]["failed_count"] += 1
@@ -1927,12 +2815,43 @@ def run_job(job_path):
             round(index / len(job["input_files"]) * 80),
         )
 
+    ai_request = None
+    ai_review = None
+    ai_requested = (not is_finalize and job.get("ai_enabled")) or (
+        is_finalize and bool(job.get("service_response_file"))
+    )
+    if ai_requested:
+        ai_request = build_ai_service_request(
+            job,
+            records,
+            result["anomalies"],
+            rules,
+        )
+        if ai_request is not None:
+            if is_finalize:
+                ai_review = read_ai_service_response(job, ai_request)
+            else:
+                result["service_requests"].append(ai_request)
+                ai_review = read_ai_service_response(job, ai_request)
+
+    result["summary"]["anomaly_count"] = len(result["anomalies"])
+    result["summary"]["confirmation_count"] = len(result["confirmations"])
     if records or excluded_records:
         summary_path = output_dir / "boiling_summary.xlsx"
+        analysis_workbook_path = output_dir / "boiling_analysis.xlsx"
         report_path = output_dir / "boiling_analysis.md"
         records_path = output_dir / "boiling_records.json"
         try:
             write_summary(records, summary_path, rules, excluded_records)
+            write_analysis_workbook(
+                records,
+                result["anomalies"],
+                result["confirmations"],
+                analysis_workbook_path,
+                rules,
+                excluded_records,
+                ai_review,
+            )
             write_analysis_report(
                 records,
                 result["anomalies"],
@@ -1940,6 +2859,10 @@ def run_job(job_path):
                 report_path,
                 rules,
                 excluded_records,
+                ai_review,
+                result["summary"],
+                result["file_results"],
+                result["errors"],
             )
             write_business_records(records, excluded_records, records_path, rules)
             result["outputs"].extend(
@@ -1954,8 +2877,16 @@ def run_job(job_path):
                     },
                     {
                         "type": "analysis_report",
-                        "path": str(report_path),
+                        "path": str(analysis_workbook_path),
                         "label": "水煮实验分析报告",
+                        "mime_type": (
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        ),
+                    },
+                    {
+                        "type": "analysis_report_markdown",
+                        "path": str(report_path),
+                        "label": "水煮实验分析记录（Markdown）",
                         "mime_type": "text/markdown",
                     },
                     {
@@ -1969,20 +2900,12 @@ def run_job(job_path):
         except (OSError, ValueError) as exc:
             result["errors"].append(f"生成汇总文件失败: {exc}")
 
-    result["summary"]["anomaly_count"] = len(result["anomalies"])
-    result["summary"]["confirmation_count"] = len(result["confirmations"])
     if result["confirmations"]:
         result["status"] = "needs_confirmation"
-    elif result["summary"]["processed_count"] == 0 and result["summary"]["failed_count"]:
-        result["status"] = "failed"
-    elif (
-        result["anomalies"]
-        or excluded_records
-        or result["summary"]["failed_count"]
-        or result["summary"]["skipped_count"]
-        or result["errors"]
-    ):
+    elif result["summary"]["failed_count"] and result["summary"]["processed_count"]:
         result["status"] = "partial_success"
+    elif result["summary"]["failed_count"] or result["errors"]:
+        result["status"] = "failed"
     else:
         result["status"] = "success"
     result["analysis_summary"] = (
@@ -1990,6 +2913,8 @@ def run_job(job_path):
         f"未纳入正常统计{len(excluded_records)}个，异常/观察{result['summary']['anomaly_count']}项，"
         f"待确认{result['summary']['confirmation_count']}项。"
     )
+    if ai_review:
+        result["analysis_summary"] += f" AI辅助状态：{ai_review['status']}。"
     result["finished_at"] = dt.datetime.now().astimezone().isoformat(timespec="seconds")
     try:
         result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
