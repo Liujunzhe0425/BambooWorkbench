@@ -67,8 +67,8 @@ def main() -> int:
     _write_json(draft_job_path, draft_job)
     _run(runtime, draft_job_path)
     draft = json.loads((draft_output / "result.json").read_text(encoding="utf-8"))
-    if draft.get("module_version") != "1.0.2":
-        raise AssertionError("便携运行时不是售后模块 1.0.2")
+    if draft.get("module_version") != "1.1.0":
+        raise AssertionError("便携运行时不是售后模块 1.1.0")
     fields = {item.get("field") for item in draft.get("confirmations", [])}
     if not {"售后费用", "责任工厂", "投诉类型"} <= fields:
         raise AssertionError("草稿缺少三项强制人工复核")
