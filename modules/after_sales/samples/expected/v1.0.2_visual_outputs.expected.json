@@ -1,0 +1,80 @@
+{
+  "schema_version": "1.0",
+  "module_version": "1.0.2",
+  "input_fixture": "tests/fixtures/acceptance/pr16_acceptance_sample.xlsx",
+  "draft": {
+    "status": "needs_confirmation",
+    "required_review_fields": [
+      "售后费用",
+      "责任工厂",
+      "投诉类型"
+    ],
+    "ai_service_requests_minimum": 1,
+    "direct_api_key_access": false
+  },
+  "finalize_after_ai_denied": {
+    "status": "success",
+    "analysis_status_contains": "降级",
+    "expected_output_files": [
+      "after_sales_annual_rollup.xlsx",
+      "after_sales_summary.xlsx",
+      "after_sales_records.json",
+      "after_sales_analysis.md",
+      "after_sales_analysis_report.docx",
+      "after_sales_brand_share.xlsx",
+      "after_sales_reason_share.xlsx",
+      "after_sales_monthly_fee.xlsx",
+      "after_sales_yearly_dashboard.xlsx"
+    ]
+  },
+  "yearly_dashboard": {
+    "sheet_naming": "每个报修年份独立一页，年份缺失时使用“年份未注明图表”",
+    "charts_per_year_sheet": 3,
+    "charts": [
+      {
+        "kind": "3D饼图",
+        "title_contains": "品牌售后统计",
+        "labels": [
+          "分类名称",
+          "案件数量",
+          "百分比"
+        ]
+      },
+      {
+        "kind": "3D饼图",
+        "title_contains": "售后问题统计",
+        "labels": [
+          "分类名称",
+          "案件数量",
+          "百分比"
+        ]
+      },
+      {
+        "kind": "柱状图",
+        "title_contains": "售后反馈逐月分布图",
+        "month_axis": [
+          "1月",
+          "2月",
+          "3月",
+          "4月",
+          "5月",
+          "6月",
+          "7月",
+          "8月",
+          "9月",
+          "10月",
+          "11月",
+          "12月"
+        ],
+        "show_data_labels": true,
+        "show_legend": true
+      }
+    ]
+  },
+  "monthly_fee_chart": {
+    "group_by_year": true,
+    "months": 12,
+    "warning_line_amount": 10000,
+    "warning_line_color": "red"
+  }
+}
