@@ -51,9 +51,11 @@ def test_deepseek_uses_official_openai_compatible_endpoint() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url == "https://api.deepseek.com/chat/completions"
         assert request.headers["authorization"] == "Bearer deepseek-secret"
+        payload = __import__("json").loads(request.content)
+        assert payload["response_format"] == {"type": "json_object"}
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"content": "需复核"}}]},
+            json={"choices": [{"message": {"content": '{"decisions": []}'}}]},
         )
 
     provider = DeepSeekProvider(
@@ -61,10 +63,15 @@ def test_deepseek_uses_official_openai_compatible_endpoint() -> None:
         client=httpx.Client(transport=httpx.MockTransport(handler)),
     )
     response = provider.complete(
-        AIRequest(model="deepseek-v4-flash", system="quality", prompt="分析")
+        AIRequest(
+            model="deepseek-v4-flash",
+            system="quality",
+            prompt="分析 JSON",
+            response_format="json_object",
+        )
     )
 
-    assert response.text == "需复核"
+    assert response.text == '{"decisions": []}'
     assert provider.provider_id == "deepseek"
     assert "deepseek-secret" not in repr(provider)
 

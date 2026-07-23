@@ -1,9 +1,16 @@
 from pathlib import Path
 
 import pytest
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QComboBox, QLabel, QPlainTextEdit
+from PySide6.QtCore import QPointF, Qt
+from PySide6.QtGui import QColor, QDesktopServices, QEnterEvent
+from PySide6.QtWidgets import (
+    QComboBox,
+    QFrame,
+    QLabel,
+    QPlainTextEdit,
+    QToolButton,
+    QToolTip,
+)
 
 from core.contracts.result import ConfirmationPrompt, OutputArtifact, SourceRef
 from ui.pages.confirmations_page import ConfirmationsPage
@@ -73,6 +80,8 @@ def test_confirmation_page_explains_batch_scope_and_disambiguates_repeated_field
 
     page.load("boiling-ui", prompts)
 
+    assert page.job_selector.currentText() == "任务 1"
+    assert "boiling-ui" not in page.status_label.text()
     assert isinstance(page.answer_inputs["usage"], QComboBox)
     assert page.answer_inputs["usage"].currentText() == "地板"
     assert "只有确认本批数据应使用同一答案时才勾选" in page.batch_checks[
@@ -80,8 +89,13 @@ def test_confirmation_page_explains_batch_scope_and_disambiguates_repeated_field
     ].toolTip()
     assert page.batch_help_labels["usage"].text() == "!"
     assert page.batch_help_labels["usage"].toolTip() == page.batch_checks["usage"].toolTip()
+    assert page.remember_help_labels["usage"].text() == "!"
+    assert "后续相同字段自动匹配" in page.remember_help_labels["usage"].help_text
+    options_view = page.answer_inputs["usage"].view()
+    assert options_view.objectName() == "confirmationOptions"
+    assert options_view.frameShape() == QFrame.Shape.NoFrame
     assert page.reason_labels["expansion-one"].text().startswith("中1")
-    assert "20260135.xlsx" in page.source_labels["expansion-one"].text()
+    assert page.file_group_titles["20260135.xlsx"].text() == "20260135.xlsx"
     assert "H22" in page.source_labels["expansion-one"].text()
 
     visible_labels = {label.text() for label in page.findChildren(QLabel)}
@@ -89,6 +103,114 @@ def test_confirmation_page_explains_batch_scope_and_disambiguates_repeated_field
     assert "密度结论复核 2/2（可选）" in visible_labels
     assert "膨胀率数值冲突 1/2（可选）" in visible_labels
     assert "膨胀率数值冲突 2/2（可选）" in visible_labels
+
+
+def test_after_sales_protocol_fields_are_localized(qtbot) -> None:
+    page = ConfirmationsPage()
+    qtbot.addWidget(page)
+    prompts = [
+        _prompt(f"field-{field}", field, "需要人工确认。")
+        for field in (
+            "complaint_date",
+            "enterprise_cost_amount",
+            "internal_accountability_amount",
+            "external_borne_amount",
+            "issue_types",
+            "template",
+        )
+    ]
+
+    page.load("after-sales-fields", prompts)
+
+    labels = {label.text() for label in page.findChildren(QLabel)}
+    assert {
+        "投诉日期（可选）",
+        "企业承担售后费用（可选）",
+        "内部责任费用（可选）",
+        "外部承担费用（可选）",
+        "质量问题类型（可选）",
+        "表格模板识别（可选）",
+    }.issubset(labels)
+    assert not any("_" in label for label in labels if "（可选）" in label)
+
+
+def test_date_location_and_ai_preview_use_progressive_disclosure(qtbot) -> None:
+    page = ConfirmationsPage()
+    qtbot.addWidget(page)
+    prompt = _prompt(
+        "service-consent:one",
+        "AI联网授权：辅助复核",
+        "用途：复核候选。\n\n[[REDACTED_PREVIEW]]\n{\n  \"candidates\": [1, 2]\n}",
+        cell="arrival_date/test_date",
+        blocking=True,
+        options=["允许", "拒绝"],
+    )
+
+    page.load("ai-preview", [prompt])
+
+    assert page.source_labels[prompt.confirmation_id].text() == "涉及日期：到货日期、检测日期"
+    assert "candidates" not in page.reason_labels[prompt.confirmation_id].text()
+    detail = next(
+        editor
+        for editor in page.findChildren(QPlainTextEdit)
+        if editor.accessibleName() == "发送给AI的脱敏明细"
+    )
+    toggle = next(
+        button
+        for button in page.findChildren(QToolButton)
+        if button.accessibleName() == "查看发送给AI的脱敏明细"
+    )
+    assert detail.isHidden()
+    qtbot.mouseClick(toggle, Qt.MouseButton.LeftButton)
+    assert not detail.isHidden()
+    assert "candidates" in detail.toPlainText()
+
+
+def test_confirmation_popup_and_help_badges_have_immediate_light_ui(
+    qtbot, qapp, monkeypatch
+) -> None:
+    page = ConfirmationsPage()
+    qtbot.addWidget(page)
+    page.load(
+        "visual-confirmation",
+        [
+            _prompt(
+                "visual-field",
+                "product_usage",
+                "请选择产品用途。",
+                batch_applicable=True,
+                rememberable=True,
+                options=["地板", "家具"],
+            )
+        ],
+    )
+    page.resize(900, 520)
+    page.show()
+    qapp.processEvents()
+    editor = page.answer_inputs["visual-field"]
+    assert isinstance(editor, QComboBox)
+    editor.showPopup()
+    qapp.processEvents()
+    popup_image = editor.view().window().grab().toImage()
+    assert QColor(popup_image.pixelColor(popup_image.width() // 2, 0)) != QColor("#000000")
+    assert QColor(
+        popup_image.pixelColor(popup_image.width() // 2, popup_image.height() - 1)
+    ) != QColor("#000000")
+    editor.hidePopup()
+
+    shown: list[str] = []
+    monkeypatch.setattr(
+        QToolTip,
+        "showText",
+        lambda _position, text, _widget: shown.append(text),
+    )
+    enter = QEnterEvent(QPointF(1, 1), QPointF(1, 1), QPointF(1, 1))
+    qapp.sendEvent(page.batch_help_labels["visual-field"], enter)
+    qapp.processEvents()
+    assert shown and "应用到当前任务" in shown[-1]
+    qapp.sendEvent(page.remember_help_labels["visual-field"], enter)
+    qapp.processEvents()
+    assert "后续相同字段自动匹配" in shown[-1]
 
 
 def test_confirmation_page_scrolls_instead_of_compressing_many_prompts(qtbot, qapp) -> None:
@@ -109,6 +231,102 @@ def test_confirmation_page_scrolls_instead_of_compressing_many_prompts(qtbot, qa
     page.show()
     qapp.processEvents()
 
+    assert page.scroll_area.verticalScrollBar().maximum() > 0
+    assert all(editor.height() > 20 for editor in page.answer_inputs.values())
+
+
+def test_confirmation_page_groups_fields_by_source_file_and_preserves_answers(
+    qtbot,
+) -> None:
+    page = ConfirmationsPage()
+    qtbot.addWidget(page)
+    prompts = [
+        _prompt(
+            f"file-{file_index}-{field}",
+            field,
+            f"第 {file_index} 份文件的{field}需要复核。",
+            source_file=f"售后记录-{file_index}.xlsx",
+            blocking=True,
+            options=["建议值", "人工值"],
+        )
+        for file_index in range(1, 6)
+        for field in ("售后费用", "责任工厂", "投诉类型")
+    ]
+
+    page.load("after-sales-review", prompts)
+
+    assert len(page.file_group_frames) == 5
+    assert [label.text() for label in page.file_group_titles.values()] == [
+        f"售后记录-{index}.xlsx" for index in range(1, 6)
+    ]
+    for file_index in range(1, 6):
+        group_key = f"售后记录-{file_index}.xlsx"
+        confirmation_ids = {
+            f"file-{file_index}-{field}"
+            for field in ("售后费用", "责任工厂", "投诉类型")
+        }
+        assert {
+            confirmation_id
+            for confirmation_id, prompt_group in page.prompt_group_keys.items()
+            if prompt_group == group_key
+        } == confirmation_ids
+
+    page.answer_inputs["file-1-售后费用"].setCurrentIndex(1)
+    page.answer_inputs["file-4-投诉类型"].setCurrentIndex(1)
+    submitted: list[tuple[str, list[object]]] = []
+    page.submitted.connect(lambda job_id, answers: submitted.append((job_id, answers)))
+
+    qtbot.mouseClick(page.submit_button, Qt.MouseButton.LeftButton)
+
+    assert submitted[0][0] == "after-sales-review"
+    values = {
+        answer.confirmation_id: answer.value for answer in submitted[0][1]
+    }
+    assert values["file-1-售后费用"] == "人工值"
+    assert values["file-4-投诉类型"] == "人工值"
+    assert values["file-2-责任工厂"] == "建议值"
+
+
+def test_confirmation_page_keeps_missing_source_prompts_in_other_group(qtbot) -> None:
+    page = ConfirmationsPage()
+    qtbot.addWidget(page)
+    prompt = _prompt(
+        "legacy-confirmation",
+        "legacy_field",
+        "旧任务没有提供来源文件。",
+        source_file="",
+    )
+
+    page.load("legacy-task", [prompt])
+
+    assert "" in page.file_group_frames
+    assert page.file_group_titles[""].text() == "其他确认事项"
+    assert page.prompt_group_keys["legacy-confirmation"] == ""
+    assert "legacy-confirmation" in page.answer_inputs
+
+
+def test_confirmation_page_scrolls_across_one_hundred_file_groups(qtbot, qapp) -> None:
+    page = ConfirmationsPage()
+    qtbot.addWidget(page)
+    page.resize(1050, 620)
+    prompts = [
+        _prompt(
+            f"review-{index}",
+            "责任工厂",
+            "请逐文件确认责任工厂。",
+            source_file=f"售后-{index:03d}.xlsx",
+            blocking=True,
+            options=["一厂", "二厂"],
+        )
+        for index in range(100)
+    ]
+
+    page.load("hundred-files", prompts)
+    page.show()
+    qapp.processEvents()
+
+    assert len(page.file_group_frames) == 100
+    assert page.file_group_titles["售后-099.xlsx"].text() == "售后-099.xlsx"
     assert page.scroll_area.verticalScrollBar().maximum() > 0
     assert all(editor.height() > 20 for editor in page.answer_inputs.values())
 
@@ -152,7 +370,8 @@ def test_json_output_is_pretty_printed_in_built_in_viewer(
 ) -> None:
     records = tmp_path / "boiling_records.json"
     records.write_text('{"records":[{"product":"竹板"}]}', encoding="utf-8")
-    monkeypatch.setattr(QDesktopServices, "openUrl", lambda _url: False)
+    opened: list[object] = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url) or True)
     widget = OutputFilesWidget()
     qtbot.addWidget(widget)
     widget.set_outputs(
@@ -171,6 +390,7 @@ def test_json_output_is_pretty_printed_in_built_in_viewer(
     editor = widget.text_viewers[0].findChild(QPlainTextEdit)
     assert editor is not None
     assert '\n  "records": [' in editor.toPlainText()
+    assert opened == []
 
 
 def test_theme_gives_unchecked_confirmations_a_visible_border(app_context) -> None:

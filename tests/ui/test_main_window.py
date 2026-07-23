@@ -14,7 +14,10 @@ def test_main_window_has_canonical_navigation(qtbot, app_context) -> None:
     assert window.windowFlags() & Qt.WindowType.FramelessWindowHint
     assert window.windowIcon().isNull() is False
     assert window.title_bar.objectName() == "windowTitleBar"
-    assert window.title_bar.version_label.text() == "BambooWorkbench v0.2.1"
+    assert window.title_bar.version_label.text() == "BambooWorkbench v1.0.1"
+    assert window.title_bar.layout().spacing() == 10
+    assert window.title_bar.layout().itemAt(0).alignment() & Qt.AlignmentFlag.AlignVCenter
+    assert window.title_bar.layout().itemAt(1).alignment() & Qt.AlignmentFlag.AlignVCenter
     assert window.navigation.logo.objectName() == "teamLogo"
     assert window.navigation.logo.pixmap().isNull() is False
     assert list(window.pages) == [
@@ -35,6 +38,20 @@ def test_navigation_buttons_select_their_canonical_pages(qtbot, app_context) -> 
         qtbot.mouseClick(button, Qt.MouseButton.LeftButton)
         assert button.objectName() == f"navigation-{page_id.value}"
         assert window.stack.currentWidget() is window.pages[page_id]
+
+
+def test_back_button_returns_to_actual_previous_page(qtbot, app_context) -> None:
+    window = MainWindow(app_context)
+    qtbot.addWidget(window)
+
+    window.navigate(PageId.HISTORY)
+    window.navigate(PageId.SETTINGS)
+    assert not window.back_button.isHidden()
+
+    qtbot.mouseClick(window.back_button, Qt.MouseButton.LeftButton)
+
+    assert window.stack.currentWidget() is window.history_page
+    assert window.navigation.buttons[PageId.HISTORY].isChecked()
 
 
 def test_main_window_uses_the_packaged_logo(app_context) -> None:

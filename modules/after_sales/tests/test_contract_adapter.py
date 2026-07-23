@@ -106,3 +106,88 @@ def test_draft_and_finalize_write_manual_fee_to_final_excel(tmp_path):
         for row in worksheet.iter_rows()
         for cell in row
     )
+
+
+def test_required_business_review_updates_fee_factory_and_complaint_type(tmp_path):
+    input_file = tmp_path / "三项人工复核.xlsx"
+    _create_sample_workbook(
+        input_file,
+        customer="脱敏复核客户",
+        brand_text="桃花江竹地板",
+        date_text="2026-07-21",
+        feedback="坐凳尺寸错误，现场无法安装。",
+        solution="最终方案预计总费用1000元，由二厂承担，已安排补货。",
+    )
+
+    draft_output = tmp_path / "review-draft"
+    draft_job = _job(input_file, draft_output, job_id="review-draft")
+    draft_job_path = tmp_path / "review-draft-job.json"
+    draft_job_path.write_text(json.dumps(draft_job, ensure_ascii=False), encoding="utf-8")
+    assert run_job(draft_job_path) == 0
+    draft = json.loads((draft_output / "result.json").read_text(encoding="utf-8"))
+    prompts = {item["field"]: item for item in draft["confirmations"]}
+
+    assert {"售后费用", "责任工厂", "投诉类型"} <= prompts.keys()
+    assert prompts["售后费用"]["suggested_value"] == 1000
+    assert prompts["责任工厂"]["suggested_value"] == "二厂"
+    assert prompts["投诉类型"]["options"] == ["性能", "外观", "加工", "其他"]
+    assert all(prompts[field]["blocking"] for field in ("售后费用", "责任工厂", "投诉类型"))
+
+    reviewed_values = {"售后费用": "3200", "责任工厂": "成品厂", "投诉类型": "加工"}
+    answers = [
+        {
+            "confirmation_id": prompt["confirmation_id"],
+            "value": reviewed_values.get(field, prompt.get("suggested_value")),
+            "apply_to_batch": False,
+            "remember_mapping": False,
+        }
+        for field, prompt in prompts.items()
+    ]
+    confirmation_file = tmp_path / "review-confirmation.json"
+    confirmation_file.write_text(
+        json.dumps(
+            {"schema_version": "1.0", "job_id": "review-draft", "answers": answers},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    final_output = tmp_path / "review-final"
+    final_job = _job(
+        input_file,
+        final_output,
+        job_id="review-final",
+        phase="finalize",
+        parent_job_id="review-draft",
+        confirmation_file=str(confirmation_file),
+    )
+    final_job_path = tmp_path / "review-final-job.json"
+    final_job_path.write_text(json.dumps(final_job, ensure_ascii=False), encoding="utf-8")
+    assert run_job(final_job_path) == 0
+
+    final = json.loads((final_output / "result.json").read_text(encoding="utf-8"))
+    records = json.loads((final_output / "after_sales_records.json").read_text(encoding="utf-8"))
+    record = records[0]
+    assert final["status"] == "success"
+    assert final["summary"]["confirmation_count"] == 0
+    assert record["after_sales_fee_amount"] == 3200
+    assert record["responsible_factory"] == "成品厂"
+    assert record["primary_issue_type"] == "加工"
+    assert record["issue_types"] == ["加工"]
+    assert record["manual_review_completed"] is True
+
+    annual = openpyxl.load_workbook(
+        final_output / "after_sales_annual_rollup.xlsx", data_only=True
+    )
+    year_sheet = annual["26年售后统计表"]
+    headers = {year_sheet.cell(2, col).value: col for col in range(2, 20)}
+    assert year_sheet.cell(3, headers["售后费用"]).value == 3200
+    assert year_sheet.cell(3, headers["责任工厂"]).value == "成品厂"
+    assert year_sheet.cell(3, headers["投诉类型"]).value == "加工"
+
+    summary = openpyxl.load_workbook(final_output / "after_sales_summary.xlsx", data_only=True)
+    detail = summary["售后明细"]
+    detail_headers = {detail.cell(1, col).value: col for col in range(1, detail.max_column + 1)}
+    assert detail.cell(2, detail_headers["售后费用"]).value == 3200
+    assert detail.cell(2, detail_headers["责任工厂"]).value == "成品厂"
+    assert detail.cell(2, detail_headers["三项人工复核完成"]).value is True

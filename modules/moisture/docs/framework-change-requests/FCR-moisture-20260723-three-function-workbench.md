@@ -1,7 +1,7 @@
 ---
 request_id: FCR-moisture-20260723-three-function-workbench
 module_id: moisture
-module_version: 0.1.2
+module_version: 1.0.0
 owner: moisture模块负责人
 status: proposed
 framework_areas:
@@ -17,7 +17,7 @@ required_before_module_merge: false
 
 # 框架适配请求：水分模块三功能工作台
 
-> 本请求不阻塞moisture v0.1.2现有确定性检测。
+> 本请求不阻塞moisture v1.0.0现有确定性检测。
 > 本请求取代已归档的 `FCR-moisture-20260721-rule-governance-runtime-analysis`。
 > 完整业务架构见：[`../architecture/moisture-next-stage-architecture.md`](../architecture/moisture-next-stage-architecture.md)。
 
@@ -75,7 +75,7 @@ moisture页面展示三个入口：
 
 兼容要求：
 
-- 未选择新功能时继续生成v0.1.2兼容配置；
+- 未选择新功能时继续生成v1.0.0兼容配置；
 - 只有声明支持新版私有配置的模块版本才能接收新增字段；
 - 不通过“先发送未知字段、失败后降级”探测能力；
 - 中央 `JobRequest` 和 `ModuleResult` Schema不变；
@@ -198,7 +198,7 @@ API Key只保存在Windows安全凭据中，不进入模块数据、任务、数
 
 ## 6. 兼容和发布
 
-- v0.1.2及不声明新能力的模块继续按现有方式运行；
+- v1.0.0及不声明新能力的模块继续按现有方式运行；
 - 旧任务、result和artifacts只读保留，不补写规则快照或AI报告；
 - 新功能按“历史追加→AI报告→候选规则→规则管理”分阶段启用；
 - 每个入口未完成时必须隐藏或明确标记不可用，不能伪装成功；

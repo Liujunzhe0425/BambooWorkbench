@@ -2,7 +2,7 @@
 
 > 文档职责：只维护事项状态、责任方和下一步，不重复保存实施规格。
 >
-> 最后核对：2026-07-23；当前模块版本：`0.1.2`。
+> 最后核对：2026-07-23；当前模块版本：`1.0.0`。
 
 三功能页面、轻量历史资料、AI报告和规则管理的框架需求，以
 [`framework-change-requests/FCR-moisture-20260723-three-function-workbench.md`](framework-change-requests/FCR-moisture-20260723-three-function-workbench.md)

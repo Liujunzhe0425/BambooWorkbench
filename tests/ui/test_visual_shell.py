@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 from PySide6.QtCore import QSize, Qt
 
 from ui.main_window import MainWindow
@@ -17,7 +19,6 @@ def test_visual_shell_uses_distinct_sidebar_and_light_content(qtbot, app_context
     assert window.stack.width() > window.navigation.width()
     assert window.centralWidget().layout().contentsMargins().left() == 0
     assert window.mask().isEmpty()
-    assert window._enable_native_rounded_corners() is True
 
     buttons = (
         window.title_bar.minimize_button,
@@ -30,6 +31,30 @@ def test_visual_shell_uses_distinct_sidebar_and_light_content(qtbot, app_context
         "maximize",
         "close",
     ]
+
+
+def test_native_rounded_corners_request_is_sent_to_dwm(
+    qtbot, app_context, monkeypatch
+) -> None:
+    calls: list[tuple[object, ...]] = []
+
+    def set_window_attribute(*args) -> int:
+        calls.append(args)
+        return 0
+
+    monkeypatch.setattr(
+        "ui.main_window.ctypes.windll",
+        SimpleNamespace(
+            dwmapi=SimpleNamespace(DwmSetWindowAttribute=set_window_attribute)
+        ),
+    )
+
+    window = MainWindow(app_context)
+    qtbot.addWidget(window)
+
+    assert window._enable_native_rounded_corners() is True
+    assert len(calls) == 1
+    assert calls[0][1] == 33
 
 
 def test_all_primary_pages_share_the_designed_page_shell(qtbot, app_context) -> None:

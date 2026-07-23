@@ -1,14 +1,16 @@
 import importlib
 import json
+from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import pytest
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QAbstractItemView
+from PySide6.QtWidgets import QAbstractItemView, QLabel, QTableWidget
 
-from core.contracts.enums import ModuleId
+from core.contracts.enums import ModuleId, TaskStatus
+from core.contracts.result import FileResult, ModuleResult, ResultSummary
 from ui.main_window import MainWindow
 from ui.page_ids import PageId
 
@@ -65,11 +67,62 @@ def test_history_refreshes_from_repository(app_context, main_window) -> None:
 
     table = main_window.history_page.table
     assert table.rowCount() == 1
-    assert table.item(0, 0).text() == "history-1"
+    assert table.item(0, 0).text() == "1"
+    assert table.item(0, 3).text() == "2026-07-13 10:00:00"
+    assert "T" not in table.item(0, 4).text()
     assert table.editTriggers() == QAbstractItemView.EditTrigger.NoEditTriggers
     headers = [table.horizontalHeaderItem(index).text() for index in range(table.columnCount())]
     assert "error" not in {header.lower() for header in headers}
     assert "result_path" not in {header.lower() for header in headers}
+
+
+def test_successful_history_row_opens_its_result(
+    qtbot, app_context, main_window
+) -> None:
+    job_id = "history-result"
+    task_dir = app_context.paths.tasks / job_id
+    output_dir = task_dir / "output-final"
+    output_dir.mkdir(parents=True)
+    result = ModuleResult.model_validate(
+        {
+            "schema_version": "1.0",
+            "job_id": job_id,
+            "module_id": "moisture",
+            "module_version": "0.1.1",
+            "status": "success",
+            "rule_version": "test",
+            "summary": {
+                "input_count": 1,
+                "processed_count": 1,
+                "skipped_count": 0,
+                "failed_count": 0,
+                "anomaly_count": 0,
+                "confirmation_count": 0,
+            },
+            "started_at": datetime.now().astimezone(),
+            "finished_at": datetime.now().astimezone(),
+        }
+    )
+    result_path = output_dir / "result.json"
+    result_path.write_text(result.model_dump_json(), encoding="utf-8")
+    app_context.task_repository.create(
+        job_id, "moisture", "success", "2026-07-13T10:00:00+08:00"
+    )
+    app_context.task_repository.update_status(
+        job_id, "success", result_path=str(result_path)
+    )
+    main_window.history_page.refresh()
+
+    qtbot.mouseClick(
+        main_window.history_page.table.viewport(),
+        Qt.MouseButton.LeftButton,
+        pos=main_window.history_page.table.visualItemRect(
+            main_window.history_page.table.item(0, 0)
+        ).center(),
+    )
+
+    assert main_window.stack.currentWidget() is main_window.result_center_page
+    assert main_window.result_center_page.current_result == result
 
 
 def test_navigation_refreshes_history(
@@ -319,7 +372,7 @@ def test_missing_real_modules_remain_visible_disabled_placeholders(
         assert set(page.cards) == set(ModuleId)
         assert all("暂未安装" in card.state_label.text() for card in page.cards.values())
         assert all(not card.open_button.isEnabled() for card in page.cards.values())
-        assert page.readiness_bar.value() == 0
+        assert not hasattr(page, "readiness_bar")
     finally:
         context.close()
 
@@ -354,3 +407,70 @@ def test_output_click_rechecks_missing_file_and_never_opens(
 
     assert opened == []
     assert failures and "不可用" in failures[0]
+
+
+def test_result_center_expands_public_file_failure_details(qtbot) -> None:
+    from ui.pages.result_center_page import ResultCenterPage
+
+    now = datetime.now(UTC)
+    result = ModuleResult(
+        schema_version="1.0",
+        job_id="partial-result",
+        module_id=ModuleId.BOILING,
+        module_version="1.0.1",
+        status=TaskStatus.PARTIAL_SUCCESS,
+        summary=ResultSummary(
+            input_count=2,
+            processed_count=1,
+            skipped_count=0,
+            failed_count=1,
+            anomaly_count=0,
+            confirmation_count=0,
+        ),
+        file_results=[
+            FileResult(
+                source_file="D:/private/customer/broken.xlsx",
+                fingerprint="a" * 64,
+                status=TaskStatus.FAILED,
+                extracted_records=0,
+                anomaly_count=0,
+                error="BadZipFile: not a zip file",
+            )
+        ],
+        started_at=now,
+        finished_at=now,
+    )
+    page = ResultCenterPage()
+    qtbot.addWidget(page)
+
+    page.show_result(result)
+    qtbot.mouseClick(page.failure_toggle, Qt.MouseButton.LeftButton)
+
+    details = " ".join(label.text() for label in page.failure_panel.findChildren(QLabel))
+    assert "broken.xlsx" in details
+    assert "文件可能已损坏" in details
+    assert "D:/private" not in details
+
+
+def test_structured_json_business_view_uses_readable_table(qtbot) -> None:
+    from ui.widgets.output_files import OutputFilesWidget
+
+    view = OutputFilesWidget._business_view(
+        [
+            {
+                "case_id": "AS-001",
+                "customer": "客户甲",
+                "issue_types": ["外观", "加工"],
+                "needs_review": True,
+                "source_cells": {"customer": "B2"},
+            }
+        ]
+    )
+    qtbot.addWidget(view)
+    table = view.findChild(QTableWidget)
+
+    assert table is not None
+    headers = [table.horizontalHeaderItem(index).text() for index in range(table.columnCount())]
+    assert "案件编号" in headers
+    assert "客户" in headers
+    assert "来源文件" not in headers

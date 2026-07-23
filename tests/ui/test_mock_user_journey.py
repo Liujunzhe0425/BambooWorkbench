@@ -133,9 +133,7 @@ def test_workbench_uses_exact_identity_and_reports_module_state(qtbot, app_conte
     assert window.workbench_page.product_label.text() == "竹简工作台"
     assert set(window.workbench_page.cards) == set(ModuleId)
     for card in window.workbench_page.cards.values():
-        assert "已安装" in card.state_label.text()
-        assert "模拟模块" in card.state_label.text()
-        assert "健康" in card.state_label.text()
+        assert "演示模式" in card.state_label.text()
         assert card.accessibleName()
 
 

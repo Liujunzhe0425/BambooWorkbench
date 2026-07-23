@@ -4,6 +4,8 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
+from after_sales_agent.manual_review import effective_after_sales_fee
+
 ISSUE_ORDER = ("性能", "外观", "加工", "其他")
 
 
@@ -14,6 +16,7 @@ def build_analysis_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
     monthly: dict[tuple[int | None, int | None], dict[str, float | int | str]] = defaultdict(
         lambda: {
             "case_count": 0,
+            "after_sales_fee_amount": 0.0,
             "enterprise_cost_amount": 0.0,
             "internal_accountability_amount": 0.0,
             "external_borne_amount": 0.0,
@@ -27,6 +30,11 @@ def build_analysis_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         key = (_as_int(record.get("year")), _as_int(record.get("month")))
         bucket = monthly[key]
         bucket["case_count"] = int(bucket["case_count"]) + 1
+        reviewed_fee = effective_after_sales_fee(record)
+        if reviewed_fee is not None:
+            bucket["after_sales_fee_amount"] = (
+                float(bucket["after_sales_fee_amount"]) + reviewed_fee
+            )
         for field in (
             "enterprise_cost_amount",
             "internal_accountability_amount",
@@ -64,6 +72,7 @@ def build_analysis_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
                 "month": month,
                 "period": _period_label(year, month),
                 "case_count": int(values["case_count"]),
+                "after_sales_fee_amount": round(float(values["after_sales_fee_amount"]), 2),
                 "enterprise_cost_amount": round(float(values["enterprise_cost_amount"]), 2),
                 "internal_accountability_amount": round(
                     float(values["internal_accountability_amount"]), 2
@@ -82,6 +91,10 @@ def build_analysis_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
         },
         "monthly": monthly_rows,
         "totals": {
+            "after_sales_fee_amount": round(
+                sum(effective_after_sales_fee(record) or 0.0 for record in summary_records),
+                2,
+            ),
             "enterprise_cost_amount": round(
                 sum(
                     _amount(r.get("enterprise_cost_amount", r.get("fee_amount"))) or 0.0
@@ -156,13 +169,17 @@ def write_analysis_report(
             "",
             "## 月度案件与金额",
             "",
-            "| 报修月份 | 案件数 | 企业售后成本（元） | 内部责任扣款（元） | 外部承担金额（元） |",
-            "|---|---:|---:|---:|---:|",
+            "| 报修月份 | 案件数 | 售后费用（元） | 企业售后成本（元） | "
+            "内部责任扣款（元） | 外部承担金额（元） |",
+            "|---|---:|---:|---:|---:|---:|",
         ]
     )
     if monthly:
         for item in monthly:
-            prefix = f"| {item['period']} | {item['case_count']} | "
+            prefix = (
+                f"| {item['period']} | {item['case_count']} | "
+                f"{item['after_sales_fee_amount']:.2f} | "
+            )
             lines.append(
                 prefix
                 + f"{item['enterprise_cost_amount']:.2f} | "
@@ -170,10 +187,11 @@ def write_analysis_report(
                 + f"{item['external_borne_amount']:.2f} |"
             )
     else:
-        lines.append("| 无有效月份数据 | 0 | 0.00 | 0.00 | 0.00 |")
+        lines.append("| 无有效月份数据 | 0 | 0.00 | 0.00 | 0.00 | 0.00 |")
     lines.extend(
         [
             "",
+            f"人工复核口径售后费用合计：{totals['after_sales_fee_amount']:.2f} 元；"
             f"企业售后成本合计：{totals['enterprise_cost_amount']:.2f} 元；"
             f"内部责任扣款合计：{totals['internal_accountability_amount']:.2f} 元；"
             f"外部承担金额合计：{totals['external_borne_amount']:.2f} 元。",
