@@ -1,0 +1,74 @@
+{
+  "description": "Synthetic current-period summary table for C3 AI analysis report tests. No real supplier names, paths, or API keys.",
+  "generated_at": "2026-07-23",
+  "period": "2026-07",
+  "batches": [
+    {
+      "record_id": "BATCH-SYN-001",
+      "supplier": "供应方Alpha",
+      "material_type": "竹丝A型",
+      "test_date": "2026-07-10",
+      "sample_count": 6,
+      "mean": 0.512,
+      "total_average": 0.512,
+      "minimum": 0.488,
+      "maximum": 0.541,
+      "range_value": 0.053,
+      "standard_deviation": 0.019,
+      "display_color": "none",
+      "screen_status": "pass"
+    },
+    {
+      "record_id": "BATCH-SYN-002",
+      "supplier": "供应方Beta",
+      "material_type": "竹丝B型",
+      "test_date": "2026-07-12",
+      "sample_count": 8,
+      "mean": 0.603,
+      "total_average": 0.603,
+      "minimum": 0.572,
+      "maximum": 0.639,
+      "range_value": 0.067,
+      "standard_deviation": 0.024,
+      "display_color": "orange",
+      "screen_status": "suspect_high"
+    },
+    {
+      "record_id": "BATCH-SYN-003",
+      "supplier": "供应方Alpha",
+      "material_type": "竹丝A型",
+      "test_date": "2026-07-15",
+      "sample_count": 4,
+      "mean": 0.389,
+      "total_average": 0.389,
+      "minimum": 0.361,
+      "maximum": 0.412,
+      "range_value": 0.051,
+      "standard_deviation": 0.022,
+      "display_color": "green",
+      "screen_status": "suspect_low"
+    },
+    {
+      "record_id": "BATCH-SYN-004",
+      "supplier": "供应方Gamma",
+      "material_type": "竹丝C型",
+      "test_date": "2026-07-18",
+      "sample_count": 5,
+      "mean": 0.495,
+      "total_average": 0.495,
+      "minimum": 0.471,
+      "maximum": 0.523,
+      "range_value": 0.052,
+      "standard_deviation": 0.021,
+      "display_color": "none",
+      "screen_status": "pass"
+    }
+  ],
+  "rule_summary": {
+    "rule_version": "v1.0.0-synthetic",
+    "rule_hash": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+    "rule_source": "internal/synthetic-rules",
+    "upper_limit": 0.580,
+    "lower_limit": 0.420
+  }
+}

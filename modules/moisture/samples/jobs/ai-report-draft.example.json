@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "job_id": "example-ai-report-draft",
+  "module_id": "moisture",
+  "phase": "draft",
+  "run_mode": "single",
+  "input_files": ["${CURRENT_SUMMARY_XLSX}"],
+  "output_dir": "${OUTPUT_DIR}",
+  "module_config_file": "${AI_REPORT_CONFIG_JSON}",
+  "ai_enabled": false,
+  "allowed_knowledge_scopes": []
+}

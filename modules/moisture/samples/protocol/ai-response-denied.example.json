@@ -1,10 +1,10 @@
 {
   "schema_version": "1.0",
-  "task_id": "example-draft-001",
+  "task_id": "example-ai-report-draft",
   "module_id": "moisture",
   "responses": [
     {
-      "request_id": "msr-ai-0123456789abcdef01234567",
+      "request_id": "msr-ai-report-0123456789abcdef01234567",
       "service": "ai",
       "status": "denied",
       "text": null,

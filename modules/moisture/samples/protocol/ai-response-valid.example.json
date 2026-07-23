@@ -1,13 +1,13 @@
 {
   "schema_version": "1.0",
-  "task_id": "example-draft-001",
+  "task_id": "example-ai-report-draft",
   "module_id": "moisture",
   "responses": [
     {
-      "request_id": "msr-ai-0123456789abcdef01234567",
+      "request_id": "msr-ai-report-0123456789abcdef01234567",
       "service": "ai",
       "status": "ok",
-      "text": "{\"schema_version\":\"1.0\",\"rule_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"decisions\":[{\"candidate_id\":\"candidate-0123456789abcdef\",\"direction\":\"high\",\"field\":\"mean\",\"observed_value\":\"0.60\",\"decision\":\"escalate\",\"confidence\":0.86,\"reason\":\"structured evidence\",\"evidence_refs\":[\"rule:RULE-HIGH\"]}]}"
+      "text": "{\"schema_version\":\"1.0\",\"context_hash\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"overall_summary\":\"本期确定性统计总体稳定。\",\"historical_comparison\":\"本次未选择历史资料。\",\"review_batches\":[],\"possible_causes\":[\"当前数据不足以推断明确原因。\"],\"recommendations\":[\"继续按既定频次进行人工复核。\"],\"evidence_refs\":[],\"disclaimer\":\"本报告仅作辅助分析，不构成正式质量结论。\"}"
     }
   ]
 }

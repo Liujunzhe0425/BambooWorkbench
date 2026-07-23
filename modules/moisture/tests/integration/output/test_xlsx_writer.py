@@ -40,7 +40,6 @@ SHEET_NAMES = [
     "异常分析明细",
     "趋势分析",
     "来源追溯",
-    "模型分析记录",
 ]
 
 
@@ -331,14 +330,6 @@ def test_workbook_contains_five_required_sheets_and_key_values(
         assert trend.cell(2, _column(trend_headers, "初筛下限")).value == pytest.approx(0.47)
         assert trend.cell(2, _column(trend_headers, "初筛上限")).value == pytest.approx(0.55)
 
-        # Relocated: 模型分析记录 fields
-        model = workbook["模型分析记录"]
-        model_headers = [cell.value for cell in model[1]]
-        assert model.cell(2, _column(model_headers, "初筛状态")).value == "偏高疑似"
-        assert model.cell(2, _column(model_headers, "AI复判状态")).value == "辅助复判未完成"
-        assert model.cell(2, _column(model_headers, "最终显示色")).value == "橙色"
-        assert model.cell(2, _column(model_headers, "人工确认状态")).value == "待人工复核"
-
         # Customer-visible text hygiene
         customer_text = " ".join(
             str(cell.value)
@@ -442,10 +433,10 @@ def test_cross_sheet_order_is_consistent(
             for row in range(2, summary.max_row + 1)
         )
         assert summary_ids == (1, 2, 3, 4)
-        # Trend / Trace / Model (all-batch sheets): record IDs in same relative order
+        # Trend / Trace (all-batch sheets): record IDs in same relative order
         # 异常分析明细 only has anomaly subsets, skip for full-order check
         expected_records = ("R1", "R3", "R2", "R4")
-        for sheet_name in ("趋势分析", "来源追溯", "模型分析记录"):
+        for sheet_name in ("趋势分析", "来源追溯"):
             ws = workbook[sheet_name]
             id_col = None
             for col, header in enumerate(ws[1], start=1):

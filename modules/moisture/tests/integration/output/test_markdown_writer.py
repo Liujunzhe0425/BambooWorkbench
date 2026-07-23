@@ -34,12 +34,30 @@ from moisture.reporting.markdown_writer import AnalysisReportView, write_analysi
 
 def _batch(
     record_id: str,
-    color: DisplayColor,
+    status: ScreenStatus,
     *,
+    pending: bool = False,
     experience: bool = False,
-    degradation: str | None = None,
 ) -> WorkbookBatch:
-    value = Decimal("0.61") if color in {DisplayColor.ORANGE, DisplayColor.RED} else Decimal("0.44")
+    values = {
+        ScreenStatus.NORMAL: Decimal("0.51"),
+        ScreenStatus.HIGH: Decimal("0.61"),
+        ScreenStatus.LOW: Decimal("0.44"),
+        ScreenStatus.DATA_QUALITY: Decimal("0.50"),
+    }
+    colors = {
+        ScreenStatus.NORMAL: DisplayColor.NONE,
+        ScreenStatus.HIGH: DisplayColor.ORANGE,
+        ScreenStatus.LOW: DisplayColor.GREEN,
+        ScreenStatus.DATA_QUALITY: DisplayColor.NONE,
+    }
+    reasons = {
+        ScreenStatus.NORMAL: "均值处于初筛范围内",
+        ScreenStatus.HIGH: "均值超过上限",
+        ScreenStatus.LOW: "均值低于下限",
+        ScreenStatus.DATA_QUALITY: "有效样本不足",
+    }
+    value = values[status]
     sample = SampleMeasurement(
         sample_index=1,
         department_raw="品质",
@@ -59,7 +77,7 @@ def _batch(
         source_file_hash="a" * 64,
         source_sheet="检测数据",
         supplier="供应商甲",
-        material_type="竹丝",
+        material_type="原竹丝",
     )
     statistics = BatchStatistics(
         sample_count=1,
@@ -74,34 +92,25 @@ def _batch(
         third_quartile=value,
         interquartile_range=Decimal("0"),
     )
-    direction = (
-        ScreenStatus.HIGH if color in {DisplayColor.ORANGE, DisplayColor.RED} else ScreenStatus.LOW
+    confirmation_state = (
+        ConfirmationState.PENDING_HUMAN_REVIEW if pending else ConfirmationState.NOT_REQUIRED
     )
-    screening_color = DisplayColor.ORANGE if direction == ScreenStatus.HIGH else DisplayColor.GREEN
-    reviewed = color in {DisplayColor.RED, DisplayColor.BLUE}
     return WorkbookBatch(
         record=record,
         statistics=statistics,
         screening_decision=ScreeningDecision(
-            status=direction,
-            display_color=screening_color,
-            reason="确定性规则发现疑似偏离",
+            status=status,
+            display_color=colors[status],
+            reason=reasons[status],
             target_field="mean",
         ),
         ai_review=AIReviewDecision(
-            status=(
-                ReviewStatus.REVIEW_HIGH if color == DisplayColor.RED else ReviewStatus.REVIEW_LOW
-            )
-            if reviewed
-            else ReviewStatus.NOT_COMPLETED,
-            display_color=color if reviewed else DisplayColor.NONE,
-            confirmation_state=ConfirmationState.PENDING_HUMAN_REVIEW,
-            rationale="辅助证据支持高度疑似" if reviewed else None,
-            target_field="mean" if reviewed else None,
-            confidence=Decimal("0.86") if reviewed else None,
+            status=ReviewStatus.NOT_COMPLETED,
+            display_color=DisplayColor.NONE,
+            confirmation_state=confirmation_state,
         ),
-        final_display_color=color,
-        confirmation_state=ConfirmationState.PENDING_HUMAN_REVIEW,
+        final_display_color=colors[status],
+        confirmation_state=confirmation_state,
         rule_version="rules-v1",
         review_suggestion="建议复核测量与来源记录",
         lower_threshold=Decimal("0.47"),
@@ -118,7 +127,6 @@ def _batch(
             if experience
             else ()
         ),
-        ai_degradation_reason=degradation,
     )
 
 
@@ -128,95 +136,24 @@ def report() -> AnalysisReportView:
         started_at=datetime(2026, 7, 13, 8, 0, tzinfo=UTC),
         status="partial_success",
         batches=(
-            _batch("R1", DisplayColor.ORANGE, experience=True, degradation="AI 服务超时"),
-            _batch("R2", DisplayColor.GREEN),
-            _batch("R3", DisplayColor.RED),
-            _batch("R4", DisplayColor.BLUE),
+            _batch("NORMAL-001", ScreenStatus.NORMAL),
+            _batch("NORMAL-002", ScreenStatus.NORMAL),
+            _batch("HIGH-001", ScreenStatus.HIGH, pending=True, experience=True),
+            _batch("LOW-001", ScreenStatus.LOW),
+            _batch("QUALITY-001", ScreenStatus.DATA_QUALITY),
         ),
         rule_version="rules-v1",
         rule_hash="b" * 64,
         rule_source="rules/active/rule-package.json",
-        rule_applicable_scope="竹丝/原竹丝；全年",
+        rule_applicable_scope="原竹丝；全年",
         rule_confirmation_status="pending_confirmation",
-        candidate_total=7,
-        candidate_sent=4,
-        candidate_omitted=3,
-        errors=("一个输入文件未能解析，其他文件已继续处理",),
-    )
-
-
-def test_report_separates_deterministic_and_auxiliary_evidence(
-    tmp_path: Path, report: AnalysisReportView
-) -> None:
-    output = write_analysis_markdown(report, tmp_path / "output")
-    text = output.read_text(encoding="utf-8")
-
-    assert output == tmp_path / "output" / "analysis_report.md"
-    for heading in (
-        "## 确定性分析结果",
-        "## 规则快照与适用状态",
-        "## 已审核经验引用",
-        "## 辅助服务记录与降级",
-        "## 颜色语义与使用限制",
-    ):
-        assert heading in text
-    assert "rules-v1" in text
-    assert "b" * 64 in text
-    assert "rules/active/rule-package.json" in text
-    assert "待业务确认" in text
-    assert "材料适用范围：竹丝/原竹丝；全年" in text
-    assert "下限 0.47，上限 0.55" in text
-    assert "未配置" not in text
-    assert "not_required" not in text
-    assert "pending_human_review" not in text
-    assert "；None。" not in text
-    assert "EXP-001" in text and "1.2.0" in text
-    assert "候选总数：7；发送数：4；省略数：3" in text
-    assert "AI 服务超时" in text
-
-
-def test_report_explains_orange_green_red_blue_without_formal_conclusion(
-    tmp_path: Path, report: AnalysisReportView
-) -> None:
-    text = write_analysis_markdown(report, tmp_path).read_text(encoding="utf-8")
-
-    assert "橙色：确定性规则发现偏高疑似" in text
-    assert "绿色：确定性规则发现偏低疑似" in text
-    assert "红色：有效辅助证据支持的高度偏高疑似" in text
-    assert "蓝色：有效辅助证据支持的高度偏低疑似" in text
-    assert "均不表示正式错误、不合格或责任认定" in text
-
-
-def test_report_contains_no_responsibility_conclusion_prompt(
-    tmp_path: Path, report: AnalysisReportView
-) -> None:
-    text = write_analysis_markdown(report, tmp_path).read_text(encoding="utf-8")
-
-    for forbidden in ("责任结论", "责任判定", "责任人", "最终结论由", "API Key", "Provider"):
-        assert forbidden not in text
-
-
-def test_report_handles_empty_experience_and_no_degradation(
-    tmp_path: Path, report: AnalysisReportView
-) -> None:
-    batches = tuple(
-        replace(batch, experience_references=(), ai_degradation_reason=None)
-        for batch in report.batches
-    )
-    clean = replace(report, batches=batches, errors=())
-    text = write_analysis_markdown(clean, tmp_path).read_text(encoding="utf-8")
-
-    experience = text.split("## 已审核经验引用", 1)[1].split("## 辅助服务记录与降级", 1)[0]
-    degradation = text.split("## 辅助服务记录与降级", 1)[1].split("## 数据质量与处理限制", 1)[0]
-    assert "- 无已审核经验引用。" in experience
-    assert "- 无服务降级记录。" in degradation
-
-
-def test_report_cites_knowledge_without_changing_decision_language(
-    tmp_path: Path, report: AnalysisReportView
-) -> None:
-    cited = replace(
-        report,
+        candidate_total=0,
+        candidate_sent=0,
+        candidate_omitted=0,
+        input_count=6,
+        processed_count=5,
+        skipped_count=0,
+        failed_count=1,
         knowledge_citations=(
             KnowledgeCitation(
                 record_id="KN-001",
@@ -226,18 +163,106 @@ def test_report_cites_knowledge_without_changing_decision_language(
                 source="local_document:guidance.md",
             ),
         ),
+        errors=("broken.xlsx: WORKBOOK_PROCESSING_FAILED",),
     )
 
-    text = write_analysis_markdown(cited, tmp_path).read_text(encoding="utf-8")
 
-    assert "Knowledge `moisture/KN-001`" in text
-    assert "仅供复核引用，不参与颜色或责任判定" in text
-    assert "C:\\" not in text
+def _sections(text: str) -> tuple[str, str]:
+    customer_body, appendix = text.split("## 技术附录", 1)
+    return customer_body, appendix
 
 
-def test_view_rejects_inconsistent_candidate_counts(report: AnalysisReportView) -> None:
+def test_report_aggregates_normal_batches_and_expands_only_attention_items(
+    tmp_path: Path, report: AnalysisReportView
+) -> None:
+    output = write_analysis_markdown(report, tmp_path / "output")
+    text = output.read_text(encoding="utf-8")
+    customer_body, _ = _sections(text)
+
+    assert output == tmp_path / "output" / "analysis_report.md"
+    assert "输入 6 个，成功处理 5 个，跳过 0 个，失败 1 个" in customer_body
+    assert "正常批次：2 个" in customer_body
+    assert "偏高疑似批次：1 个" in customer_body
+    assert "偏低疑似批次：1 个" in customer_body
+    assert "信息不足批次：1 个" in customer_body
+    assert "待人工复核 1 个" in customer_body
+    assert "NORMAL-001" not in customer_body
+    assert "NORMAL-002" not in customer_body
+    for record_id in ("HIGH-001", "LOW-001", "QUALITY-001"):
+        assert record_id in customer_body
+    assert "broken.xlsx" in customer_body
+
+
+def test_customer_body_centralizes_thresholds_and_hides_technical_trace(
+    tmp_path: Path, report: AnalysisReportView
+) -> None:
+    text = write_analysis_markdown(report, tmp_path).read_text(encoding="utf-8")
+    customer_body, appendix = _sections(text)
+
+    assert customer_body.count("均值初筛范围") == 1
+    assert "下限 47.00%，上限 55.00%" in customer_body
+    assert "61.00%" in customer_body
+    assert "0.610000" not in customer_body
+    assert "b" * 64 not in customer_body
+    assert "rules/active/rule-package.json" not in customer_body
+    assert "EXP-001" not in customer_body
+    assert "KN-001" not in customer_body
+    assert "b" * 64 in appendix
+    assert "rules/active/rule-package.json" in appendix
+    assert "EXP-001" in appendix
+    assert "Knowledge `moisture/KN-001`" in appendix
+
+
+def test_report_sanitizes_customer_errors_and_avoids_empty_warning_section(
+    tmp_path: Path, report: AnalysisReportView
+) -> None:
+    unsafe = replace(report, errors=("C:\\customer\\bad.xlsx: Traceback: parser failed",))
+    text = write_analysis_markdown(unsafe, tmp_path / "unsafe").read_text(encoding="utf-8")
+
+    assert "C:\\customer" not in text
+    assert "Traceback" not in text
+    assert "处理失败，详情请查看任务错误记录。" in text
+
+    normal_only = replace(
+        report,
+        status="success",
+        batches=(_batch("NORMAL-ONLY", ScreenStatus.NORMAL),),
+        input_count=1,
+        processed_count=1,
+        failed_count=0,
+        knowledge_citations=(),
+        errors=(),
+    )
+    clean_text = write_analysis_markdown(normal_only, tmp_path / "clean").read_text(
+        encoding="utf-8"
+    )
+    customer_body, _ = _sections(clean_text)
+    assert "NORMAL-ONLY" not in customer_body
+    assert "## 数据质量风险" not in customer_body
+    assert "未记录数据质量问题" not in customer_body
+
+
+def test_report_keeps_business_boundary_and_deterministic_color_meaning(
+    tmp_path: Path, report: AnalysisReportView
+) -> None:
+    text = write_analysis_markdown(report, tmp_path).read_text(encoding="utf-8")
+
+    assert "不替代质量放行、处置或责任认定" in text
+    assert "橙色：确定性规则发现偏高疑似" in text
+    assert "绿色：确定性规则发现偏低疑似" in text
+    assert "红色：" not in text
+    assert "蓝色：" not in text
+    for forbidden in ("API Key", "Provider", "原始 JSON"):
+        assert forbidden not in text
+
+
+def test_view_rejects_inconsistent_candidate_or_run_counts(
+    report: AnalysisReportView,
+) -> None:
     with pytest.raises(ValueError, match="candidate"):
         replace(report, candidate_omitted=2)
+    with pytest.raises(ValueError, match="run counts"):
+        replace(report, failed_count=-1)
 
 
 def test_markdown_is_atomic_and_cleans_temporary_file(

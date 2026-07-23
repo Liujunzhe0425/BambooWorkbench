@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "operation": "ai_report",
+  "inputs": [
+    {
+      "role": "current_summary",
+      "input_index": 0
+    }
+  ],
+  "history_ids": [],
+  "experience_selections": [],
+  "question": "请概括本期情况并提出人工复核建议。"
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.0",
+  "entries": [
+    {
+      "path": "approved/EXP-SYN-001--1.0.0.md",
+      "sha256": "330b46bfab79b668cebd8b6171c55c847df3bcb05e9639c9c30ac10774a2af16"
+    },
+    {
+      "path": "approved/EXP-SYN-002--1.0.0.md",
+      "sha256": "62ec858b753cfce1440712b295fe067645a8b6ef67c1002e0592d3f601cf72b8"
+    }
+  ]
+}

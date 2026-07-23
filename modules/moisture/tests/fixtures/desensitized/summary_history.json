@@ -1,0 +1,89 @@
+{
+  "description": "Synthetic historical-period summary table for C3 AI analysis report tests. No real supplier names, paths, or API keys.",
+  "generated_at": "2026-07-23",
+  "period": "2026-06",
+  "batches": [
+    {
+      "record_id": "BATCH-SYN-H01",
+      "supplier": "供应方Alpha",
+      "material_type": "竹丝A型",
+      "test_date": "2026-06-05",
+      "sample_count": 6,
+      "mean": 0.498,
+      "total_average": 0.498,
+      "minimum": 0.472,
+      "maximum": 0.531,
+      "range_value": 0.059,
+      "standard_deviation": 0.022,
+      "display_color": "none",
+      "screen_status": "pass"
+    },
+    {
+      "record_id": "BATCH-SYN-H02",
+      "supplier": "供应方Beta",
+      "material_type": "竹丝B型",
+      "test_date": "2026-06-08",
+      "sample_count": 8,
+      "mean": 0.521,
+      "total_average": 0.521,
+      "minimum": 0.493,
+      "maximum": 0.557,
+      "range_value": 0.064,
+      "standard_deviation": 0.023,
+      "display_color": "none",
+      "screen_status": "pass"
+    },
+    {
+      "record_id": "BATCH-SYN-H03",
+      "supplier": "供应方Alpha",
+      "material_type": "竹丝A型",
+      "test_date": "2026-06-12",
+      "sample_count": 4,
+      "mean": 0.611,
+      "total_average": 0.611,
+      "minimum": 0.583,
+      "maximum": 0.645,
+      "range_value": 0.062,
+      "standard_deviation": 0.027,
+      "display_color": "orange",
+      "screen_status": "suspect_high"
+    },
+    {
+      "record_id": "BATCH-SYN-H04",
+      "supplier": "供应方Gamma",
+      "material_type": "竹丝C型",
+      "test_date": "2026-06-18",
+      "sample_count": 5,
+      "mean": 0.476,
+      "total_average": 0.476,
+      "minimum": 0.451,
+      "maximum": 0.508,
+      "range_value": 0.057,
+      "standard_deviation": 0.024,
+      "display_color": "none",
+      "screen_status": "pass"
+    },
+    {
+      "record_id": "BATCH-SYN-H05",
+      "supplier": "供应方Delta",
+      "material_type": "竹丝D型",
+      "test_date": "2026-06-22",
+      "sample_count": 6,
+      "mean": 0.392,
+      "total_average": 0.392,
+      "minimum": 0.368,
+      "maximum": 0.419,
+      "range_value": 0.051,
+      "standard_deviation": 0.020,
+      "display_color": "green",
+      "screen_status": "suspect_low"
+    }
+  ],
+  "rule_summary": {
+    "rule_version": "v1.0.0-synthetic",
+    "rule_hash": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2",
+    "rule_source": "internal/synthetic-rules",
+    "upper_limit": 0.580,
+    "lower_limit": 0.420
+  }
+}

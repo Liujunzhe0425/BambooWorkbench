@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bamboo:moisture:ai-analysis-result:1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "status",
+    "request_id",
+    "context_hash",
+    "current_summary",
+    "history_ids",
+    "experience_selections",
+    "report_file",
+    "degradation_reason"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "status": {"enum": ["success", "denied", "error", "timeout", "invalid_response"]},
+    "request_id": {"type": "string", "pattern": "^msr-ai-report-[0-9a-f]{24}$"},
+    "context_hash": {"$ref": "#/$defs/sha256"},
+    "current_summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["display_name", "sha256"],
+      "properties": {
+        "display_name": {"type": "string", "minLength": 1, "maxLength": 200},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "history_ids": {
+      "type": "array",
+      "maxItems": 100,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/stable_id"}
+    },
+    "experience_selections": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entry_id", "version", "sha256"],
+        "properties": {
+          "entry_id": {"$ref": "#/$defs/stable_id"},
+          "version": {"$ref": "#/$defs/stable_id"},
+          "sha256": {"$ref": "#/$defs/sha256"}
+        }
+      }
+    },
+    "report_file": {"type": ["string", "null"], "enum": ["ai_analysis_report.md", null]},
+    "degradation_reason": {"type": ["string", "null"], "maxLength": 500}
+  },
+  "$defs": {
+    "stable_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "success"}}},
+      "then": {
+        "properties": {
+          "report_file": {"const": "ai_analysis_report.md"},
+          "degradation_reason": {"type": "null"}
+        }
+      },
+      "else": {
+        "properties": {
+          "report_file": {"type": "null"},
+          "degradation_reason": {"type": "string", "minLength": 1, "maxLength": 500}
+        }
+      }
+    }
+  ]
+}

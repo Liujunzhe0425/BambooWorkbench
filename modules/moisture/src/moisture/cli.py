@@ -18,6 +18,7 @@ from moisture.contract.validators import (
     validate_job_payload,
 )
 from moisture.infrastructure.diagnostics import collect_runtime_issues
+from moisture.management_cli import run_management
 
 
 class JobValidationError(ValueError):
@@ -31,6 +32,9 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("self-check", add_help=False)
     run_parser = commands.add_parser("run", add_help=False)
     run_parser.add_argument("--job", required=True)
+    manage_parser = commands.add_parser("manage", add_help=False)
+    manage_parser.add_argument("--request", required=True)
+    manage_parser.add_argument("--response", required=True)
     return parser
 
 
@@ -101,6 +105,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
 
     if parsed.command == "run":
         return _run(Path(parsed.job))
+    if parsed.command == "manage":
+        return run_management(Path(parsed.request), Path(parsed.response))
 
     issues = (*collect_runtime_issues(), *collect_schema_lock_issues())
     if issues:

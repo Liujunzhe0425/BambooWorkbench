@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bamboo:moisture:history-index:1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "entries"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "entries": {
+      "type": "array",
+      "maxItems": 10000,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "history_id",
+          "display_name",
+          "storage_name",
+          "sha256",
+          "format_version",
+          "date_start",
+          "date_end",
+          "batch_count",
+          "status"
+        ],
+        "properties": {
+          "history_id": {"$ref": "#/$defs/stable_id"},
+          "display_name": {"type": "string", "minLength": 1, "maxLength": 200},
+          "storage_name": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.xlsx$"
+          },
+          "sha256": {"$ref": "#/$defs/sha256"},
+          "format_version": {"enum": ["1.0.0-five-sheet", "1.0.1-four-sheet"]},
+          "date_start": {"type": ["string", "null"], "format": "date"},
+          "date_end": {"type": ["string", "null"], "format": "date"},
+          "batch_count": {"type": "integer", "minimum": 0},
+          "status": {"enum": ["active", "retired"]}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "stable_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+  }
+}

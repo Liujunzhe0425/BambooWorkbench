@@ -3,19 +3,17 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
 
-from moisture.application.ai_request_builder import (
-    AIRequestBuildResult,
-    build_ai_request,
-    candidates_from_batches,
-)
 from moisture.application.confirmation_builder import build_confirmations
 from moisture.application.deterministic_pipeline import DeterministicPipeline
+from moisture.application.module_config import (
+    ModuleConfigError,
+    ModuleOperation,
+    load_module_config,
+)
 from moisture.application.run_result import InternalMoistureRunResult, InternalOutput
 from moisture.application.service_request_builder import build_knowledge_request
 from moisture.contract.job_models import JobRequest
@@ -26,46 +24,7 @@ from moisture.ports.writers import WorkbookReport
 from moisture.reporting.markdown_writer import AnalysisReportView, write_analysis_markdown
 from moisture.reporting.xlsx_writer import write_summary_xlsx
 
-
-class ModuleConfigError(ValueError):
-    """The optional, module-owned deterministic configuration is invalid."""
-
-
 _FORMULA_CONFIRMATION_TOLERANCE = Decimal("0.0001")
-
-
-def _reject_duplicate_config_keys(
-    pairs: list[tuple[str, Any]],
-) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise ModuleConfigError("duplicate configuration key")
-        result[key] = value
-    return result
-
-
-def _load_default_year(path: Path | None) -> int | None:
-    if path is None:
-        return None
-    try:
-        payload = json.loads(
-            path.read_text(encoding="utf-8"),
-            object_pairs_hook=_reject_duplicate_config_keys,
-        )
-    except (OSError, UnicodeError, json.JSONDecodeError) as error:
-        raise ModuleConfigError("configuration must be readable UTF-8 JSON") from error
-    if not isinstance(payload, dict):
-        raise ModuleConfigError("configuration must be a JSON object")
-    unknown = set(payload) - {"default_year"}
-    if unknown:
-        raise ModuleConfigError("configuration contains unknown fields")
-    default_year = payload.get("default_year")
-    if default_year is None:
-        return None
-    if type(default_year) is not int or not 1900 <= default_year <= 2100:
-        raise ModuleConfigError("default_year must be an integer from 1900 to 2100")
-    return default_year
 
 
 def _status(processed: int, failed: int) -> str:
@@ -156,25 +115,18 @@ def _knowledge_requests(job: JobRequest, outcome: object) -> tuple[dict[str, obj
     return (request,) if request is not None else ()
 
 
-def _ai_request(job: JobRequest, outcome: object) -> AIRequestBuildResult:
-    candidates = tuple(getattr(outcome, "ai_review_candidates", ()))
-    if not candidates:
-        candidates = candidates_from_batches(tuple(outcome.batches), outcome.rule_package)
-    return build_ai_request(
-        root_job_id=job.root_job_id,
-        candidates=candidates,
-        rule_hash=outcome.rule_package.rules_sha256,
-    )
-
-
 def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) -> int:
     """Run one draft and publish ``result.json`` after completed artifacts."""
 
     started_at = datetime.now(UTC)
     try:
-        default_year = _load_default_year(job.module_config_file)
+        module_config = load_module_config(job.module_config_file, input_count=len(job.input_files))
+        if module_config.operation is ModuleOperation.AI_REPORT:
+            from moisture.application.ai_report import run_ai_report_draft
+
+            return run_ai_report_draft(job, module_config)
         outcome = (pipeline or DeterministicPipeline()).run(
-            job.input_files, default_year=default_year
+            job.input_files, default_year=module_config.default_year
         )
     except ModuleConfigError:
         message = "MODULE_CONFIG_INVALID"
@@ -220,8 +172,7 @@ def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) ->
     errors = outcome.errors
     business_failed = outcome.processed_count == 0
     knowledge_requests = _knowledge_requests(job, outcome)
-    ai_request = _ai_request(job, outcome)
-    service_requests = knowledge_requests + ((ai_request.request,) if ai_request.request else ())
+    service_requests = knowledge_requests
 
     if outcome.batches:
         completed_artifacts: list[Path] = []
@@ -242,9 +193,13 @@ def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) ->
                     rule_source=package.source,
                     rule_applicable_scope=package.applicable_scope,
                     rule_confirmation_status=package.customer_confirmation_status,
-                    candidate_total=ai_request.candidate_total,
-                    candidate_sent=ai_request.candidate_sent,
-                    candidate_omitted=ai_request.candidate_omitted,
+                    candidate_total=0,
+                    candidate_sent=0,
+                    candidate_omitted=0,
+                    input_count=outcome.input_count,
+                    processed_count=outcome.processed_count,
+                    skipped_count=outcome.skipped_count,
+                    failed_count=outcome.failed_count,
                     errors=errors,
                 ),
                 job.output_dir,

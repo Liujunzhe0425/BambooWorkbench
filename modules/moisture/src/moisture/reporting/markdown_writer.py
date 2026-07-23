@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from uuid import uuid4
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from moisture.domain.enums import ConfirmationState, ScreenStatus
 from moisture.ports.writers import ExperienceCitation, KnowledgeCitation, WorkbookBatch
 from moisture.reporting.labels import color_label, screen_label
 from moisture.runtime_paths import module_root
@@ -29,6 +32,10 @@ class AnalysisReportView:
     candidate_total: int
     candidate_sent: int
     candidate_omitted: int
+    input_count: int | None = None
+    processed_count: int | None = None
+    skipped_count: int = 0
+    failed_count: int = 0
     knowledge_citations: tuple[KnowledgeCitation, ...] = ()
     errors: tuple[str, ...] = ()
 
@@ -45,6 +52,14 @@ class AnalysisReportView:
             raise ValueError("candidate counts must be non-negative")
         if self.candidate_sent + self.candidate_omitted != self.candidate_total:
             raise ValueError("candidate counts must satisfy sent + omitted = total")
+        run_counts = (
+            self.input_count,
+            self.processed_count,
+            self.skipped_count,
+            self.failed_count,
+        )
+        if any(count is not None and count < 0 for count in run_counts):
+            raise ValueError("run counts must be non-negative")
 
     @property
     def rule_confirmation_label(self) -> str:
@@ -75,6 +90,100 @@ class AnalysisReportView:
     @staticmethod
     def color_label(batch: WorkbookBatch) -> str:
         return color_label(batch.ai_review.display_color)
+
+    @staticmethod
+    def format_percent(value: Decimal | None) -> str:
+        if value is None:
+            return "无适用规则"
+        return f"{value * Decimal('100'):.2f}%"
+
+    @staticmethod
+    def is_pending(batch: WorkbookBatch) -> bool:
+        return batch.confirmation_state == ConfirmationState.PENDING_HUMAN_REVIEW
+
+    @staticmethod
+    def review_advice(batch: WorkbookBatch) -> str:
+        if batch.review_suggestion:
+            return batch.review_suggestion
+        advice = {
+            ScreenStatus.HIGH: "建议复核称量记录、样本状态及检测过程。",
+            ScreenStatus.LOW: "建议复核称量记录、样本状态及检测过程。",
+            ScreenStatus.DATA_QUALITY: "建议补齐或修正源数据后重新检测。",
+        }
+        return advice.get(batch.screening_decision.status, "建议按现行业务流程复核。")
+
+    @property
+    def successful_count(self) -> int:
+        return self.processed_count if self.processed_count is not None else len(self.batches)
+
+    @property
+    def total_input_count(self) -> int:
+        if self.input_count is not None:
+            return self.input_count
+        return self.successful_count + self.skipped_count + self.failed_count
+
+    @property
+    def normal_batches(self) -> tuple[WorkbookBatch, ...]:
+        return tuple(
+            batch
+            for batch in self.batches
+            if batch.screening_decision.status == ScreenStatus.NORMAL and not self.is_pending(batch)
+        )
+
+    @property
+    def high_batches(self) -> tuple[WorkbookBatch, ...]:
+        return tuple(
+            batch for batch in self.batches if batch.screening_decision.status == ScreenStatus.HIGH
+        )
+
+    @property
+    def low_batches(self) -> tuple[WorkbookBatch, ...]:
+        return tuple(
+            batch for batch in self.batches if batch.screening_decision.status == ScreenStatus.LOW
+        )
+
+    @property
+    def data_quality_batches(self) -> tuple[WorkbookBatch, ...]:
+        return tuple(
+            batch
+            for batch in self.batches
+            if batch.screening_decision.status == ScreenStatus.DATA_QUALITY
+        )
+
+    @property
+    def pending_batches(self) -> tuple[WorkbookBatch, ...]:
+        return tuple(batch for batch in self.batches if self.is_pending(batch))
+
+    @property
+    def detailed_batches(self) -> tuple[WorkbookBatch, ...]:
+        return tuple(
+            batch
+            for batch in self.batches
+            if batch.screening_decision.status != ScreenStatus.NORMAL or self.is_pending(batch)
+        )
+
+    @property
+    def threshold_pairs(self) -> tuple[tuple[Decimal | None, Decimal | None], ...]:
+        pairs: list[tuple[Decimal | None, Decimal | None]] = []
+        for batch in self.batches:
+            pair = (batch.lower_threshold, batch.upper_threshold)
+            if pair not in pairs:
+                pairs.append(pair)
+        return tuple(pairs)
+
+    @property
+    def public_errors(self) -> tuple[str, ...]:
+        absolute_path = re.compile(r"(?:[A-Za-z]:[\\/]|/)")
+        return tuple(
+            "处理失败，详情请查看任务错误记录。"
+            if "\n" in error or "\r" in error or absolute_path.search(error)
+            else error
+            for error in self.errors
+        )
+
+    @property
+    def has_data_quality_risks(self) -> bool:
+        return bool(self.errors or self.data_quality_batches)
 
     @property
     def experience_citations(self) -> tuple[tuple[str, ExperienceCitation], ...]:

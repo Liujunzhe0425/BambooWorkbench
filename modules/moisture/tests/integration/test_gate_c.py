@@ -56,7 +56,8 @@ def test_gate_c_cli_draft_to_offline_finalize_has_no_hidden_state(
     )
     assert main(["run", "--job", str(draft_job)]) == 0
     draft = json.loads((draft_dir / "result.json").read_text(encoding="utf-8"))
-    assert draft["confirmations"] and draft["service_requests"]
+    assert draft["confirmations"]
+    assert not any(item["service"] == "ai" for item in draft["service_requests"])
 
     confirmation = tmp_path / "protocol" / "confirmation.json"
     confirmation.parent.mkdir(parents=True)

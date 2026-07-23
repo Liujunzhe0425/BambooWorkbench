@@ -18,8 +18,10 @@ def test_manifest_matches_canonical_schema() -> None:
         "schema_version": "1.0",
         "module_id": "moisture",
         "module_name": "竹丝水分检测",
-        "module_version": "1.0.0",
+        "module_version": "1.0.1",
         "entrypoint": "run_module.bat",
+        "management_entrypoint": "run_management.bat",
+        "capabilities": ["ai_report"],
         "supported_extensions": [".xlsx"],
         "supports_single_file": True,
         "supports_batch": True,
@@ -31,6 +33,7 @@ def test_manifest_matches_canonical_schema() -> None:
 def test_manifest_entrypoint_and_minimum_package_exist() -> None:
     for relative_path in (
         "run_module.bat",
+        "run_management.bat",
         "README.md",
         "CHANGELOG.md",
         "requirements.txt",

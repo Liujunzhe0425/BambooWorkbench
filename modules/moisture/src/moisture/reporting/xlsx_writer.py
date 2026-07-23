@@ -16,9 +16,6 @@ from moisture.domain.enums import DisplayColor, ScreenStatus
 from moisture.domain.models import ScreeningDecision
 from moisture.ports.writers import WorkbookBatch, WorkbookReport
 from moisture.reporting.labels import (
-    color_label,
-    confirmation_label,
-    review_label,
     screen_label,
 )
 from moisture.reporting.workbook_validation import REQUIRED_SHEET_NAMES, validate_workbook
@@ -541,46 +538,6 @@ def _write_trace(workbook: Any, report: WorkbookReport, formats: dict[str, Any])
     worksheet.set_column(3, 11, 22)
 
 
-def _write_model_records(workbook: Any, report: WorkbookReport, formats: dict[str, Any]) -> None:
-    headers = (
-        "批次编号",
-        "初筛状态",
-        "AI复判状态",
-        "置信度",
-        "最终显示色",
-        "人工确认状态",
-        "AI理由",
-        "降级原因",
-    )
-    worksheet = workbook.add_worksheet(SHEET_NAMES[4])
-    _write_headers(worksheet, headers, formats["header"])
-    for row, batch in enumerate(_ordered_batches(report), start=1):
-        values = (
-            batch.record.record_id,
-            screen_label(batch.screening_decision.status),
-            review_label(batch.ai_review.status),
-            _number(batch.ai_review.confidence),
-            color_label(batch.final_display_color),
-            confirmation_label(batch.confirmation_state),
-            batch.ai_review.rationale,
-            batch.ai_degradation_reason,
-        )
-        for column, value in enumerate(values):
-            cell_format = formats["number"] if column == 3 else formats["wrap"]
-            if value is None:
-                worksheet.write_blank(row, column, None, cell_format)
-            elif isinstance(value, (int, float)):
-                worksheet.write_number(row, column, value, cell_format)
-            else:
-                worksheet.write(row, column, value, cell_format)
-        worksheet.set_row(row, 36)
-    worksheet.set_column(0, 0, 34)
-    worksheet.set_column(1, 1, 18)
-    worksheet.set_column(2, 2, 28)
-    worksheet.set_column(3, 5, 18)
-    worksheet.set_column(6, 7, 36)
-
-
 def write_summary_xlsx(report: WorkbookReport, output_dir: Path) -> Path:
     """Write, validate, and atomically replace the formal workbook."""
 
@@ -605,7 +562,6 @@ def write_summary_xlsx(report: WorkbookReport, output_dir: Path) -> Path:
         _write_anomalies(workbook, report, formats)
         _write_trends(workbook, report, formats)
         _write_trace(workbook, report, formats)
-        _write_model_records(workbook, report, formats)
         workbook.close()
         workbook = None
         validate_workbook(temporary)
