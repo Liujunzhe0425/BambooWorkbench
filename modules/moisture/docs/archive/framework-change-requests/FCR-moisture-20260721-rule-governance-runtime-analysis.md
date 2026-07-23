@@ -1,3 +1,7 @@
+> 文档状态：历史归档
+> 不作为当前实现和验收依据。
+> 当前有效框架请求以 `FCR-moisture-20260723-three-function-workbench.md` 为准。
+
 ---
 request_id: FCR-moisture-20260721-rule-governance-runtime-analysis
 module_id: moisture

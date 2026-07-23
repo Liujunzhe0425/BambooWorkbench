@@ -154,8 +154,8 @@ powershell -ExecutionPolicy Bypass -File modules\moisture\build_portable_runtime
 
 | 文档 | 内容 |
 |------|------|
-| [下一阶段架构设计](docs/architecture/moisture-next-stage-architecture.md) | 规则治理工作器、不可变规则版本、任务快照、Knowledge→AI 编排、人工复核和红蓝退出策略 |
-| [框架适配请求 FCR-moisture-20260721](docs/framework-change-requests/FCR-moisture-20260721-rule-governance-runtime-analysis.md) | 请求框架提供治理进程宿主、存储、UI、active binding、服务编排、审计和打包能力 |
+| [下一阶段三功能简化架构](docs/architecture/moisture-next-stage-architecture.md) | 汇总表生产、AI辅助分析、经验指导和轻量三栏规则管理；取代旧重型治理方案 |
+| [框架适配请求 FCR-moisture-20260723](docs/framework-change-requests/FCR-moisture-20260723-three-function-workbench.md) | 请求框架提供三功能页面、轻量历史资料、独立管理进程、任务规则快照和AI报告展示 |
 
 ## 记录文件
 
