@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 import openpyxl
@@ -145,11 +146,12 @@ def make_labeled_sample(
     expansions=None,
     labels=None,
     batch_no="DEMO-001",
+    specification="100×100×10",
 ):
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "水煮实验"
-    sheet.append(["批号", batch_no, "产品名称", "脱敏竹集成材", "规格型号", "100×100×10"])
+    sheet.append(["批号", batch_no, "产品名称", "脱敏竹集成材", "规格型号", specification])
     sheet.append(["压制日期", dt.date(2026, 7, 10), "班长", "脱敏班长", "产品用途", product_usage])
     sheet.append(
         [
@@ -354,6 +356,55 @@ def test_draft_job_generates_result_without_modifying_source(tmp_path):
     assert result["status"] == "needs_confirmation"
     assert result["summary"]["processed_count"] == 1
     assert result["confirmations"][0]["field"] == "product_usage"
+
+
+def test_expansion_chart_aggregates_specimen_values_by_specification(tmp_path):
+    first = tmp_path / "spec-a-first.xlsx"
+    second = tmp_path / "spec-a-second.xlsx"
+    third = tmp_path / "spec-b.xlsx"
+    make_labeled_sample(
+        first,
+        batch_no="A-001",
+        specification="100×100×10",
+        sample_count=1,
+        expansion=0.04,
+    )
+    make_labeled_sample(
+        second,
+        batch_no="A-002",
+        specification="100×100×10",
+        sample_count=3,
+        expansion=0.08,
+    )
+    make_labeled_sample(
+        third,
+        batch_no="B-001",
+        specification="120×80×12",
+        sample_count=2,
+        expansion=0.10,
+    )
+    output = tmp_path / "output"
+    job_path = tmp_path / "job.json"
+    job = make_job(first, output)
+    job["run_mode"] = "batch"
+    job["input_files"] = [str(first), str(second), str(third)]
+    job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+
+    assert boiling_module.run_job(job_path) == 0
+    workbook_path = output / "boiling_summary.xlsx"
+    workbook = openpyxl.load_workbook(workbook_path)
+    chart_sheet = workbook["分析图表"]
+    assert chart_sheet["D1"].value == "规格型号"
+    assert chart_sheet["E1"].value == "平均膨胀率"
+    assert chart_sheet["D2"].value == "100×100×10"
+    assert chart_sheet["E2"].value == pytest.approx(0.07)
+    assert chart_sheet["D3"].value == "120×80×12"
+    assert chart_sheet["E3"].value == pytest.approx(0.10)
+    workbook.close()
+    with zipfile.ZipFile(workbook_path) as archive:
+        expansion_chart_xml = archive.read("xl/charts/chart2.xml").decode("utf-8")
+    assert "各型号规格平均膨胀率对比" in expansion_chart_xml
+    assert "各批次平均膨胀率对比" not in expansion_chart_xml
 
 
 def test_finalize_applies_confirmation(tmp_path):

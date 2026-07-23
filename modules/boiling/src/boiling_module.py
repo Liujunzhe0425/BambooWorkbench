@@ -1430,22 +1430,44 @@ def write_summary(records, output_path, rules, excluded_records=None):
 
     if records:
         chart_sheet = workbook.create_sheet("分析图表")
-        chart_sheet.append(["批号/文件", "平均密度(g/cm³)", "平均膨胀率"])
+        chart_sheet.append(["批号/文件", "平均密度(g/cm³)"])
         for record in records:
             chart_sheet.append(
                 [
                     record["batch_no"] or Path(record["source_file"]).stem,
                     record["average_density_g_cm3"],
-                    record["average_expansion_ratio"],
                 ]
             )
-        style_header(chart_sheet[1])
+        specification_expansions = {}
+        for record in records:
+            specification = as_text(record.get("specification")) or "未填写"
+            values = [
+                sample.get("expansion_ratio")
+                for sample in record.get("samples", [])
+                if sample.get("expansion_ratio") is not None
+            ]
+            if values:
+                specification_expansions.setdefault(specification, []).extend(values)
+        if not specification_expansions:
+            specification_expansions["无可计算数据"] = []
+        chart_sheet.cell(1, 4, "规格型号")
+        chart_sheet.cell(1, 5, "平均膨胀率")
+        for row_index, (specification, values) in enumerate(
+            specification_expansions.items(), start=2
+        ):
+            chart_sheet.cell(row_index, 4, specification)
+            chart_sheet.cell(row_index, 5, mean(values))
+        style_header([chart_sheet.cell(1, 1), chart_sheet.cell(1, 2)])
+        style_header([chart_sheet.cell(1, 4), chart_sheet.cell(1, 5)])
         chart_sheet.column_dimensions["A"].width = 24
         chart_sheet.column_dimensions["B"].width = 18
-        chart_sheet.column_dimensions["C"].width = 18
-        for cell in chart_sheet["C"][1:]:
+        chart_sheet.column_dimensions["D"].width = 24
+        chart_sheet.column_dimensions["E"].width = 18
+        for cell in chart_sheet["E"][1 : len(specification_expansions) + 1]:
             cell.number_format = "0.00%"
-        categories = Reference(chart_sheet, min_col=1, min_row=2, max_row=len(records) + 1)
+        batch_categories = Reference(
+            chart_sheet, min_col=1, min_row=2, max_row=len(records) + 1
+        )
         density_chart = BarChart()
         density_chart.type = "col"
         density_chart.title = "各批次平均密度对比"
@@ -1456,24 +1478,36 @@ def write_summary(records, output_path, rules, excluded_records=None):
             Reference(chart_sheet, min_col=2, min_row=1, max_row=len(records) + 1),
             titles_from_data=True,
         )
-        density_chart.set_categories(categories)
+        density_chart.set_categories(batch_categories)
         density_chart.height = 8
         density_chart.width = 15
-        chart_sheet.add_chart(density_chart, "E2")
+        chart_sheet.add_chart(density_chart, "G2")
         expansion_chart = BarChart()
         expansion_chart.type = "col"
-        expansion_chart.title = "各批次平均膨胀率对比"
+        expansion_chart.title = "各型号规格平均膨胀率对比"
         expansion_chart.y_axis.title = "比例"
         expansion_chart.y_axis.numFmt = "0.0%"
         expansion_chart.legend = None
         expansion_chart.add_data(
-            Reference(chart_sheet, min_col=3, min_row=1, max_row=len(records) + 1),
+            Reference(
+                chart_sheet,
+                min_col=5,
+                min_row=1,
+                max_row=len(specification_expansions) + 1,
+            ),
             titles_from_data=True,
         )
-        expansion_chart.set_categories(categories)
+        expansion_chart.set_categories(
+            Reference(
+                chart_sheet,
+                min_col=4,
+                min_row=2,
+                max_row=len(specification_expansions) + 1,
+            )
+        )
         expansion_chart.height = 8
         expansion_chart.width = 15
-        chart_sheet.add_chart(expansion_chart, "E18")
+        chart_sheet.add_chart(expansion_chart, "G18")
 
         result_counts = {"合格": 0, "不合格": 0}
         for record in records:
@@ -1515,7 +1549,7 @@ def write_summary(records, output_path, rules, excluded_records=None):
         result_chart.dataLabels.showLeaderLines = True
         result_chart.height = 8
         result_chart.width = 15
-        chart_sheet.add_chart(result_chart, "E34")
+        chart_sheet.add_chart(result_chart, "G34")
         chart_sheet.sheet_view.showGridLines = False
 
     thin_gray = Side(style="thin", color="D9E2F3")
