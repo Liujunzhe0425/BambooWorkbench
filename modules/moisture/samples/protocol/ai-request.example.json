@@ -1,26 +1,39 @@
 {
-  "request_id": "msr-ai-0123456789abcdef01234567",
+  "request_id": "msr-ai-report-0123456789abcdef01234567",
   "service": "ai",
   "scope": null,
-  "purpose": "复核水分规则候选摘要",
+  "purpose": "moisture_summary_analysis",
   "payload": {
     "schema_version": "1.0",
-    "rule_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "candidates": [
-      {
-        "candidate_id": "candidate-0123456789abcdef",
-        "direction": "high",
-        "field": "mean",
-        "observed_value": "0.60",
-        "threshold": "0.55",
-        "relative_deviation": "0.090909",
-        "evidence_refs": ["rule:RULE-HIGH"]
-      }
-    ],
-    "candidate_total": 1,
-    "candidate_sent": 1,
-    "candidate_omitted": 0,
-    "instruction": "仅基于规范化候选摘要提供竹丝水分复核建议"
+    "context_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "question": "请概括本期情况并提出人工复核建议。",
+    "current_summary": {
+      "content_hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "batch_count": 1,
+      "date_range": {
+        "start": "2026-07-01",
+        "end": "2026-07-01"
+      },
+      "metrics": {
+        "mean_moisture": "0.5000"
+      },
+      "review_items": []
+    },
+    "history_summaries": [],
+    "experiences": [],
+    "rule_snapshot": {
+      "version": "default-v2",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "summary": "当前启用规则的脱敏摘要。"
+    },
+    "selection_counts": {
+      "history": {"total": 0, "sent": 0, "omitted": 0},
+      "experiences": {"total": 0, "sent": 0, "omitted": 0},
+      "review_items": {"total": 0, "sent": 0, "omitted": 0}
+    },
+    "instruction": "只基于所给脱敏上下文提供辅助分析，不形成正式质量结论。",
+    "response_schema": {}
   },
-  "requires_user_consent": true
+  "requires_user_consent": true,
+  "response_format": "json_object"
 }

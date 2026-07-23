@@ -3,7 +3,7 @@ request_id: FCR-moisture-20260723-ai-report-context-selection
 module_id: moisture
 module_version: 1.0.1
 owner: moisture模块负责人
-status: proposed
+status: implemented
 framework_areas:
   - ui
   - service
@@ -190,8 +190,8 @@ moisture负责：
 
 ## 9. 框架方审核
 
-- 审核结论：待审核
-- 判断理由：待填写
-- 实施分支/PR：待填写
+- 审核结论：已批准并完成最小适配
+- 判断理由：框架提供独立 AI 报告入口、管理进程宿主、受控模块数据目录、历史/approved 经验选择和现有 Provider 编排；未把水分业务算法迁入框架。
+- 实施分支/PR：PR #43，已合入 `integration`（`65561e0`）
 - 可复用的现有接口：待填写
 - 对模块v1.0.1交付的前置要求：待填写

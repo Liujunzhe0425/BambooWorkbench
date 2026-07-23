@@ -13,6 +13,8 @@ BUNDLED_DIR = MODULE_ROOT / "schemas" / "contracts"
 SYNC_TOOL = MODULE_ROOT / "tools" / "sync_contract_schemas.py"
 SCHEMA_NAMES = (
     "job-request.schema.json",
+    "module-management-request.schema.json",
+    "module-management-response.schema.json",
     "module-manifest.schema.json",
     "module-result.schema.json",
 )

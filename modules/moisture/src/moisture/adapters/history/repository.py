@@ -159,23 +159,28 @@ def _save_index(storage_dir: Path, payload: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _validate_workbook_sheets(sheet_names: list[str]) -> None:
-    """Verify exactly the four required sheets are present."""
+def _validate_workbook_sheets(sheet_names: list[str]) -> str:
+    """Accept the current four-sheet and legacy five-sheet summaries."""
+
     names = set(sheet_names)
-    if _FIVE_SHEET_EXTRA in names:
-        raise HistoryImportError(
-            f"v1.0.0 five-sheet format (containing '{_FIVE_SHEET_EXTRA}') "
-            f"is not supported; only the four-sheet v1.0.1 format is accepted"
-        )
-    if names != _REQUIRED_SHEETS:
-        missing = _REQUIRED_SHEETS - names
-        extra = names - _REQUIRED_SHEETS
-        parts: list[str] = []
-        if missing:
-            parts.append(f"missing: {', '.join(sorted(missing))}")
-        if extra:
-            parts.append(f"unexpected: {', '.join(sorted(extra))}")
-        raise HistoryImportError("workbook must contain exactly four sheets; " + "; ".join(parts))
+    if names == _REQUIRED_SHEETS and len(sheet_names) == len(_REQUIRED_SHEETS):
+        return "1.0.1-four-sheet"
+    legacy_names = _REQUIRED_SHEETS | {_FIVE_SHEET_EXTRA}
+    if names == legacy_names and len(sheet_names) == len(legacy_names):
+        return "1.0.0-five-sheet"
+    missing = _REQUIRED_SHEETS - names
+    extra = names - legacy_names
+    parts: list[str] = []
+    if missing:
+        parts.append(f"missing: {', '.join(sorted(missing))}")
+    if extra:
+        parts.append(f"unexpected: {', '.join(sorted(extra))}")
+    if not parts:
+        parts.append("duplicate or unsupported sheet layout")
+    raise HistoryImportError(
+        "workbook must contain the four deterministic sheets with at most "
+        f"the legacy {_FIVE_SHEET_EXTRA} sheet; " + "; ".join(parts)
+    )
 
 
 def _validate_core_columns(sheet) -> None:
@@ -229,7 +234,7 @@ class HistoryRepository:
     # ------------------------------------------------------------------
 
     def import_summary(self, source_xlsx_path: Path, display_name: str) -> str:
-        """Import a four-sheet analysis summary workbook.
+        """Import a current four-sheet or legacy five-sheet summary workbook.
 
         Returns the ``history_id``.  Duplicate files (same SHA-256) return
         the existing id without re-importing.
@@ -250,7 +255,7 @@ class HistoryRepository:
 
         try:
             sheet_names = wb.sheetnames
-            _validate_workbook_sheets(sheet_names)
+            format_version = _validate_workbook_sheets(sheet_names)
 
             stats_sheet = wb["竹丝含水率统计"]
             _validate_core_columns(stats_sheet)
@@ -278,7 +283,7 @@ class HistoryRepository:
             "display_name": display_name,
             "storage_name": storage_name,
             "sha256": file_hash,
-            "format_version": "1.0.1-four-sheet",
+            "format_version": format_version,
             "date_start": None,
             "date_end": None,
             "batch_count": batch_count,

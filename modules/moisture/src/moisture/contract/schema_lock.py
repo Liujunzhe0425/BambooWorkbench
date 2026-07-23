@@ -12,6 +12,8 @@ from moisture.runtime_paths import module_root as runtime_module_root
 
 SCHEMA_NAMES = (
     "job-request.schema.json",
+    "module-management-request.schema.json",
+    "module-management-response.schema.json",
     "module-manifest.schema.json",
     "module-result.schema.json",
 )
@@ -51,9 +53,7 @@ def collect_schema_lock_issues(module_root: Path | None = None) -> tuple[str, ..
     if set(schemas) != expected_paths:
         issues.append("schema lock does not list the required schema set")
 
-    deterministic = json.dumps(
-        lock, ensure_ascii=False, indent=2, sort_keys=True
-    ) + "\n"
+    deterministic = json.dumps(lock, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if raw_lock != deterministic:
         issues.append("schema lock is not in deterministic form")
 
@@ -96,9 +96,7 @@ def require_valid_schema_bundle(module_root: Path | None = None) -> None:
         raise SchemaBundleError(issues[0])
 
 
-def load_bundled_schema(
-    name: str, module_root: Path | None = None
-) -> dict[str, Any]:
+def load_bundled_schema(name: str, module_root: Path | None = None) -> dict[str, Any]:
     if name not in SCHEMA_NAMES:
         raise SchemaBundleError("unknown bundled schema requested")
     root = module_root or _default_module_root()

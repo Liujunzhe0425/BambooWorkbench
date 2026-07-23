@@ -66,7 +66,7 @@ def _add_stub_sheet(wb, name: str) -> None:
 
 
 def _make_five_sheet_xlsx(path: Path) -> None:
-    """Create a five-sheet workbook (v1.0.0 format) that should be rejected."""
+    """Create a supported legacy five-sheet v1.0.0 workbook."""
     _make_four_sheet_xlsx(path)
     from openpyxl import load_workbook
 
@@ -195,17 +195,25 @@ class TestDuplicateImport:
         assert len(repo.list_entries()) == 2
 
 
-class TestRejectInvalidFormats:
-    """Invalid workbook formats are rejected with clear errors."""
+class TestLegacyFiveSheet:
+    """Legacy deterministic data remains available after upgrading."""
 
-    def test_five_sheet_rejected(self, tmp_path: Path) -> None:
+    def test_five_sheet_is_imported_and_old_model_sheet_is_ignored(self, tmp_path: Path) -> None:
         storage = tmp_path / "history"
         repo = HistoryRepository(storage)
         src = tmp_path / "five-sheet.xlsx"
         _make_five_sheet_xlsx(src)
 
-        with pytest.raises(HistoryImportError, match="模型分析记录"):
-            repo.import_summary(src, "五表旧格式")
+        history_id = repo.import_summary(src, "五表旧格式")
+
+        entry = repo.get_entry(history_id)
+        assert entry is not None
+        assert entry["format_version"] == "1.0.0-five-sheet"
+        assert repo.resolve_active_summary(history_id).is_file()
+
+
+class TestRejectInvalidFormats:
+    """Unknown workbook formats are rejected with clear errors."""
 
     def test_non_xlsx_rejected(self, tmp_path: Path) -> None:
         storage = tmp_path / "history"

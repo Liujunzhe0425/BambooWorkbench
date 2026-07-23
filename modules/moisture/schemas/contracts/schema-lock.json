@@ -2,6 +2,8 @@
   "schema_version": 1,
   "schemas": {
     "schemas/contracts/job-request.schema.json": "f84593eb8df8fe9363c059afca62e0f80e67228be54b1352fa674f0000305abe",
+    "schemas/contracts/module-management-request.schema.json": "dc4883cf1df800e76d45f2779ff1f7fee5c4a9d30ec80f13aa252c84df00479f",
+    "schemas/contracts/module-management-response.schema.json": "e91576706be77f1990ae6ab54cc2760f87850277feb10d74c6f426b6865c061f",
     "schemas/contracts/module-manifest.schema.json": "8a281bff11e5e10c96e8206801661abb2206dbaecd9b5796311d750ecd99b84c",
     "schemas/contracts/module-result.schema.json": "709304ef4a6fa95ce2fe129bc9a67e400e7b7ae0beb9e48fe83fb8df81f698a0"
   }

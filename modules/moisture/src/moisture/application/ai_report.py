@@ -34,6 +34,7 @@ from moisture.runtime_paths import module_root
 from openpyxl import load_workbook
 
 MAX_PAYLOAD_BYTES = 65_536
+_LEGACY_MODEL_SHEET = "模型分析记录"
 _ORANGE = "FFF4B183"
 _GREEN = "FFA9D18E"
 _FORBIDDEN_CONCLUSIONS = ("正式不合格", "责任认定", "处罚结论", "放行结论")
@@ -114,8 +115,13 @@ def _summary_context(path: Path, *, history_id: str | None = None) -> dict[str, 
     except Exception as error:
         raise AIReportError("summary workbook cannot be opened") from error
     try:
-        if tuple(workbook.sheetnames) != REQUIRED_SHEET_NAMES:
-            raise AIReportError("summary workbook does not have the v1.0.1 four-sheet format")
+        sheet_names = tuple(workbook.sheetnames)
+        supported_layouts = (
+            REQUIRED_SHEET_NAMES,
+            (*REQUIRED_SHEET_NAMES, _LEGACY_MODEL_SHEET),
+        )
+        if sheet_names not in supported_layouts:
+            raise AIReportError("summary workbook is not a supported four/five-sheet format")
         sheet = workbook[REQUIRED_SHEET_NAMES[0]]
         if sheet.max_column != 19:
             raise AIReportError("summary workbook has an unsupported main-table layout")
@@ -389,9 +395,9 @@ def _publish_run(
         file_results=_file_result(job, draft, errors[0] if failed and errors else None),
         service_requests=requests,
         analysis_summary=(
-            "Independent AI analysis report request prepared."
+            "独立 AI 汇总报告请求已准备，等待用户授权。"
             if job.phase.value == "draft"
-            else "Independent AI analysis report finalized."
+            else "独立 AI 汇总报告处理完成。"
         ),
         errors=errors,
         business_failed=failed,
@@ -648,16 +654,12 @@ def run_ai_report_finalize(job: JobRequest, config: ModuleConfig) -> int:
             report_path = _write_report(job.output_dir, _report_view(draft, response_payload))
             completed.append(report_path)
             outputs.append(
-                InternalOutput(
-                    "markdown", report_path, "AI auxiliary analysis report", "text/markdown"
-                )
+                InternalOutput("markdown", report_path, "AI 辅助分析报告", "text/markdown")
             )
         result_path = job.output_dir / "ai_analysis_result.json"
         write_json_atomic(result_path, result_payload)
         completed.append(result_path)
-        outputs.append(
-            InternalOutput("json", result_path, "AI analysis result", "application/json")
-        )
+        outputs.append(InternalOutput("json", result_path, "AI 分析结构化结果", "application/json"))
     except Exception:
         for artifact in completed:
             artifact.unlink(missing_ok=True)

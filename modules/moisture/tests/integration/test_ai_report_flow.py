@@ -138,6 +138,25 @@ def test_ai_report_draft_is_stable_consent_gated_and_redacted(
     assert sha256_file(summary) == before
 
 
+def test_ai_report_accepts_legacy_five_sheet_summary(tmp_path: Path, workbook_factory) -> None:
+    from openpyxl import load_workbook
+
+    summary = _summary(tmp_path, workbook_factory)
+    workbook = load_workbook(summary)
+    workbook.create_sheet("模型分析记录")["A1"] = "旧版记录不得进入 AI 上下文"
+    workbook.save(summary)
+    workbook.close()
+    config = _config(tmp_path / "legacy-config.json")
+    output = tmp_path / "legacy-draft"
+
+    assert run_draft(_job(summary, config, output, phase=JobPhase.DRAFT)) == 0
+
+    result = json.loads((output / "result.json").read_text(encoding="utf-8"))
+    assert result["status"] == "success"
+    serialized = json.dumps(result["service_requests"], ensure_ascii=False)
+    assert "模型分析记录" not in serialized
+
+
 def test_valid_ai_response_creates_independent_markdown_and_json(
     tmp_path: Path, workbook_factory
 ) -> None:
