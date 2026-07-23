@@ -13,26 +13,21 @@ from moisture.application.confirmation_applier import (
 from moisture.application.confirmation_builder import build_confirmations
 from moisture.application.deterministic_pipeline import DeterministicPipeline
 from moisture.application.draft_orchestrator import (
-    _ai_request,
     _confirmation_issues,
     _global_failure_file_results,
     _knowledge_requests,
-    _load_default_year,
     _status,
 )
 from moisture.application.knowledge_response import (
     KnowledgeResponseValidationError,
     validate_knowledge_citations,
 )
-from moisture.application.review_state_applier import (
-    apply_validated_review,
-    degrade_batches,
+from moisture.application.module_config import (
+    ModuleConfigError,
+    ModuleOperation,
+    load_module_config,
 )
 from moisture.application.run_result import InternalMoistureRunResult, InternalOutput
-from moisture.application.service_response_validator import (
-    AIResponseValidationError,
-    validate_ai_response_text,
-)
 from moisture.contract.confirmation_reader import read_confirmation_bundle
 from moisture.contract.job_models import JobRequest
 from moisture.contract.mapper import map_run_result
@@ -72,10 +67,16 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
 
     started_at = datetime.now(UTC)
     try:
-        default_year = _load_default_year(job.module_config_file)
+        module_config = load_module_config(job.module_config_file, input_count=len(job.input_files))
+        if module_config.operation is ModuleOperation.AI_REPORT:
+            from moisture.application.ai_report import run_ai_report_finalize
+
+            return run_ai_report_finalize(job, module_config)
         outcome = (pipeline or DeterministicPipeline()).run(
-            job.input_files, default_year=default_year
+            job.input_files, default_year=module_config.default_year
         )
+    except ModuleConfigError:
+        return _write_failed(job, started_at, "MODULE_CONFIG_INVALID")
     except Exception:
         return _write_failed(job, started_at, "PIPELINE_INITIALIZATION_FAILED")
 
@@ -100,9 +101,7 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
                     job.input_files, default_year=confirmed_year
                 )
                 rebuilt = build_confirmations(job.root_job_id, _confirmation_issues(outcome))
-                if {
-                    str(prompt["confirmation_id"]) for prompt in rebuilt
-                } != {
+                if {str(prompt["confirmation_id"]) for prompt in rebuilt} != {
                     str(prompt["confirmation_id"]) for prompt in remaining_prompts
                 }:
                     raise ConfirmationApplicationError(
@@ -110,9 +109,7 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
                     )
                 remaining_prompts = rebuilt
             if remaining_prompts:
-                applied = apply_confirmations(
-                    outcome, remaining_prompts, remaining_bundle
-                )
+                applied = apply_confirmations(outcome, remaining_prompts, remaining_bundle)
                 batches = applied.batches
                 anomalies = applied.anomalies
             elif remaining_bundle.answers:
@@ -127,10 +124,7 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
         anomalies = outcome.anomalies
 
     knowledge_requests = _knowledge_requests(job, outcome)
-    ai_request = _ai_request(job, outcome)
-    rebuilt_requests = knowledge_requests + (
-        (ai_request.request,) if ai_request.request is not None else ()
-    )
+    rebuilt_requests = knowledge_requests
     errors = outcome.errors
     knowledge_citations: tuple[KnowledgeCitation, ...] = ()
     business_failed = outcome.processed_count == 0
@@ -144,34 +138,7 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
             expected_requests=expected_requests,
         )
         if response_result.errors or response_result.envelope is None:
-            batches = degrade_batches(tuple(batches), "service_response_invalid")
             errors = (*errors, "SERVICE_RESPONSE_DEGRADED: invalid_or_missing")
-        elif ai_request.request is not None:
-            ai_response = next(
-                (item for item in response_result.envelope.responses if item.service == "ai"),
-                None,
-            )
-            if ai_response is None or ai_response.status != "ok":
-                reason = (
-                    f"ai_{ai_response.status}" if ai_response is not None else "ai_response_missing"
-                )
-                batches = degrade_batches(tuple(batches), reason)
-                errors = (*errors, f"SERVICE_RESPONSE_DEGRADED: {reason}")
-            else:
-                try:
-                    decisions = validate_ai_response_text(ai_response.text, ai_request.request)
-                    reviewed = apply_validated_review(
-                        tuple(batches),
-                        tuple(anomalies),
-                        ai_request,
-                        decisions,
-                        outcome.rule_package,
-                    )
-                    batches = reviewed.batches
-                    anomalies = reviewed.anomalies
-                except AIResponseValidationError:
-                    batches = degrade_batches(tuple(batches), "invalid_ai_response")
-                    errors = (*errors, "SERVICE_RESPONSE_DEGRADED: invalid_ai_response")
         if response_result.envelope is not None:
             try:
                 knowledge_citations = validate_knowledge_citations(
@@ -199,9 +166,13 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
                     rule_source=package.source,
                     rule_applicable_scope=package.applicable_scope,
                     rule_confirmation_status=package.customer_confirmation_status,
-                    candidate_total=ai_request.candidate_total,
-                    candidate_sent=ai_request.candidate_sent,
-                    candidate_omitted=ai_request.candidate_omitted,
+                    candidate_total=0,
+                    candidate_sent=0,
+                    candidate_omitted=0,
+                    input_count=outcome.input_count,
+                    processed_count=outcome.processed_count,
+                    skipped_count=outcome.skipped_count,
+                    failed_count=outcome.failed_count,
                     knowledge_citations=knowledge_citations,
                     errors=errors,
                 ),

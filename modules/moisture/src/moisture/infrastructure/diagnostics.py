@@ -10,6 +10,7 @@ MINIMUM_PYTHON = (3, 11)
 REQUIRED_FILES = (
     "module.json",
     "run_module.bat",
+    "run_management.bat",
     "README.md",
     "CHANGELOG.md",
     "requirements.txt",
@@ -34,7 +35,7 @@ def collect_runtime_issues(module_root: Path | None = None) -> tuple[str, ...]:
     except (ImportError, OSError) as error:
         issues.append(f"package import failed: {type(error).__name__}")
     else:
-        if getattr(imported, "__version__", None) != "1.0.0":
+        if getattr(imported, "__version__", None) != "1.1.0":
             issues.append("package version does not match module manifest")
 
     return tuple(issues)

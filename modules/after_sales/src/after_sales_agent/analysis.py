@@ -12,6 +12,8 @@ ISSUE_ORDER = ("性能", "外观", "加工", "其他")
 def build_analysis_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
     summary_records = [record for record in records if record.get("included_in_summary", True)]
     issue_counts: Counter[str] = Counter()
+    primary_issue_counts: Counter[str] = Counter()
+    brand_counts: Counter[str] = Counter()
     status_counts: Counter[str] = Counter()
     monthly: dict[tuple[int | None, int | None], dict[str, float | int | str]] = defaultdict(
         lambda: {
@@ -25,8 +27,15 @@ def build_analysis_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
     unknown_enterprise_cost_count = 0
     unknown_brand_count = 0
     unknown_date_count = 0
+    ai_assisted_count = 0
+    ai_degraded_count = 0
+    offline_rule_count = 0
 
     for record in summary_records:
+        brand = str(record.get("brand") or "").strip()
+        if not brand or brand in {"待确认", "未识别"}:
+            brand = "未知"
+        brand_counts[brand] += 1
         key = (_as_int(record.get("year")), _as_int(record.get("month")))
         bucket = monthly[key]
         bucket["case_count"] = int(bucket["case_count"]) + 1
@@ -49,6 +58,10 @@ def build_analysis_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
             tags = [record.get("primary_issue_type") or "其他"]
         normalized = {str(tag) if str(tag) in ISSUE_ORDER else "其他" for tag in tags}
         issue_counts.update(normalized)
+        primary_issue = str(record.get("primary_issue_type") or "其他").strip()
+        primary_issue_counts[
+            primary_issue if primary_issue in ISSUE_ORDER else "其他"
+        ] += 1
 
         status = str(
             record.get("resolution_status") or ("已解决" if record.get("closed") else "未解决")
@@ -63,6 +76,13 @@ def build_analysis_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
             unknown_brand_count += 1
         if record.get("year") is None or record.get("month") is None:
             unknown_date_count += 1
+        analysis_status = str(record.get("analysis_status") or "")
+        if record.get("issue_analysis_source") == "api":
+            ai_assisted_count += 1
+        elif "降级" in analysis_status:
+            ai_degraded_count += 1
+        else:
+            offline_rule_count += 1
 
     monthly_rows: list[dict[str, Any]] = []
     for (year, month), values in sorted(monthly.items(), key=_period_sort_key):
@@ -83,7 +103,13 @@ def build_analysis_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
 
     return {
         "case_count": len(summary_records),
+        "brand_counts": dict(
+            sorted(brand_counts.items(), key=lambda item: (-item[1], item[0]))
+        ),
         "issue_counts": {issue: int(issue_counts.get(issue, 0)) for issue in ISSUE_ORDER},
+        "primary_issue_counts": {
+            issue: int(primary_issue_counts.get(issue, 0)) for issue in ISSUE_ORDER
+        },
         "status_counts": {
             "已解决": int(status_counts.get("已解决", 0)),
             "处理中": int(status_counts.get("处理中", 0)),
@@ -117,6 +143,11 @@ def build_analysis_metrics(records: list[dict[str, Any]]) -> dict[str, Any]:
             "unknown_brand_count": unknown_brand_count,
             "unknown_date_count": unknown_date_count,
         },
+        "analysis_sources": {
+            "ai_assisted_count": ai_assisted_count,
+            "ai_degraded_count": ai_degraded_count,
+            "offline_rule_count": offline_rule_count,
+        },
     }
 
 
@@ -133,6 +164,7 @@ def write_analysis_report(
     monthly = metrics["monthly"]
     totals = metrics["totals"]
     risks = metrics["risks"]
+    analysis_sources = metrics["analysis_sources"]
 
     top_issue = max(issue_counts, key=issue_counts.get) if any(issue_counts.values()) else None
     high_cost = max(monthly, key=lambda item: item["enterprise_cost_amount"], default=None)
@@ -149,6 +181,15 @@ def write_analysis_report(
         f"| 成功处理 | {int(summary.get('processed_count') or 0)} |",
         f"| 处理失败 | {int(summary.get('failed_count') or 0)} |",
         f"| 待人工复核项 | {pending_count} |",
+        "",
+        "## 分析来源",
+        "",
+        f"- AI辅助分析：{analysis_sources['ai_assisted_count']} 件",
+        f"- AI不可用后降级为离线规则：{analysis_sources['ai_degraded_count']} 件",
+        f"- 离线规则或无需AI辅助：{analysis_sources['offline_rule_count']} 件",
+        "",
+        "AI只辅助问题类型、原因摘要、证据引用和复核建议；售后费用、责任工厂、"
+        "赔偿/责任认定及结案状态不由AI决定。",
         "",
         "## 问题类型分析",
         "",

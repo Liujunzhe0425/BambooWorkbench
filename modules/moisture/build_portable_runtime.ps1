@@ -102,6 +102,7 @@ $DataItems = @(
     @{ Source = 'samples'; Destination = 'modules/moisture/samples' },
     @{ Source = 'module.json'; Destination = 'modules/moisture' },
     @{ Source = 'run_module.bat'; Destination = 'modules/moisture' },
+    @{ Source = 'run_management.bat'; Destination = 'modules/moisture' },
     @{ Source = 'README.md'; Destination = 'modules/moisture' },
     @{ Source = 'CHANGELOG.md'; Destination = 'modules/moisture' },
     @{ Source = 'requirements.txt'; Destination = 'modules/moisture' },

@@ -7,6 +7,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 import openpyxl
+from docx import Document
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 PR16_ACCEPTANCE_FIXTURE = (
@@ -21,6 +22,18 @@ from after_sales_agent.report import write_summary_workbook  # noqa: E402
 from after_sales_agent.rules import load_rules  # noqa: E402
 
 from core.contracts.result import ModuleResult  # noqa: E402
+
+
+def _word_text(path: Path) -> str:
+    document = Document(path)
+    paragraphs = [paragraph.text for paragraph in document.paragraphs]
+    cells = [
+        cell.text
+        for table in document.tables
+        for row in table.rows
+        for cell in row.cells
+    ]
+    return "\n".join([*paragraphs, *cells])
 
 
 def _make_workbook(
@@ -92,7 +105,8 @@ def test_offline_complete_file_enters_required_business_review(tmp_path: Path) -
     records = json.loads(
         (tmp_path / "output" / "after_sales_records.json").read_text(encoding="utf-8")
     )
-    assert records[0]["analysis_status"] == "离线规则分析完成"
+    assert records[0]["analysis_status"] == "规则预分析完成（等待AI授权）"
+    assert result["service_requests"]
     assert records[0]["enterprise_cost_amount"] == 1000
 
 
@@ -116,6 +130,11 @@ def test_pr16_sanitized_fixture_preserves_second_round_baseline(tmp_path: Path) 
         "summary_excel",
         "records_json",
         "analysis_markdown",
+        "analysis_word",
+        "brand_share_chart_excel",
+        "issue_share_chart_excel",
+        "monthly_fee_chart_excel",
+        "yearly_chart_dashboard_excel",
     }
     annual = openpyxl.load_workbook(output / "after_sales_annual_rollup.xlsx", data_only=False)
     assert annual.sheetnames == ["汇总表", "26年售后统计表", "输入文件对账"]
@@ -220,11 +239,38 @@ def test_charts_and_markdown_use_the_same_structured_metrics(tmp_path: Path) -> 
     metrics = build_analysis_metrics(records)
     report = (output / "after_sales_analysis.md").read_text(encoding="utf-8")
     workbook = openpyxl.load_workbook(output / "after_sales_summary.xlsx", data_only=False)
+    word_report = _word_text(output / "after_sales_analysis_report.docx")
+    brand_book = openpyxl.load_workbook(
+        output / "after_sales_brand_share.xlsx", data_only=False
+    )
+    reason_book = openpyxl.load_workbook(
+        output / "after_sales_reason_share.xlsx", data_only=False
+    )
+    fee_book = openpyxl.load_workbook(
+        output / "after_sales_monthly_fee.xlsx", data_only=False
+    )
+    dashboard_book = openpyxl.load_workbook(
+        output / "after_sales_yearly_dashboard.xlsx", data_only=False
+    )
 
     assert len(workbook["分析图表"]._charts) == 3
+    assert len(brand_book["品牌占比"]._charts) == 1
+    assert len(reason_book["原因占比"]._charts) == 1
+    assert len(fee_book["年度月度费用"]._charts) == 1
+    assert len(fee_book["逐月案件数量"]._charts) == 1
+    dashboard = dashboard_book["2026年度图表"]
+    assert len(dashboard._charts) == 3
+    assert dashboard._charts[0].__class__.__name__ == "PieChart3D"
+    assert dashboard._charts[1].__class__.__name__ == "PieChart3D"
+    assert dashboard._charts[2].__class__.__name__ == "BarChart"
+    assert dashboard._charts[2].x_axis.tickLblSkip == 1
+    assert dashboard._charts[2].y_axis.majorUnit == 1
+    assert dashboard._charts[2].dataLabels.showVal
     assert f"输入文件 | {result['summary']['input_count']}" in report
     assert f"企业售后成本合计：{metrics['totals']['enterprise_cost_amount']:.2f} 元" in report
     assert f"案件总数（每案计一次）：{metrics['case_count']}" in report
+    assert "售后分析报告" in word_report
+    assert f"{metrics['case_count']} 件" in word_report
 
 
 def test_user_outputs_never_contain_local_absolute_paths(tmp_path: Path) -> None:
@@ -238,13 +284,18 @@ def test_user_outputs_never_contain_local_absolute_paths(tmp_path: Path) -> None
     report_text = (output / "after_sales_analysis.md").read_text(encoding="utf-8")
     assert not drive_path.search(records_text)
     assert not drive_path.search(report_text)
-    with ZipFile(output / "after_sales_summary.xlsx") as archive:
-        workbook_xml = "\n".join(
-            archive.read(name).decode("utf-8", errors="ignore")
-            for name in archive.namelist()
-            if name.endswith(".xml")
-        )
-    assert not drive_path.search(workbook_xml)
+    for filename in (
+        "after_sales_summary.xlsx",
+        "after_sales_yearly_dashboard.xlsx",
+        "after_sales_analysis_report.docx",
+    ):
+        with ZipFile(output / filename) as archive:
+            artifact_xml = "\n".join(
+                archive.read(name).decode("utf-8", errors="ignore")
+                for name in archive.namelist()
+                if name.endswith(".xml")
+            )
+        assert not drive_path.search(artifact_xml)
 
 
 def test_corrupted_workbook_is_isolated_with_stable_chinese_error(tmp_path: Path) -> None:
@@ -273,7 +324,7 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
     draft_output = tmp_path / "draft-output"
     draft = _run(tmp_path, _job([source], draft_output), "draft-job")
     expected_fields = {
-        "enterprise_cost_amount",
+        "售后费用",
         "internal_accountability_amount",
         "external_borne_amount",
     }
@@ -281,7 +332,7 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
     assert expected_fields <= prompts.keys()
 
     values = {
-        "enterprise_cost_amount": 1200,
+        "售后费用": 1200,
         "internal_accountability_amount": 200,
         "external_borne_amount": 300,
     }
@@ -322,8 +373,10 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
 
     assert final["status"] == "success"
     assert final["summary"]["confirmation_count"] == 0
-    for field, amount in values.items():
-        assert record[field] == amount
+    assert record["after_sales_fee_amount"] == 1200
+    assert record["enterprise_cost_amount"] == 1200
+    assert record["internal_accountability_amount"] == 200
+    assert record["external_borne_amount"] == 300
     assert record["fee_amount"] == 1200
     assert detail.cell(2, headers["企业售后成本"]).value == 1200
     assert detail.cell(2, headers["内部责任扣款"]).value == 200

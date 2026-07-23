@@ -1,16 +1,16 @@
 import importlib
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import pytest
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
-from PySide6.QtWidgets import QAbstractItemView
+from PySide6.QtWidgets import QAbstractItemView, QLabel, QTableWidget
 
-from core.contracts.enums import ModuleId
-from core.contracts.result import ModuleResult
+from core.contracts.enums import ModuleId, TaskStatus
+from core.contracts.result import FileResult, ModuleResult, ResultSummary
 from ui.main_window import MainWindow
 from ui.page_ids import PageId
 
@@ -372,7 +372,7 @@ def test_missing_real_modules_remain_visible_disabled_placeholders(
         assert set(page.cards) == set(ModuleId)
         assert all("暂未安装" in card.state_label.text() for card in page.cards.values())
         assert all(not card.open_button.isEnabled() for card in page.cards.values())
-        assert page.readiness_bar.value() == 0
+        assert not hasattr(page, "readiness_bar")
     finally:
         context.close()
 
@@ -407,3 +407,101 @@ def test_output_click_rechecks_missing_file_and_never_opens(
 
     assert opened == []
     assert failures and "不可用" in failures[0]
+
+
+def test_result_center_expands_public_file_failure_details(qtbot) -> None:
+    from ui.pages.result_center_page import ResultCenterPage
+
+    now = datetime.now(UTC)
+    result = ModuleResult(
+        schema_version="1.0",
+        job_id="partial-result",
+        module_id=ModuleId.BOILING,
+        module_version="1.0.1",
+        status=TaskStatus.PARTIAL_SUCCESS,
+        summary=ResultSummary(
+            input_count=2,
+            processed_count=1,
+            skipped_count=0,
+            failed_count=1,
+            anomaly_count=0,
+            confirmation_count=0,
+        ),
+        file_results=[
+            FileResult(
+                source_file="D:/private/customer/broken.xlsx",
+                fingerprint="a" * 64,
+                status=TaskStatus.FAILED,
+                extracted_records=0,
+                anomaly_count=0,
+                error="BadZipFile: not a zip file",
+            )
+        ],
+        started_at=now,
+        finished_at=now,
+    )
+    page = ResultCenterPage()
+    qtbot.addWidget(page)
+
+    page.show_result(result)
+    qtbot.mouseClick(page.failure_toggle, Qt.MouseButton.LeftButton)
+
+    details = " ".join(label.text() for label in page.failure_panel.findChildren(QLabel))
+    assert "broken.xlsx" in details
+    assert "文件可能已损坏" in details
+    assert "D:/private" not in details
+
+
+def test_result_center_explains_ai_report_degradation(qtbot) -> None:
+    from ui.pages.result_center_page import ResultCenterPage
+
+    now = datetime.now(UTC)
+    result = ModuleResult(
+        schema_version="1.0",
+        job_id="ai-degraded",
+        module_id=ModuleId.MOISTURE,
+        module_version="1.0.1",
+        status=TaskStatus.SUCCESS,
+        summary=ResultSummary(
+            input_count=1,
+            processed_count=1,
+            skipped_count=0,
+            failed_count=0,
+            anomaly_count=0,
+            confirmation_count=0,
+        ),
+        errors=["AI_REPORT_DEGRADED: provider_error"],
+        started_at=now,
+        finished_at=now,
+    )
+    page = ResultCenterPage()
+    qtbot.addWidget(page)
+
+    page.show_result(result)
+
+    assert page.ai_notice.isVisibleTo(page)
+    assert "未生成虚假报告" in page.ai_notice.text()
+
+
+def test_structured_json_business_view_uses_readable_table(qtbot) -> None:
+    from ui.widgets.output_files import OutputFilesWidget
+
+    view = OutputFilesWidget._business_view(
+        [
+            {
+                "case_id": "AS-001",
+                "customer": "客户甲",
+                "issue_types": ["外观", "加工"],
+                "needs_review": True,
+                "source_cells": {"customer": "B2"},
+            }
+        ]
+    )
+    qtbot.addWidget(view)
+    table = view.findChild(QTableWidget)
+
+    assert table is not None
+    headers = [table.horizontalHeaderItem(index).text() for index in range(table.columnCount())]
+    assert "案件编号" in headers
+    assert "客户" in headers
+    assert "来源文件" not in headers

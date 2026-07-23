@@ -12,6 +12,8 @@ from pathlib import Path
 
 SCHEMA_NAMES = (
     "job-request.schema.json",
+    "module-management-request.schema.json",
+    "module-management-response.schema.json",
     "module-manifest.schema.json",
     "module-result.schema.json",
 )

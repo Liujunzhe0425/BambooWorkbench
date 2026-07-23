@@ -18,35 +18,28 @@ from integration.t19_helpers import (
     job,
     pipeline,
     rule_root,
-    valid_ai_response,
     workbook_contains_color,
-    write_envelope,
 )
 
 pytest_plugins = ("fixtures.workbooks.workbook_factory",)
 
 
-def test_changed_rule_hash_cannot_apply_stale_response(tmp_path: Path, workbook_factory) -> None:
+def test_changed_rule_package_is_recomputed_without_ai_response(
+    tmp_path: Path, workbook_factory
+) -> None:
     draft_root = rule_root(tmp_path / "draft-module", "high", marker="v1")
     final_root = rule_root(tmp_path / "final-module", "high", marker="v2")
     source = governed_workbook(workbook_factory, tmp_path / "source.xlsx", "high")
     draft_dir = tmp_path / "draft"
     assert run_draft(job(source, draft_dir, phase=JobPhase.DRAFT), pipeline(draft_root)) == 0
     draft = json.loads((draft_dir / "result.json").read_text(encoding="utf-8"))
-    request = next(item for item in draft["service_requests"] if item["service"] == "ai")
-    response_file = write_envelope(tmp_path / "response.json", [valid_ai_response(request)])
+    assert not any(item["service"] == "ai" for item in draft["service_requests"])
 
     final_dir = tmp_path / "final"
-    assert (
-        run_finalize(
-            job(source, final_dir, phase=JobPhase.FINALIZE, service_file=response_file),
-            pipeline(final_root),
-        )
-        == 0
-    )
+    assert run_finalize(job(source, final_dir, phase=JobPhase.FINALIZE), pipeline(final_root)) == 0
     result = json.loads((final_dir / "result.json").read_text(encoding="utf-8"))
 
     assert result["status"] == "success"
     assert result["anomalies"][0]["severity"] == "info"
     assert workbook_contains_color(final_dir / "moisture_summary.xlsx", "orange")
-    assert any("SERVICE_RESPONSE_DEGRADED" in error for error in result["errors"])
+    assert not any("SERVICE_RESPONSE_DEGRADED" in error for error in result["errors"])

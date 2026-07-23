@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bamboo:moisture:ai-analysis-request:1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "request_id",
+    "service",
+    "scope",
+    "purpose",
+    "payload",
+    "requires_user_consent",
+    "response_format"
+  ],
+  "properties": {
+    "request_id": {"type": "string", "pattern": "^msr-ai-report-[0-9a-f]{24}$"},
+    "service": {"const": "ai"},
+    "scope": {"type": "null"},
+    "purpose": {"const": "moisture_summary_analysis"},
+    "requires_user_consent": {"const": true},
+    "response_format": {"const": "json_object"},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "context_hash",
+        "question",
+        "current_summary",
+        "history_summaries",
+        "experiences",
+        "rule_snapshot",
+        "selection_counts",
+        "instruction",
+        "response_schema"
+      ],
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "context_hash": {"$ref": "#/$defs/sha256"},
+        "question": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "current_summary": {"$ref": "#/$defs/summary_context"},
+        "history_summaries": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {"$ref": "#/$defs/history_context"}
+        },
+        "experiences": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {"$ref": "#/$defs/experience_context"}
+        },
+        "rule_snapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["version", "sha256", "summary"],
+          "properties": {
+            "version": {"$ref": "#/$defs/stable_id"},
+            "sha256": {"$ref": "#/$defs/sha256"},
+            "summary": {"type": "string", "minLength": 1, "maxLength": 4000}
+          }
+        },
+        "selection_counts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["history", "experiences", "review_items"],
+          "properties": {
+            "history": {"$ref": "#/$defs/counts"},
+            "experiences": {"$ref": "#/$defs/counts"},
+            "review_items": {"$ref": "#/$defs/counts"}
+          }
+        },
+        "instruction": {"type": "string", "minLength": 1, "maxLength": 8000},
+        "response_schema": {"type": "object"}
+      }
+    }
+  },
+  "$defs": {
+    "stable_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$"
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "sent", "omitted"],
+      "properties": {
+        "total": {"type": "integer", "minimum": 0},
+        "sent": {"type": "integer", "minimum": 0},
+        "omitted": {"type": "integer", "minimum": 0}
+      }
+    },
+    "date_range": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["start", "end"],
+      "properties": {
+        "start": {"type": ["string", "null"], "format": "date"},
+        "end": {"type": ["string", "null"], "format": "date"}
+      }
+    },
+    "summary_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["content_hash", "batch_count", "date_range", "metrics", "review_items"],
+      "properties": {
+        "content_hash": {"$ref": "#/$defs/sha256"},
+        "batch_count": {"type": "integer", "minimum": 0},
+        "date_range": {"$ref": "#/$defs/date_range"},
+        "metrics": {"type": "object"},
+        "review_items": {"type": "array", "maxItems": 50, "items": {"type": "object"}}
+      }
+    },
+    "history_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["history_id", "content_hash", "batch_count", "date_range", "metrics"],
+      "properties": {
+        "history_id": {"$ref": "#/$defs/stable_id"},
+        "content_hash": {"$ref": "#/$defs/sha256"},
+        "batch_count": {"type": "integer", "minimum": 0},
+        "date_range": {"$ref": "#/$defs/date_range"},
+        "metrics": {"type": "object"}
+      }
+    },
+    "experience_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry_id", "version", "sha256", "excerpt"],
+      "properties": {
+        "entry_id": {"$ref": "#/$defs/stable_id"},
+        "version": {"$ref": "#/$defs/stable_id"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "excerpt": {"type": "string", "minLength": 1, "maxLength": 2000}
+      }
+    }
+  }
+}

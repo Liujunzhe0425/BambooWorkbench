@@ -10,6 +10,8 @@ EXPECTED_FILES = [
     "contracts/schemas/module-manifest.schema.json",
     "contracts/schemas/job-request.schema.json",
     "contracts/schemas/module-result.schema.json",
+    "contracts/schemas/module-management-request.schema.json",
+    "contracts/schemas/module-management-response.schema.json",
     "contracts/examples/module.json",
     "contracts/examples/job.json",
     "contracts/examples/result.json",

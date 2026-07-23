@@ -1,5 +1,7 @@
 {
+  "capabilities": [],
   "entrypoint": "run_module.bat",
+  "management_entrypoint": null,
   "module_id": "moisture",
   "module_name": "示例模块",
   "module_version": "0.1.0",

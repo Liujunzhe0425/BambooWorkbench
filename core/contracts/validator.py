@@ -38,27 +38,30 @@ def validate_module(module_dir: Path) -> ValidationReport:
         return report
 
     module_root = module_dir.resolve()
-    entrypoint = Path(manifest.entrypoint)
-    resolved_entrypoint = (module_root / entrypoint).resolve()
-    if entrypoint.anchor or not resolved_entrypoint.is_relative_to(module_root):
+    _validate_entrypoint(report, module_root, manifest.entrypoint, "entrypoint", required=True)
+    if manifest.management_entrypoint is not None:
+        _validate_entrypoint(
+            report,
+            module_root,
+            manifest.management_entrypoint,
+            "management-entrypoint",
+            required=False,
+        )
+    if len(manifest.capabilities) != len(set(manifest.capabilities)):
         report.issues.append(
-            ValidationIssue(
-                "invalid-entrypoint",
-                "entrypoint must be a relative path contained within the module directory",
+            ValidationIssue("duplicate-capability", "module capabilities must be unique")
+        )
+    for capability in manifest.capabilities:
+        if not capability or len(capability) > 64 or not all(
+            character.islower() or character.isdigit() or character in {"_", "-"}
+            for character in capability
+        ):
+            report.issues.append(
+                ValidationIssue(
+                    "invalid-capability",
+                    f"invalid module capability: {capability}",
+                )
             )
-        )
-    elif resolved_entrypoint.suffix.lower() not in {".bat", ".cmd"}:
-        report.issues.append(
-            ValidationIssue("invalid-entrypoint", "entrypoint must be a .bat or .cmd launcher")
-        )
-    elif resolved_entrypoint.is_dir():
-        report.issues.append(
-            ValidationIssue("invalid-entrypoint", "entrypoint must identify a file")
-        )
-    elif not resolved_entrypoint.is_file():
-        report.issues.append(
-            ValidationIssue("missing-entrypoint", f"missing file: {manifest.entrypoint}")
-        )
 
     required_files = ["README.md", "CHANGELOG.md", "requirements.txt"]
     required_dirs = ["src", "tests", "samples", "docs"]
@@ -71,3 +74,34 @@ def validate_module(module_dir: Path) -> ValidationReport:
                 ValidationIssue("missing-required-directory", f"missing directory: {name}")
             )
     return report
+
+
+def _validate_entrypoint(
+    report: ValidationReport,
+    module_root: Path,
+    raw_entrypoint: str,
+    code_prefix: str,
+    *,
+    required: bool,
+) -> None:
+    entrypoint = Path(raw_entrypoint)
+    resolved = (module_root / entrypoint).resolve()
+    invalid_code = f"invalid-{code_prefix}"
+    missing_code = "missing-entrypoint" if required else f"missing-{code_prefix}"
+    if entrypoint.anchor or not resolved.is_relative_to(module_root):
+        report.issues.append(
+            ValidationIssue(
+                invalid_code,
+                f"{code_prefix} must be a relative path contained within the module directory",
+            )
+        )
+    elif resolved.suffix.lower() not in {".bat", ".cmd"}:
+        report.issues.append(
+            ValidationIssue(invalid_code, f"{code_prefix} must be a .bat or .cmd launcher")
+        )
+    elif resolved.is_dir():
+        report.issues.append(
+            ValidationIssue(invalid_code, f"{code_prefix} must identify a file")
+        )
+    elif not resolved.is_file():
+        report.issues.append(ValidationIssue(missing_code, f"missing file: {raw_entrypoint}"))

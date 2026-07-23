@@ -17,8 +17,8 @@ sys.path.insert(0, str(MODULE_ROOT / "tests"))
 from moisture.adapters.excel.source_parser import ExcelSourceParser
 from moisture.application.deterministic_pipeline import DeterministicPipeline
 from moisture.application.draft_orchestrator import run_draft
-from moisture.application.service_response_validator import validate_ai_response_text
 from moisture.contract.job_models import JobPhase, JobRequest, ModuleId, RunMode
+from moisture.contract.private_schemas import validate_private_payload
 from moisture.domain.statistics import compute_batch_statistics
 
 pytest_plugins = ("fixtures.workbooks.workbook_factory",)
@@ -128,8 +128,11 @@ def test_protocol_examples_cover_valid_ai_and_denied_degradation() -> None:
     valid = json.loads((protocol / "ai-response-valid.example.json").read_text(encoding="utf-8"))
     denied = json.loads((protocol / "ai-response-denied.example.json").read_text(encoding="utf-8"))
 
-    decisions = validate_ai_response_text(valid["responses"][0]["text"], request)
-    assert decisions[0].confidence == Decimal("0.86")
+    validate_private_payload("ai-analysis-request.schema.json", request)
+    response = json.loads(valid["responses"][0]["text"])
+    validate_private_payload("ai-analysis-response.schema.json", response)
+    assert response["context_hash"] == request["payload"]["context_hash"]
+    assert "辅助分析" in response["disclaimer"]
     assert denied["responses"][0]["status"] == "denied"
 
 

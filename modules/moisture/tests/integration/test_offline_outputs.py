@@ -79,7 +79,6 @@ def test_ai_disabled_still_produces_xlsx_markdown_and_result_last(
         "异常分析明细",
         "趋势分析",
         "来源追溯",
-        "模型分析记录",
     ]
     workbook.close()
 
@@ -171,6 +170,35 @@ def test_invalid_module_config_writes_explicit_legal_failed_result(
     assert payload["summary"]["failed_count"] == 1
     assert payload["errors"] == ["MODULE_CONFIG_INVALID"]
     assert payload["file_results"][0]["error"] == "MODULE_CONFIG_INVALID"
+
+
+def test_ai_report_rejects_a_raw_workbook_without_routing_to_summary(
+    tmp_path: Path, workbook_factory
+) -> None:
+    source = workbook_factory(tmp_path / "summary.xlsx")
+    config = tmp_path / "module-config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "operation": "ai_report",
+                "inputs": [{"role": "current_summary", "input_index": 0}],
+                "history_ids": [],
+                "experience_selections": [],
+                "question": "Summarize this period.",
+            }
+        ),
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "output"
+
+    assert run_draft(_job(source, output_dir, module_config_file=config)) == 0
+
+    payload = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["outputs"] == []
+    assert payload["errors"] == ["AI_REPORT_CONTEXT_INVALID"]
+    assert not (output_dir / "moisture_summary.xlsx").exists()
 
 
 def test_formal_launcher_consumes_default_year_without_modifying_input(

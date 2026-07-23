@@ -1,324 +1,325 @@
-# BambooWorkbench `moisture` 下一阶段架构设计
+# BambooWorkbench `moisture` 三功能简化架构
 
-> 文档状态：Proposed（待模块负责人、框架负责人和业务负责人共同评审）
->
-> 当前兼容基线：BambooWorkbench `module/moisture`，`modules/moisture` v0.1.1
->
-> 目标：不重写含水率公式、Excel 解析、现有统计和中央任务合同，建设受治理的规则生命周期、任务规则快照、AI 受控编排与人工复核闭环。
+> 文档状态：分阶段实施中（v1.0.1 四表汇总、独立 AI 报告及框架最小适配已完成；历史追加和规则治理延期）
+> 当前实现基线：`modules/moisture` v1.0.1
+> 首阶段目标版本：v1.0.1（四表确定性汇总＋独立AI报告）
+> 更新日期：2026-07-23
+> 本文取代旧“治理工作器＋冻结数据集＋全量回放＋人工复核中心”方案。
 
-## 1. 已冻结的设计结论
+## 1. 目标与边界
 
-1. 采用“规则治理面 + 业务运行面”双平面架构。
-2. 两个平面只通过不可变、已批准且可校验哈希的规则包连接。
-3. AI 不能生成自由阈值、表达式或 Evaluator 代码，只能选择模块确定性程序生成的 `calculation_id`。
-4. 框架不复制 moisture 的公式、统计、scope 匹配、规则编译或回放算法。
-5. 框架不得直接 import 模块内部 Python；治理能力通过独立、版本化、文件协议的模块治理工作器调用。
-6. 日常 `run_module.bat`、draft 和 finalize 始终只读，不承担规则发布或经验编辑。
-7. 发布/回滚只影响之后创建的任务；进行中任务固定原规则快照。
-8. Provider、Knowledge 或 AI 不可用时，确定性 XLSX、Markdown 和 result 仍须生成。
-9. 业务方向已确认：下一业务版本停止生成红/蓝，AI 只提供非结论性分析，不改变20列主表的确定性橙/绿。当前 v0.1.1 和历史结果保持只读兼容；该行为变更由模块实现并单独验收，不由框架重写。
-10. 当前 `0.47/0.55` 机器规则状态与业务文档状态不一致。在业务负责人处理前，不得自动迁移为新治理系统中的 approved active 版本。
+下一阶段只建设三个面向业务人员的功能：
+
+1. 汇总表生产；
+2. AI辅助分析；
+3. 规则库管理。
+
+现有含水率公式、Decimal计算、Excel解析、四张业务工作表内容、规则Evaluator、经验库生命周期和主框架AI Provider继续复用，不重新设计业务算法。v1.0.1删除“模型分析记录”工作表，并停止普通汇总任务中的AI辅助复判。
+
+中央 `JobRequest`、`ModuleResult`、Confirmation、Service Request/Response Schema保持不变。模块仍不持有HTTP客户端、Provider、API Key或框架数据库访问能力。
+
+当前 v1.0.1 已具备四表输出、独立 AI 报告页面、历史资料选择和 approved 经验选择；历史追加、候选规则和规则管理仍是后续目标。
 
 ## 2. 总体架构
 
 ```mermaid
-flowchart LR
-    subgraph Governance["规则治理面"]
-        Dataset["冻结历史数据集<br/>Excel + 人工复核标签"]
-        Worker["模块治理工作器<br/>统计 / 候选 / 编译 / 回放"]
-        Evidence["框架知识快照<br/>模块筛选的 approved 经验"]
-        Proposal["AI 选择 calculation_id<br/>并说明证据和限制"]
-        Approval["人工批准或拒绝"]
-        Registry["不可变规则版本库<br/>active binding / 回滚"]
+flowchart TB
+    HOME["竹丝水分检测模块"]
 
-        Dataset --> Worker --> Proposal --> Worker --> Approval --> Registry
-        Evidence --> Proposal
-    end
+    HOME --> F1["功能一：汇总表生产"]
+    HOME --> F2["功能二：AI辅助分析"]
+    HOME --> F3["功能三：规则库管理"]
 
-    subgraph Runtime["业务运行面"]
-        Excel["检测 Excel"]
-        Context["root task 固定上下文<br/>规则 + 趋势 + 哈希"]
-        Pipeline["现有 DeterministicPipeline"]
-        Screening["确定性初筛"]
-        Services["Knowledge / AI 辅助"]
-        Report["XLSX + Markdown + result"]
-        Human["实验人员最终复核"]
+    F1 --> NEW["创建新汇总表"]
+    F1 --> APPEND["历史汇总表＋新原始数据"]
+    NEW --> CALC["统计计算、规则初筛、日期排序"]
+    APPEND --> CHECK["格式检查、去重、冲突确认"]
+    CHECK --> CALC
+    CALC --> XLSX["生成四表新版汇总表"]
 
-        Excel --> Pipeline
-        Context --> Pipeline --> Screening --> Services --> Report --> Human
-    end
+    F2 --> REPORT_ENTRY["入口A：汇总报告分析<br/>当前表＋历史数据"]
+    F2 --> RULE_ENTRY["入口B：候选规则生成"]
+    F2 --> EXP_ENTRY["入口C：经验指导"]
 
-    Registry -->|"创建任务时复制只读快照"| Context
-    Human -->|"显式选择后进入下一数据集版本"| Dataset
+    EXP_ENTRY --> EXP_CURRENT["已批准经验"]
+    EXP_ENTRY --> EXP_DRAFT["经验草稿"]
+    EXP_ENTRY --> EXP_HISTORY["历史版本"]
+
+    XLSX --> REPORT_ENTRY
+    EXP_CURRENT --> REPORT_ENTRY
+    EXP_CURRENT --> RULE_ENTRY
+
+    REPORT_ENTRY --> CONSENT["脱敏预览与用户同意"]
+    CONSENT --> AIHOST["主框架AI服务"]
+    AIHOST --> REPORT["独立AI辅助报告"]
+
+    RULE_ENTRY --> RULE_AI["AI生成候选规则建议卡"]
+    RULE_AI --> RULE_DRAFT["规则草稿"]
+
+    F3 --> RULE_DRAFT
+    F3 --> CURRENT["当前有效规则"]
+    F3 --> HISTORY["规则历史版本"]
+
+    RULE_DRAFT --> VALIDATE["格式校验、冲突提示、命中预览"]
+    VALIDATE --> CONFIRM["用户确认发布"]
+    CONFIRM --> CURRENT
+    CURRENT --> CALC
+    HISTORY --> RESTORE["选择历史版本恢复"]
+    RESTORE --> CURRENT
+
+    style F1 fill:#DFF2E5,stroke:#2F855A
+    style F2 fill:#E6F0FA,stroke:#2B6CB0
+    style F3 fill:#FFF2CC,stroke:#B7791F
+    style EXP_ENTRY fill:#EEE5FF,stroke:#805AD5
+    style EXP_CURRENT fill:#EEE5FF,stroke:#805AD5
 ```
 
-### 2.1 权限与写入边界
-
-- 规则治理存储位于框架数据根目录，不写应用安装目录或 `modules/moisture/rules/active/`。
-- 只有框架发布服务能够写不可变规则版本并原子切换 active binding。
-- 模块治理工作器读取框架提供的工作目录，将结果原子写入指定响应路径，不直接访问框架数据库。
-- 日常任务、AI 网关和 Knowledge 服务只有读取任务快照的权限。
-- 人工复核不修改原始 Excel、既有 artifacts、经验或已发布规则。
-
-## 3. 模块治理工作器合同
-
-### 3.1 独立入口
-
-下一阶段由模块提供独立治理入口，不加入 `run_module.bat`。源码开发时使用仓库 `.venv`，便携交付时由框架调用模块随包提供的治理可执行文件。框架通过模块私有能力文件发现入口，不依赖目录名或硬编码 Python import。
-
-建议模块私有能力文件：
-
-```json
-{
-  "schema_version": "1.0",
-  "module_id": "moisture",
-  "governance_worker": "BambooMoistureGovernance.exe",
-  "governance_protocol": "moisture-governance/1.0",
-  "runtime_context_protocol": "moisture-runtime-context/1.0"
-}
-```
-
-该文件不是中央 Module Manifest，不能改变现有 `module.json` Schema。未声明能力的旧模块不得收到扩展运行配置，也不得显示规则治理按钮。
-
-### 3.2 操作集合
-
-首期治理协议只包含以下有界操作：
-
-| operation | 输入 | 输出 |
-| --- | --- | --- |
-| `validate_dataset` | 数据集 manifest、文件目录、标签 | 校验结果、文件哈希、拒绝原因 |
-| `compute_statistics` | 已冻结数据集 | 确定性统计快照 |
-| `build_catalog` | 统计快照、治理策略 | 有限候选计算目录 |
-| `compile_proposal` | 候选目录、AI提案 | 当前 RuleDefinition 兼容候选集 |
-| `replay` | 数据集、候选集、旧规则包 | 回放指标、差异和冲突报告 |
-| `build_package` | 已通过回放的候选集、批准记录 | 待发布规则包；不切换 active |
-
-调用形式为：
+核心数据流为：
 
 ```text
-<governance-worker> --request <absolute-request.json> --response <absolute-response.json>
+原始数据 → 确定性汇总表 → AI辅助分析或候选规则
+候选规则 → 草稿 → 校验和命中预览 → 人工确认 → 后续任务使用
 ```
 
-协议要求：
+AI不修改汇总表中的样本、统计值、规则命中或颜色，也不能直接发布规则。
 
-- request/response 均为 UTF-8 JSON，`additionalProperties=false`；
-- request、response、输入目录和临时文件必须位于框架为本次治理操作创建的工作目录；
-- stdout 只允许进度 JSON，stderr 记录不含敏感原文的诊断；
-- response 先写临时文件，完整校验后使用 `os.replace`；
-- exit `0` 表示产生合法响应，exit `2` 表示请求/业务校验失败，exit `3` 表示内部故障；
-- 即使 exit 非零，也不得修改 active binding 或历史版本；
-- 框架负责超时、取消和进程隔离，模块负责业务输入输出校验。
+## 3. 功能一：汇总表生产
 
-## 4. 受控历史数据与确定性统计
+### 3.1 创建新汇总表
 
-### 4.1 数据集版本
+继续使用现有确定性处理管线：
 
-一个 `HistoricalDatasetManifest` 至少保存：
+- 解析供应商、材料类型、到货日期、检测日期和1—10个样本；
+- 按既有公式复核含水率并使用Decimal计算统计值；
+- 使用当前有效规则进行初筛和单元格染色；
+- 按检测日期稳定排序；
+- 生成四张业务工作表，不再创建“模型分析记录”。
 
-- dataset ID、版本和父版本；
-- 历史 Excel 只读副本的稳定相对路径、大小和 SHA-256；
-- 批次与人工复核标签映射及其 SHA-256；
-- 材料、供应商、季节、指标和时间范围；
-- 创建操作人、创建时间、来源说明和标签口径版本；
-- 规范化 manifest 和全部文件哈希计算出的整体 SHA-256。
+### 3.2 历史汇总表追加
 
-发布后的数据集不可原地修改。文件、标签、范围或口径变化必须创建新版本。`confirmed_normal` 和 `confirmed_anomaly` 参与混淆矩阵；`retest_required` 和 `inconclusive` 只计入覆盖率。
+第一版支持两类历史输入：
 
-### 4.2 统计定义
+- 模块生成的标准汇总文件：兼容v1.0.0五表和v1.0.1四表，校验通过后导入；
+- 企业旧汇总表：必须经过字段映射、预览和用户确认后导入，不自动猜测未知列的业务含义。
 
-跨批次首期只分析批次级 `mean` 和 `range_value`，复用模块既有 Excel 解析、公式复核和批次统计，全部使用 `Decimal`。
+合并规则：
 
-每个 scope 输出 count、min、max、mean、median、P1/P5/P10/P25/P50/P75/P90/P95/P99、Q1、Q3、IQR、MAD、scaled MAD、缺失数、标签覆盖率和数据时间范围。
+1. 原历史表和新原始文件始终只读；
+2. 文件内容SHA-256相同的输入跳过；
+3. 业务批次相同且数据相同的记录视为重复；
+4. 业务批次相同但内容不同的记录进入冲突确认，禁止自动覆盖；
+5. 用户未解决冲突时，该冲突记录不进入新汇总表；
+6. 合并后按检测日期重新排序并生成一份新文件，不覆盖旧汇总表；
+7. 来源追溯记录原文件、文件哈希、来源工作表和导入方式。
 
-为保证跨机器复现，分位数固定采用线性插值：排序后 `h=(n-1)×p`，在 `floor(h)` 与 `ceil(h)` 之间按 Decimal 比例插值；Q1/P25、P50/median、Q3/P75 必须一致。scaled MAD 固定为 `MAD × Decimal("1.4826")`。中间计算不量化，序列化时使用无指数、无多余尾零的十进制字符串。
+精确的业务批次键需要企业确认；确认前至少使用来源指纹和现有批次字段联合识别，不能只依赖文件名。
 
-时间留出集默认取按业务日期、文件指纹稳定排序后的最后 20%；相同日期按文件 SHA-256 排序。若日期未解析或样本量不足，则只允许全量影子回放，并明确标记不能发布。
+### 3.3 输出不变量
 
-最低样本量、最大误报率和最低召回率必须由业务治理策略明确提供。未配置时允许统计、候选和影子回放，但禁止批准和发布。
+输出继续保留：
 
-### 4.3 候选计算目录
+1. 竹丝含水率统计；
+2. 异常分析明细；
+3. 趋势分析；
+4. 来源追溯；
 
-程序生成有限候选：
+历史追加不得改变已导入批次的样本值、公式复核结果、最大值、最小值、区间值和均值。
 
-| 指标 | 方向 | 首期方法 |
-| --- | --- | --- |
-| `mean` | low/high | P5 / P95 |
-| `mean` | low/high | Q1−1.5×IQR / Q3+1.5×IQR |
-| `mean` | low/high | Median±3×1.4826×MAD |
-| `range_value` | high | P95 |
-| `range_value` | high | Q3+1.5×IQR |
-| `range_value` | high | Median+3×1.4826×MAD |
+普通汇总任务不再声明AI复判service request，不读取AI review response，也不产生红蓝提升。AI只在用户主动发起的独立报告任务中运行。
 
-每项包含 `calculation_id`、metric、direction、Decimal value、method、scope、statistics hash、sample count 和 limitations。`calculation_id` 由上述业务字段的规范化 JSON SHA-256 生成，不含时间、绝对路径、UUID 或模型输出。
+## 4. 功能二：AI辅助分析
 
-## 5. 规范化与哈希
+### 4.1 入口A：汇总报告分析
 
-治理协议统一采用以下规则：
+用户选择当前汇总表、可选历史数据范围、已批准经验和分析问题。模块生成受限分析上下文，主框架完成脱敏预览、逐次联网同意和Provider调用。
 
-1. UTF-8、无 BOM、LF 换行；
-2. JSON object 键按 Unicode 码点升序；
-3. 无无意义空白；
-4. Decimal 以规范十进制字符串保存；
-5. 时间统一为 UTC RFC 3339，仅用于审计，不进入确定性 ID；
-6. 文件使用稳定相对路径，禁止绝对路径、`..`、junction 和 symlink；
-7. 数组在业务有序时保留顺序，无序集合在哈希前按稳定 ID 排序；
-8. SHA-256 使用规范化 JSON 字节及 manifest 指定顺序的文件哈希计算。
+合法响应生成独立产物：
 
-规范化算法必须有版本字段和黄金向量测试；算法版本变化必须生成新数据集/统计/候选版本，不能覆盖旧哈希。
+- `ai_analysis_report.md`：供业务人员阅读的辅助分析；
+- `ai_analysis_result.json`：保存响应状态、引用、版本、哈希和校验结果。
 
-## 6. AI规则提案与证据边界
+AI报告可以说明总体情况、异常批次、趋势比较、可能原因和复核建议，但不得：
 
-AI 输入仅包括候选计算目录、业务限制、框架已验证的 Knowledge 快照，以及模块治理工作器筛选出的 approved 经验有界摘录。
+- 重算或改写确定性统计；
+- 修改XLSX、规则命中或颜色；
+- 形成正式不合格、责任、处罚、放行结论；
+- 在Provider失败时阻止确定性汇总表生成。
 
-经验是否 approved、是否在有效期、是否匹配材料/季节/供应商 scope，由模块判断；框架只保存和运输模块产生的证据包，不重新实现经验适用性。
+`denied`、`error`、`timeout`、缺失或非法响应均产生结构化降级结果，不生成伪造的成功报告。
 
-`RuleProposalResponse` 只允许：
+### 4.2 历史数据资料库
 
-- 选择已知 `calculation_id`；
-- 引用已知 scope 和 evidence ref；
-- 给出理由、限制和“继续回放/证据不足”的建议。
+历史数据入口并入“汇总报告分析”，不增加首页第四项功能。
 
-Schema 不包含自由阈值、表达式、代码或正式合格/不合格结论。未知候选、未知证据、未知字段和自由数值全部拒绝。AI文本始终视为不可信辅助内容；结构、引用、长度和禁止字段可以确定性校验，但不宣称能仅靠关键词完全识别所有越权语义。
+第一版采用框架模块数据目录中的轻量本地资料库：
 
-## 7. 回放、审批、发布和回滚
+- 保存经模块校验的标准汇总表只读副本；
+- 使用JSON索引记录稳定ID、来源、日期范围、批次数、文件SHA-256和状态；
+- 内容相同的文件不重复保存；
+- 已收录内容不原地覆盖，错误资料可停用但不影响历史分析记录；
+- 不建设数据库、复杂检索服务或多人协同管理。
 
-回放复用当前 RuleDefinition 和 Evaluator 语义，不建立第二套判断算法。报告至少包括全量/留出集命中、scope 覆盖、混淆矩阵、误报率、召回率、无标签/复测/无法判断数量、旧新差异、逐条候选影响记录，以及数据集/候选/报告 SHA-256。
+模块只把与当前问题相关的聚合统计、趋势、异常数量和有限代表记录送入AI上下文。完整Excel、原始行、绝对路径和未经允许的真实身份不得外发。
 
-以下情况阻止批准：
+### 4.3 入口B：候选规则生成
 
-- rule ID 冲突、上下限冲突或重叠 scope 下互斥；
-- 未注册 Evaluator、未知字段或非法 operator；
-- 数据集/候选哈希变化或回放未完成；
-- 业务门槛未配置或未达到；
-- 规则永不命中、覆盖全部样本或被完全遮蔽且没有业务负责人书面例外说明。
+AI只能生成简单数值规则建议卡，字段包括：
 
-首期采用单人审批。桌面端仅记录本地审计操作人，不宣称具备强身份认证或角色授权。批准页面只能批准/拒绝；修改候选必须生成新版本并重新回放。
+- 规则名称；
+- 现有Evaluator支持的目标字段；
+- 比较运算符；
+- 单一Decimal阈值；
+- 现有材料、季节和供应商scope；
+- 建议理由和限制。
 
-Phase 1 每个 module active binding 指向一个完整规则包，包内规则自行声明材料、季节和供应商 scope。框架不在 Excel 解析前按供应商选择规则。未来如确需多包，必须引入有稳定顺序和整体哈希的 package set 协议。
+禁止AI输出AND/OR组合表达式、自由公式、代码、未知字段或直接发布指令。
 
-发布过程先写不可变版本目录，再校验 package/rules 哈希，最后以数据库事务或等价原子操作切换 active binding。失败时旧 active 保持不变。回滚只切换 binding，不修改或删除历史包。
+系统对建议卡执行：
 
-## 8. 日常任务固定上下文
+1. Schema和Decimal校验；
+2. RuleDefinition/Evaluator兼容检查；
+3. 与当前规则的明显重复或矛盾提示；
+4. 在用户选定的当前和历史数据上显示预计命中数量；
+5. 保存为规则草稿。
 
-### 8.1 能力协商
+命中预览是辅助判断，不等同完整历史回放或业务批准。
 
-当前 v0.1.1 的配置解析器只接受 `default_year`。框架只有在模块私有能力文件声明 `moisture-runtime-context/1.0` 后，才可生成扩展 `module_config_file`。旧模块、能力文件缺失或版本未知时，继续使用旧配置，禁止试探性下发未知字段。
+### 4.4 入口C：经验指导
 
-扩展配置示例：
+复用现有经验库生命周期：
 
-```json
-{
-  "config_schema_version": "2.0",
-  "default_year": 2026,
-  "rule_snapshot": {
-    "path": "<task-local-absolute-path>/protocol/runtime-context/rules",
-    "package_sha256": "<64-lowercase-hex>",
-    "rules_sha256": "<64-lowercase-hex>"
-  },
-  "history_context": {
-    "path": "<task-local-absolute-path>/protocol/runtime-context/history.json",
-    "sha256": "<64-lowercase-hex>"
-  }
-}
+```text
+draft → approved → retired
 ```
 
-路径必须位于 root task 内、是普通文件/目录且不得经过 symlink、junction 或 reparse point。Draft/Finalize 引用同一份只读配置和快照。快照被篡改时明确失败，不回退到当前全局 active。
+草稿可修改；approved不可原地修改；修改approved必须创建新版本；retired保留历史但不参与新分析。
 
-### 8.2 多规则命中
+只有approved、在有效期内且scope匹配的经验可进入AI上下文。报告必须记录实际引用的经验ID、版本和SHA-256。
 
-现有解析、公式、统计和 Evaluator 保持不变。未来如增加多命中聚合，由模块实现并经业务验收：只高为偏高、只低为偏低、高低不同指标同时命中为人工确认、数据质量疑点优先、无命中为正常。所有命中仍保留 rule ID、字段、方向、版本和哈希。
+## 5. 功能三：轻量规则库管理
 
-下一业务版本的主表颜色仅保留确定性橙/绿。合法 AI 响应只能补充分析优先级、可能原因、复核步骤和证据引用，写入“模型分析记录”和 Markdown 的“AI辅助分析（非结论）”章节；不得把主表颜色升级为红/蓝。旧 result/XLSX 中已经形成的红/蓝保持原样，只读展示，不做历史回写。
+### 5.1 三栏界面
 
-## 9. Knowledge → AI 编排
+规则库只提供：
 
-中央 service 类型保持 `knowledge` 和 `ai`。依赖关系使用模块私有 AI payload 字段：
+- 规则草稿：允许创建和修改，不参与正式检测；
+- 当前有效规则：正式运行只读使用；
+- 历史版本：查看、停用和恢复，不物理删除。
 
-```json
-{
-  "dependencies": [
-    {"service": "knowledge", "request_id": "<knowledge-request-id>", "required": false}
-  ]
-}
+第一版为本地单操作人确认，不建设登录、角色、多级审批、数据库或在线协作平台。
+
+### 5.2 发布与恢复
+
+发布流程：
+
+```text
+编辑草稿
+→ Schema与Evaluator校验
+→ 重复/冲突提示
+→ 当前及选定历史数据命中预览
+→ 用户明确确认
+→ 生成不可变规则版本
+→ 原子切换当前版本
 ```
 
-编排规则：
+规则存储采用简单文件结构：草稿区、不可变版本区和当前版本指针。每个正式版本保存规则版本、规则SHA-256、来源、适用范围和确认说明。
 
-1. 框架先校验并执行依赖的 Knowledge request；
-2. 每个请求仍在 `service-response.json` 中形成独立、原 request ID 的响应项；
-3. 框架不修改模块原始 service request，而是为 Provider 构造临时 gateway payload；
-4. gateway payload 可加入验证后的 Knowledge 项、模块提供的 approved 经验证据包和确定性趋势摘要；
-5. Knowledge ref 采用 `knowledge:<record-id>:<version>:<sha256>`；
-6. Finalize 将 AI evidence refs 与本次 Knowledge 响应、规则、经验和趋势哈希交叉校验；
-7. `required=false` 时 Knowledge 失败仍可仅凭确定性候选执行 AI；`required=true` 时 AI 返回结构化 error，但任务继续确定性 finalize；
-8. 用户拒绝联网、Provider 配置错误、HTTP 错误、限流和超时均形成 `denied`/`error`/`timeout` 响应，不抛出导致任务丢失的未处理异常。
+发布先完整写入临时文件并校验，再使用 `os.replace` 切换当前版本。任何写入、校验或切换失败都必须保留旧当前版本。
 
-## 10. 人工复核与数据生命周期
+恢复历史版本只原子切换当前指针，不修改或删除历史规则包。已发布规则需要修改时必须创建新草稿和新版本。
 
-人工复核状态为 `confirmed_normal`、`confirmed_anomaly`、`retest_required`、`inconclusive`。记录保存 job、batch、规则版本/哈希、AI报告哈希、审计操作人、时间、结论和说明。`confirmed_anomaly` 与 `retest_required` 要求说明。
+### 5.3 运行时只读和任务快照
 
-复核记录只在用户显式创建下一数据集版本时才能被选入。不得自动生成经验、规则或责任结论。
+经验、历史资料和规则管理使用独立管理入口，不加入正式 `run_module.bat`。
 
-框架还必须提供：
+框架创建任务时把当前规则版本和SHA-256固定为任务快照。draft与finalize必须读取同一快照；任务开始后发生的规则发布不影响该任务。
 
-- 数据集大小/文件数限额和导入前空间检查；
-- 数据保留期限和人工删除/归档策略；
-- 被 published rule 引用的数据集和回放报告禁止物理删除，只能归档或标记停用；
-- 数据库备份恢复与文件哈希复核；
-- 导出包默认脱敏，不包含 API Key、绝对路径、客户原始日志或 Provider 原始响应。
+正式任务不得写经验库、历史资料库或规则库，也不得在快照失败时静默改用另一版本。
 
-## 11. 责任矩阵
+## 6. 模块与框架接口
 
-| 能力 | moisture模块 | 主框架 | 业务负责人 |
-| --- | --- | --- | --- |
-| Excel、公式、统计、Evaluator | 负责 | 不解释 | 批准口径 |
-| 治理工作器、候选、编译、回放 | 负责 | 隔离调用与存储 | 批准门槛/例外 |
-| 数据集文件与审计元数据 | 校验业务内容 | 负责存储、权限、生命周期 | 确认来源和使用范围 |
-| AI候选与运行分析Schema | 负责业务约束和校验 | Provider、同意、降级 | 批准外发范围 |
-| 规则审批、发布、binding、回滚 | 提供可发布包 | 负责流程与原子切换 | 作出批准/回滚决定 |
-| 任务规则快照 | 校验并只读使用 | 创建、固定和恢复 | 无 |
-| 人工复核 | 定义业务字段 | 页面、存储和审计 | 作出复核结论 |
+### 6.1 正式任务
 
-## 12. 分阶段实施
+模块私有配置升级为版本化配置，支持以下操作意图：
 
-### A：协议与业务口径冻结
+- 新建汇总；
+- 历史追加；
+- AI汇总报告；
+- AI候选规则。
 
-- 冻结21份历史文件、166个样本、公式差异0、1高1低19正常基线；
-- 批准统计、规范化、哈希、治理工作器和运行上下文协议；
-- 处理 `0.47/0.55` 的批准状态。
+没有新操作字段时继续执行普通新建汇总。未知操作或未知配置字段必须明确拒绝，不能猜测执行。
 
-### B：模块离线治理内核
+中央Job和Result合同不变；操作所需的私有参数由模块自有Schema约束。
 
-- 模块实现治理工作器、统计、目录、编译、回放和冲突检查；
-- 只允许试算/影子回放，不具备发布权限；
-- 验证确定性、未知候选/证据/Evaluator拒绝和路径隔离。
+### 6.2 管理入口
 
-### C：框架治理与任务快照
+框架通过独立、受控的模块管理进程调用历史、经验和规则管理能力。管理进程只能访问框架分配的模块数据目录，不得访问框架数据库或其他模块数据。v1.0.1首期只开放approved经验查询和历史资料导入/选择；规则管理操作延期到后续FCR。
 
-- 框架实现治理存储、页面、审计、发布、active binding、回滚和能力协商；
-- 运行中任务固定旧版本，新任务使用切换后的版本；
-- 无能力声明的旧模块保持原行为。
+正式 `run_module.bat` 不提供管理命令。源码环境使用仓库 `.venv`，便携环境使用模块随包运行时，不回退系统Python。
 
-### D：服务编排、颜色迁移与人工复核
+### 6.3 AI服务
 
-- 实现 Knowledge→AI 依赖编排、结构化降级、复核队列和数据集反馈选择；
-- 模块在下一业务版本停止生成红/蓝，新增旧结果兼容和橙绿不被 AI 改色的回归测试；
-- 框架只展示模块结果，不把旧红/蓝重算为橙/绿，也不根据 AI 文本自行着色。
+继续复用现有service request/response机制：
 
-### E：试点与回滚演练
+- 模块负责构建脱敏、限长、可追溯的请求；
+- 框架负责Provider、凭据、网络、用户同意和故障转换；
+- 模块负责业务Schema、引用和响应校验；
+- API Key不得进入模块配置、任务、日志、产物或Git。
 
-- 完成历史影子回放和有限范围试点；
-- 演练服务离线、发布中断、数据库恢复和规则回滚；
-- 回归合同、公式、20列主表、Draft/Finalize及源码/便携运行。
+下一业务版本不再由AI把橙/绿提升为红/蓝。AI分析只写入独立报告；v1.0.0及更早成果保持只读，不回写历史颜色。
 
-## 13. 上线前阻塞决策
+## 7. 责任边界
 
-1. `0.47/0.55` 批准、撤销或转候选；
-2. 各 scope 最低样本量、最大误报率和最低召回率；
-3. 四种人工复核状态及其与“不合格/责任”的边界；
-4. scope 优先级和样本不足回退策略；
-5. Knowledge、经验和趋势摘要外发范围及审计保留期限；
-6. 本地单人审批是否满足试点治理要求；
-7. 红/蓝取消的目标模块版本、历史结果展示文案和升级说明。
+| 责任方 | 负责内容 |
+| --- | --- |
+| moisture模块 | Excel解析、公式、统计、历史表校验与合并、规则执行、经验适用性、AI上下文、响应校验、产物生成 |
+| 主框架 | 分阶段页面、模块数据目录、管理进程、Provider、凭据、脱敏预览、逐次同意和成果展示；任务规则快照延期到规则管理阶段 |
+| 业务负责人 | 批次唯一键、阈值、scope、经验批准、规则发布及报告措辞边界 |
 
-对应框架请求见：[`../framework-change-requests/FCR-moisture-20260721-rule-governance-runtime-analysis.md`](../framework-change-requests/FCR-moisture-20260721-rule-governance-runtime-analysis.md)。
+框架不得把moisture专属公式、规则或历史表映射复制到 `app/`、`core/` 或 `ui/`。
+
+## 8. 分阶段实施
+
+1. v1.0.1汇总拆分：删除“模型分析记录”，停止普通任务AI复判，只输出确定性四表；
+2. v1.0.1独立AI报告：轻量历史资料库、approved经验选择、脱敏请求、独立报告及全部离线降级；
+3. 后续历史追加：标准表导入、受控旧表映射、SHA去重、冲突确认和新版汇总输出；
+4. 后续候选规则：简单建议卡、Schema校验、冲突提示和命中预览；
+5. 后续规则管理：三栏管理、单人确认、不可变版本、原子发布、停用、恢复和任务快照。
+
+每阶段单独验收，不因后续功能未完成而改变现有确定性汇总能力。
+
+## 9. 验收标准
+
+1. v1.0.1新汇总表恰好包含四张固定工作表，不含“模型分析记录”；
+2. 普通汇总任务不声明AI复判请求，不生成红蓝提升；
+3. AI请求不包含完整Excel、原始行、绝对路径或未授权身份；
+4. AI报告不修改XLSX和颜色，失败时确定性成果仍可用；
+5. 只有有效approved经验进入AI上下文且引用可追溯；
+6. v1.0.0五表历史文件和v1.0.1四表文件均可只读选择；
+7. 无AI、经验或历史资料时仍可生成确定性汇总表；
+8. 后续历史追加不得改变已导入批次的样本、公式和统计结果；
+9. AI候选不能直接发布，复杂表达式和未知字段被拒绝；
+10. 规则草稿不影响运行时，发布失败保留旧版本；
+11. 中央合同和其他模块行为不受影响。
+
+## 10. 不纳入第一版
+
+- 冻结标签数据集和复杂统计候选目录；
+- 混淆矩阵、误报率、召回率及全量自动历史回放；
+- AI自由公式、组合表达式、代码生成或自动发布；
+- 多人审批、角色权限、数据库和在线协作；
+- 人工复核中心和自动把复核结论回灌训练数据；
+- 网络知识库或模块直接调用Provider；
+- 对历史成果重新计算或回写红蓝颜色。
+
+## 11. 待业务确认
+
+- 业务批次唯一键和冲突处理责任人；
+- `0.55/0.47`是否批准为正式均值阈值；
+- 区间值阈值及严格大于/大于等于语义；
+- 材料、季节和供应商scope的正式定义；
+- 历史数据、供应商身份和经验内容的AI外发范围；
+- AI报告固定章节和允许使用的措辞；
+- 本地单人确认是否满足试点规则发布要求。
+
+v1.0.1当前框架请求见：[`../framework-change-requests/FCR-moisture-20260723-ai-report-context-selection.md`](../framework-change-requests/FCR-moisture-20260723-ai-report-context-selection.md)。后续历史追加、候选规则和规则管理分别提交独立FCR，不与本期捆绑。

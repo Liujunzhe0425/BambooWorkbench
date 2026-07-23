@@ -8,23 +8,26 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
     QMessageBox,
+    QPushButton,
     QSizeGrip,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from core.contracts.enums import TaskStatus
+from core.contracts.enums import ModuleId, TaskStatus
 from core.contracts.progress import ProgressEvent
 from core.contracts.result import ModuleResult
 from core.platform.path_safety import resolve_contained_file
 from core.tasks.models import InvalidTaskTransition, TaskLifecycleState
+from core.tasks.result_status import normalized_result
 from ui.navigation import Navigation
 from ui.page_ids import PageId
 from ui.pages.confirmations_page import ConfirmationsPage
 from ui.pages.history_page import HistoryPage
 from ui.pages.knowledge_page import KnowledgePage
 from ui.pages.module_task_page import ModuleTaskPage
+from ui.pages.moisture_ai_report_page import MoistureAIReportPage
 from ui.pages.result_center_page import ResultCenterPage
 from ui.pages.settings_page import SettingsPage
 from ui.pages.task_progress_page import TaskProgressPage
@@ -63,7 +66,10 @@ class MainWindow(QMainWindow):
         self.stack.setObjectName("pageStack")
         self.stack.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.workbench_page = WorkbenchPage(context.registry)
-        self.history_page = HistoryPage(context.task_repository)
+        self.history_page = HistoryPage(
+            context.task_repository,
+            status_resolver=self._historical_status,
+        )
         self.confirmations_page = ConfirmationsPage(context.task_repository.get_number)
         self.knowledge_page = KnowledgePage(
             context.knowledge_repository,
@@ -86,10 +92,15 @@ class MainWindow(QMainWindow):
         self.module_task_page = ModuleTaskPage()
         self.task_progress_page = TaskProgressPage()
         self.result_center_page = ResultCenterPage()
+        self.moisture_ai_report_page = MoistureAIReportPage(
+            context.module_management_service,
+            context.settings,
+        )
         for page in (
             self.module_task_page,
             self.task_progress_page,
             self.result_center_page,
+            self.moisture_ai_report_page,
         ):
             self.stack.addWidget(page)
 
@@ -100,9 +111,23 @@ class MainWindow(QMainWindow):
         self._finalize_failed = False
         self._confirmation_job_ids: set[str] = set()
         self._foreground_job_id: str | None = None
+        self._navigation_history: list[tuple[QWidget, PageId]] = []
+        self._current_nav_page = PageId.WORKBENCH
 
+        page_host = QWidget()
+        page_host.setObjectName("pageHost")
+        page_layout = QVBoxLayout(page_host)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.setSpacing(0)
+        self.back_button = QPushButton("←  返回")
+        self.back_button.setObjectName("pageBackButton")
+        self.back_button.setProperty("secondary", True)
+        self.back_button.setAccessibleName("返回上一页")
+        self.back_button.clicked.connect(self._go_back)
+        page_layout.addWidget(self.back_button, 0, Qt.AlignmentFlag.AlignLeft)
+        page_layout.addWidget(self.stack, 1)
         layout.addWidget(self.navigation)
-        layout.addWidget(self.stack, 1)
+        layout.addWidget(page_host, 1)
         shell_layout.addWidget(body, 1)
         self.setCentralWidget(root)
         self.size_grip = QSizeGrip(root)
@@ -112,6 +137,11 @@ class MainWindow(QMainWindow):
         self.history_page.result_requested.connect(self._open_history_result)
         self.workbench_page.module_selected.connect(self._open_module)
         self.module_task_page.task_requested.connect(self._start_task)
+        self.module_task_page.ai_report_requested.connect(self._open_moisture_ai_report)
+        self.moisture_ai_report_page.task_requested.connect(self._start_moisture_ai_report)
+        self.moisture_ai_report_page.action_failed.connect(
+            lambda message: self._show_failure("AI汇总报告", message)
+        )
         self.task_progress_page.cancel_requested.connect(self._cancel_task)
         self.confirmations_page.submitted.connect(self._submit_confirmation)
         self.confirmations_page.job_selected.connect(self._select_confirmation_job)
@@ -131,10 +161,17 @@ class MainWindow(QMainWindow):
         context.task_service.failed.connect(self._on_failed)
         context.task_service.orchestration_error.connect(self._on_orchestration_error)
         context.task_service.status_changed.connect(self._on_status_changed)
+        context.task_service.publication_warning.connect(
+            lambda _job_id, message: self._show_failure("成果目录复制提醒", message)
+        )
         for job_id, result in context.task_service.pending_confirmations():
             self._confirmation_job_ids.add(job_id)
             self.confirmations_page.load(job_id, result.confirmations)
-        self.navigate(PageId.WORKBENCH)
+        self._show_widget(
+            self.workbench_page,
+            nav_page=PageId.WORKBENCH,
+            record_history=False,
+        )
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -177,8 +214,38 @@ class MainWindow(QMainWindow):
     def navigate(self, page_id: PageId) -> None:
         if page_id is PageId.HISTORY:
             self.history_page.refresh()
-        self.stack.setCurrentWidget(self.pages[page_id])
-        self.navigation.set_current_page(page_id)
+        self._show_widget(self.pages[page_id], nav_page=page_id)
+
+    def _show_widget(
+        self,
+        widget: QWidget,
+        *,
+        nav_page: PageId | None = None,
+        record_history: bool = True,
+    ) -> None:
+        current = self.stack.currentWidget()
+        if record_history and current is not None and current is not widget:
+            entry = (current, self._current_nav_page)
+            if not self._navigation_history or self._navigation_history[-1] != entry:
+                self._navigation_history.append(entry)
+        if nav_page is not None:
+            self._current_nav_page = nav_page
+        self.stack.setCurrentWidget(widget)
+        self.navigation.set_current_page(self._current_nav_page)
+        self.back_button.setVisible(widget is not self.workbench_page)
+
+    def _go_back(self) -> None:
+        while self._navigation_history:
+            widget, nav_page = self._navigation_history.pop()
+            if widget is self.stack.currentWidget():
+                continue
+            self._show_widget(widget, nav_page=nav_page, record_history=False)
+            return
+        self._show_widget(
+            self.workbench_page,
+            nav_page=PageId.WORKBENCH,
+            record_history=False,
+        )
 
     def _cancel_task(self, job_id: str) -> None:
         self.task_progress_page.cancel_button.setEnabled(False)
@@ -216,9 +283,9 @@ class MainWindow(QMainWindow):
             module_id,
             module.manifest.module_name,
             module.manifest.supported_extensions,
+            ai_report_available="ai_report" in module.manifest.capabilities,
         )
-        self.stack.setCurrentWidget(self.module_task_page)
-        self.navigation.set_current_page(PageId.WORKBENCH)
+        self._show_widget(self.module_task_page, nav_page=PageId.WORKBENCH)
 
     def _start_task(self, module_id: object, files: list) -> None:
         self._starting_task = True
@@ -234,7 +301,49 @@ class MainWindow(QMainWindow):
             return
         self._foreground_job_id = job_id
         self.task_progress_page.bind(job_id)
-        self.stack.setCurrentWidget(self.task_progress_page)
+        self._show_widget(self.task_progress_page)
+
+    def _open_moisture_ai_report(self, module_id: object) -> None:
+        if getattr(module_id, "value", module_id) != "moisture":
+            self._show_failure("功能不可用", "AI汇总报告入口当前只属于竹丝水分模块")
+            return
+        try:
+            module = self.context.registry.get(ModuleId.MOISTURE)
+        except KeyError:
+            self._show_failure("功能不可用", "竹丝水分模块尚未安装")
+            return
+        if "ai_report" not in module.manifest.capabilities:
+            self._show_failure("功能不可用", "当前竹丝水分模块版本尚未提供独立 AI 汇总报告")
+            return
+        self.moisture_ai_report_page.activate()
+        self._show_widget(
+            self.moisture_ai_report_page,
+            nav_page=PageId.WORKBENCH,
+        )
+
+    def _start_moisture_ai_report(
+        self,
+        current_summary: Path,
+        module_config: dict[str, object],
+    ) -> None:
+        self._starting_task = True
+        self._start_failure_job_id = None
+        try:
+            job_id = self.context.task_service.create_and_start(
+                ModuleId.MOISTURE,
+                [current_summary],
+                module_config=module_config,
+            )
+        except Exception as error:
+            self._show_failure("AI汇总报告任务创建失败", str(error))
+            return
+        finally:
+            self._starting_task = False
+        if self._start_failure_job_id == job_id:
+            return
+        self._foreground_job_id = job_id
+        self.task_progress_page.bind(job_id)
+        self._show_widget(self.task_progress_page)
 
     def _on_progress(self, job_id: str, event: object) -> None:
         if not isinstance(event, ProgressEvent):
@@ -250,13 +359,11 @@ class MainWindow(QMainWindow):
         self.confirmations_page.load(job_id, result.confirmations)
         if self._foreground_job_id == job_id:
             self.confirmations_page.select_job(job_id, user_selected=False)
-            self.stack.setCurrentWidget(self.confirmations_page)
-            self.navigation.set_current_page(PageId.CONFIRMATIONS)
+            self._show_widget(self.confirmations_page, nav_page=PageId.CONFIRMATIONS)
 
     def _select_confirmation_job(self, job_id: str) -> None:
         self._foreground_job_id = job_id
-        self.stack.setCurrentWidget(self.confirmations_page)
-        self.navigation.set_current_page(PageId.CONFIRMATIONS)
+        self._show_widget(self.confirmations_page, nav_page=PageId.CONFIRMATIONS)
 
     def _submit_confirmation(self, job_id: str, answers: list) -> None:
         self._foreground_job_id = job_id
@@ -275,9 +382,10 @@ class MainWindow(QMainWindow):
             return
         self._clear_confirmation(job_id)
         self.task_progress_page.bind(job_id)
-        self.stack.setCurrentWidget(self.task_progress_page)
+        self._show_widget(self.task_progress_page)
 
     def _on_finished(self, result: ModuleResult) -> None:
+        result = normalized_result(result)
         self._clear_confirmation(result.job_id)
         if self._foreground_job_id != result.job_id:
             self.history_page.refresh()
@@ -286,7 +394,7 @@ class MainWindow(QMainWindow):
             self.task_progress_page.current_job_id = ""
             self.task_progress_page.cancel_button.setEnabled(False)
         self.result_center_page.show_result(result)
-        self.stack.setCurrentWidget(self.result_center_page)
+        self._show_widget(self.result_center_page)
         if result.status in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
             self._show_failure("任务未完成", "；".join(result.errors) or result.status.value)
         self._foreground_job_id = None
@@ -309,9 +417,39 @@ class MainWindow(QMainWindow):
         except (KeyError, OSError, UnicodeError, ValueError) as error:
             self._show_failure("无法打开历史结果", str(error))
             return
-        self.result_center_page.show_result(result)
-        self.stack.setCurrentWidget(self.result_center_page)
-        self.navigation.set_current_page(PageId.HISTORY)
+        self.result_center_page.show_result(self._result_with_stored_outputs(result))
+        self._show_widget(self.result_center_page, nav_page=PageId.HISTORY)
+
+    def _historical_status(self, task: dict[str, object]) -> str:
+        persisted = str(task["status"])
+        if persisted not in {"success", "partial_success"}:
+            return persisted
+        try:
+            job_id = str(task["job_id"])
+            task_dir = self.context.paths.tasks / job_id
+            result_path = resolve_contained_file(
+                Path(str(task["result_path"])),
+                task_dir,
+                "历史任务结果",
+                reject_link=True,
+            )
+            result = ModuleResult.model_validate_json(result_path.read_text(encoding="utf-8"))
+            if result.job_id != job_id or result.module_id.value != task["module_id"]:
+                return persisted
+            return normalized_result(result).status.value
+        except (KeyError, OSError, UnicodeError, ValueError, TypeError):
+            return persisted
+
+    def _result_with_stored_outputs(self, result: ModuleResult) -> ModuleResult:
+        result = normalized_result(result)
+        stored = self.context.task_repository.list_outputs(result.job_id)
+        if len(stored) != len(result.outputs):
+            return result
+        outputs = [
+            artifact.model_copy(update={"path": str(record["path"])})
+            for artifact, record in zip(result.outputs, stored, strict=True)
+        ]
+        return result.model_copy(update={"outputs": outputs})
 
     def _on_failed(self, job_id: str, message: str) -> None:
         if self._starting_task:
@@ -322,7 +460,7 @@ class MainWindow(QMainWindow):
         self._clear_confirmation(job_id)
         if self._foreground_job_id == job_id:
             target = self.confirmations_page if was_confirmation else self.module_task_page
-            self.stack.setCurrentWidget(target)
+            self._show_widget(target)
             self.task_progress_page.current_job_id = ""
             self.task_progress_page.cancel_button.setEnabled(False)
             self.task_progress_page.message_label.setText("任务执行失败")
@@ -338,7 +476,7 @@ class MainWindow(QMainWindow):
         self._clear_confirmation(job_id)
         if self._foreground_job_id == job_id:
             target = self.confirmations_page if was_confirmation else self.module_task_page
-            self.stack.setCurrentWidget(target)
+            self._show_widget(target)
             self.task_progress_page.current_job_id = ""
             self.task_progress_page.cancel_button.setEnabled(False)
             self.task_progress_page.message_label.setText("任务协调错误")

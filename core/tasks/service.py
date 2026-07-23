@@ -29,8 +29,11 @@ from core.platform.path_safety import (
 from core.platform.paths import AppPaths
 from core.storage.repositories.confirmations import ConfirmationRepository
 from core.storage.repositories.tasks import TaskRepository
+from core.storage.settings import SettingsStore
 from core.tasks.job_builder import build_draft_job
 from core.tasks.models import InvalidTaskTransition, TaskLifecycleState, TaskStateMachine
+from core.tasks.output_publisher import publish_outputs
+from core.tasks.result_status import normalized_result
 from core.tasks.snapshots import remove_snapshots, snapshot_inputs
 
 if TYPE_CHECKING:
@@ -39,6 +42,11 @@ if TYPE_CHECKING:
 _JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{6,64}$")
 _TERMINAL_MARKER = ".terminal-pending.json"
 _SERVICE_CONSENT_PREFIX = "service-consent:"
+_REDACTED_PREVIEW_MARKER = "[[REDACTED_PREVIEW]]"
+_SENSITIVE_CONFIG_KEY = re.compile(
+    r"(?:api[_-]?key|authorization|password|secret|access[_-]?token)",
+    re.IGNORECASE,
+)
 _LOG = logging.getLogger("bamboo_workbench")
 
 
@@ -65,6 +73,18 @@ def _atomic_write_text(path: Path, content: str) -> None:
         raise
 
 
+def _preview_record_count(payload: object) -> int:
+    if isinstance(payload, list):
+        return len(payload)
+    if not isinstance(payload, dict):
+        return 1
+    for key in ("candidates", "records", "items", "rows", "cases"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return len(value)
+    return 1
+
+
 class TaskService(QObject):
     progress = Signal(str, object)
     finished = Signal(object)
@@ -72,6 +92,7 @@ class TaskService(QObject):
     failed = Signal(str, str)
     orchestration_error = Signal(str, str)
     status_changed = Signal(str, str)
+    publication_warning = Signal(str, str)
 
     def __init__(
         self,
@@ -82,6 +103,7 @@ class TaskService(QObject):
         runner_factory: Callable[[], ModuleProcessRunner] = ModuleProcessRunner,
         job_id_factory: Callable[[], str] = _new_job_id,
         service_orchestrator: "ServiceOrchestrator | None" = None,
+        settings: SettingsStore | None = None,
     ) -> None:
         super().__init__()
         self.paths = paths
@@ -91,6 +113,7 @@ class TaskService(QObject):
         self.runner_factory = runner_factory
         self.job_id_factory = job_id_factory
         self.service_orchestrator = service_orchestrator
+        self.settings = settings
         self.runners: dict[str, ModuleProcessRunner] = {}
         self._states: dict[str, TaskStateMachine] = {}
         self._jobs: dict[str, JobRequest] = {}
@@ -199,7 +222,16 @@ class TaskService(QObject):
             self._cancellation_pending.discard(job_id)
             raise InvalidTaskTransition(f"job {job_id} cancellation was not accepted")
 
-    def create_and_start(self, module_id: ModuleId, inputs: list[Path]) -> str:
+    def create_and_start(
+        self,
+        module_id: ModuleId,
+        inputs: list[Path],
+        *,
+        module_config: dict[str, object] | None = None,
+    ) -> str:
+        module = self.registry.get(module_id)
+        if module_config is not None:
+            self._validate_module_config_support(module_id, module, module_config)
         timestamp = datetime.now().astimezone()
         job_id = self.job_id_factory()
         if not _JOB_ID_PATTERN.fullmatch(job_id):
@@ -221,7 +253,6 @@ class TaskService(QObject):
         self._states[job_id] = TaskStateMachine()
         runner: ModuleProcessRunner | None = None
         try:
-            module = self.registry.get(module_id)
             snapshots = snapshot_inputs(
                 inputs,
                 task_dir,
@@ -243,11 +274,24 @@ class TaskService(QObject):
             except Exception:
                 remove_snapshots(snapshots)
                 raise
+            module_config_file: Path | None = None
+            if module_config is not None:
+                module_config_file = resolve_contained_target(
+                    task_dir / "module-config.json",
+                    task_dir,
+                    "module configuration",
+                    reject_link=True,
+                )
+                _atomic_write_text(
+                    module_config_file,
+                    self._module_config_text(module_config),
+                )
             job = build_draft_job(
                 job_id,
                 module_id,
                 [snapshot.copy for snapshot in snapshots],
                 task_dir,
+                module_config_file=module_config_file,
             )
             job_path = task_dir / "job-draft.json"
             job_path.write_text(job.model_dump_json(indent=2), encoding="utf-8")
@@ -256,7 +300,7 @@ class TaskService(QObject):
             runner = self.runner_factory()
             self.runners[job_id] = runner
             self._connect_runner(job_id, runner)
-            runner.start(module, job_path)
+            self._start_runner(runner, module, job_path, job)
         except Exception as exc:
             self._record_failure(job_id, self._error_message(exc), runner)
         return job_id
@@ -381,7 +425,12 @@ class TaskService(QObject):
             runner = self.runner_factory()
             self.runners[job_id] = runner
             self._connect_runner(job_id, runner)
-            runner.start(self.registry.get(trusted_draft.module_id), final_path)
+            self._start_runner(
+                runner,
+                self.registry.get(trusted_draft.module_id),
+                final_path,
+                final_job,
+            )
         except Exception as exc:
             self._record_failure(job_id, self._error_message(exc), runner)
 
@@ -435,16 +484,109 @@ class TaskService(QObject):
             raise ValueError("job-draft ai_enabled must remain false")
         if draft.allowed_knowledge_scopes != ["shared", draft.module_id.value]:
             raise ValueError("job-draft knowledge scopes are not canonical")
+        if draft.module_config_file is not None:
+            expected_config = resolve_contained_file(
+                task_dir / "module-config.json",
+                task_dir,
+                "module configuration",
+                reject_link=True,
+            )
+            actual_config = resolve_contained_file(
+                Path(draft.module_config_file),
+                task_dir,
+                "module configuration",
+                reject_link=True,
+            )
+            if actual_config != expected_config:
+                raise ValueError("job-draft module configuration is not canonical")
+            payload = json.loads(actual_config.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("module configuration must be a JSON object")
+            self._module_config_text(payload)
         if any(
             value is not None
             for value in (
-                draft.module_config_file,
                 draft.service_response_file,
                 draft.parent_job_id,
                 draft.confirmation_file,
             )
         ):
             raise ValueError("job-draft finalize-only or config fields must be empty")
+
+    def _start_runner(
+        self,
+        runner: ModuleProcessRunner,
+        module: object,
+        job_path: Path,
+        job: JobRequest,
+    ) -> None:
+        if job.module_config_file is not None:
+            data_dir = self._module_data_dir(job.module_id)
+            configure = getattr(runner, "set_environment_overrides", None)
+            if callable(configure):
+                module_key = job.module_id.value.upper()
+                configure(
+                    {
+                        "BAMBOO_MODULE_DATA_DIR": str(data_dir),
+                        f"BAMBOO_{module_key}_DATA_DIR": str(data_dir),
+                    }
+                )
+        runner.start(module, job_path)
+
+    def _module_data_dir(self, module_id: ModuleId) -> Path:
+        root = resolve_contained_directory(
+            self.paths.module_data,
+            self.paths.root,
+            "module data root",
+            reject_link=True,
+        )
+        target = resolve_contained_target(
+            root / module_id.value,
+            root,
+            "module data directory",
+            reject_link=True,
+        )
+        target.mkdir(exist_ok=True)
+        return resolve_contained_directory(
+            target,
+            root,
+            "module data directory",
+            reject_link=True,
+        )
+
+    @staticmethod
+    def _module_config_text(payload: dict[str, object]) -> str:
+        if not isinstance(payload, dict):
+            raise ValueError("module configuration must be a JSON object")
+
+        def visit(value: object) -> None:
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    if not isinstance(key, str) or _SENSITIVE_CONFIG_KEY.search(key):
+                        raise ValueError("module configuration contains a forbidden key")
+                    visit(item)
+            elif isinstance(value, list):
+                for item in value:
+                    visit(item)
+
+        visit(payload)
+        content = json.dumps(payload, ensure_ascii=False, sort_keys=True, indent=2)
+        if len(content.encode("utf-8")) > 65_536:
+            raise ValueError("module configuration exceeds 65536 bytes")
+        return content
+
+    @staticmethod
+    def _validate_module_config_support(
+        module_id: ModuleId,
+        module: object,
+        payload: dict[str, object],
+    ) -> None:
+        manifest = getattr(module, "manifest", None)
+        capabilities = getattr(manifest, "capabilities", [])
+        if module_id is not ModuleId.MOISTURE or "ai_report" not in capabilities:
+            raise ValueError("当前模块版本不支持独立 AI 汇总报告")
+        if payload.get("schema_version") != "1.0" or payload.get("operation") != "ai_report":
+            raise ValueError("AI 汇总报告配置版本或操作类型无效")
 
     @staticmethod
     def _sha256(path: Path) -> str:
@@ -534,12 +676,22 @@ class TaskService(QObject):
                     auto_finalize = True
                 task_terminal = False
             else:
-                target = TaskLifecycleState(result.status.value)
-                if result.status in {TaskStatus.SUCCESS, TaskStatus.PARTIAL_SUCCESS}:
-                    self.task_repository.replace_outputs(job_id, result.outputs)
+                host_result = normalized_result(result)
+                if host_result.status is not result.status:
+                    _LOG.warning(
+                        "module task status normalized job=%s module_status=%s host_status=%s",
+                        job_id,
+                        result.status.value,
+                        host_result.status.value,
+                    )
+                target = TaskLifecycleState(host_result.status.value)
+                display_result = host_result
+                if host_result.status in {TaskStatus.SUCCESS, TaskStatus.PARTIAL_SUCCESS}:
+                    display_result = self._publish_result(job_id, job, host_result)
+                    self.task_repository.replace_outputs(job_id, display_result.outputs)
                 self._persist_transition(job_id, target, result_path=result_path)
                 _LOG.info("task terminal job=%s status=%s", job_id, target.value)
-                self.finished.emit(result)
+                self.finished.emit(display_result)
                 task_terminal = True
         except Exception as exc:
             self._record_failure(job_id, self._error_message(exc), runner)
@@ -550,6 +702,38 @@ class TaskService(QObject):
                 self._auto_finalize_services(job_id)
             except Exception as exc:
                 self._record_failure(job_id, self._error_message(exc))
+
+    def _publish_result(
+        self,
+        job_id: str,
+        job: JobRequest,
+        result: ModuleResult,
+    ) -> ModuleResult:
+        configured_root = self.settings.get("output_dir", "") if self.settings else ""
+        if not configured_root:
+            return result
+        try:
+            published = publish_outputs(
+                result,
+                task_number=self.task_repository.get_number(job_id),
+                task_dir=self.paths.tasks / job_id,
+                task_output_dir=Path(job.output_dir),
+                configured_root=configured_root,
+            )
+        except Exception as error:
+            message = (
+                "成果已保留在本机任务目录，但复制到设置的输出目录失败："
+                f"{type(error).__name__}: {error}"
+            )
+            _LOG.warning("task output publication failed job=%s error=%s", job_id, error)
+            self.publication_warning.emit(job_id, message)
+            return result
+        _LOG.info(
+            "task outputs published job=%s output_count=%d",
+            job_id,
+            len(published.outputs),
+        )
+        return published
 
     def _cancelled(self, job_id: str, runner: ModuleProcessRunner) -> None:
         if job_id in self._blocked_callbacks:
@@ -873,15 +1057,26 @@ class TaskService(QObject):
                 job.module_id.value,
                 request,
             )
-            preview_text = json.dumps(preview.payload, ensure_ascii=False, sort_keys=True)
-            categories = "、".join(preview.categories) or "无敏感类别"
+            preview_text = json.dumps(
+                preview.payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                indent=2,
+            )
+            categories = "、".join(preview.categories) or "未识别到需替换的敏感类别"
+            record_count = _preview_record_count(preview.payload)
+            field_count = len(preview.payload) if isinstance(preview.payload, dict) else 0
             prompts.append(
                 ConfirmationPrompt(
                     confirmation_id=f"{_SERVICE_CONSENT_PREFIX}{request.request_id}",
                     field=f"AI联网授权：{request.purpose}",
                     reason=(
-                        f"发送内容已脱敏；识别类别：{categories}；"
-                        f"脱敏预览：{preview_text[:800]}"
+                        f"用途：{request.purpose}。拟发送约 {record_count} 条候选记录、"
+                        f"{field_count} 个顶层字段至 {self.service_orchestrator.provider_id} "
+                        f"({self.service_orchestrator.model})，请求 AI 提供辅助复核。"
+                        f"框架不会发送 API 密钥或原始文件；脱敏检查：{categories}。"
+                        "AI 结果仅作辅助，最终成果仍受模块规则与人工确认约束。"
+                        f"\n\n{_REDACTED_PREVIEW_MARKER}\n{preview_text}"
                     ),
                     suggested_value="拒绝",
                     options=["允许", "拒绝"],

@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bamboo:moisture:ai-analysis-response:1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "context_hash",
+    "overall_summary",
+    "historical_comparison",
+    "review_batches",
+    "possible_causes",
+    "recommendations",
+    "evidence_refs",
+    "disclaimer"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "context_hash": {"$ref": "#/$defs/sha256"},
+    "overall_summary": {"$ref": "#/$defs/paragraph"},
+    "historical_comparison": {"$ref": "#/$defs/paragraph"},
+    "review_batches": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["batch_ref", "reason", "evidence_refs"],
+        "properties": {
+          "batch_ref": {"$ref": "#/$defs/stable_id"},
+          "reason": {"$ref": "#/$defs/paragraph"},
+          "evidence_refs": {"$ref": "#/$defs/evidence_refs"}
+        }
+      }
+    },
+    "possible_causes": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"$ref": "#/$defs/paragraph"}
+    },
+    "recommendations": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {"$ref": "#/$defs/paragraph"}
+    },
+    "evidence_refs": {"$ref": "#/$defs/evidence_refs"},
+    "disclaimer": {"type": "string", "minLength": 1, "maxLength": 500}
+  },
+  "$defs": {
+    "stable_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$"
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "paragraph": {"type": "string", "minLength": 1, "maxLength": 4000},
+    "evidence_refs": {
+      "type": "array",
+      "maxItems": 100,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/stable_id"}
+    }
+  }
+}

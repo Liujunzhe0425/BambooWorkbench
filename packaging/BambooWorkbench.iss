@@ -1,5 +1,5 @@
 #define MyAppName "竹简工作台"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "湖南大学智创未来团队"
 
 [Setup]

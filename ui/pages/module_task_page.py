@@ -18,6 +18,7 @@ from ui.widgets.file_drop_zone import FileDropZone
 
 class ModuleTaskPage(QWidget):
     task_requested = Signal(object, list)
+    ai_report_requested = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -69,6 +70,11 @@ class ModuleTaskPage(QWidget):
         self.run_button.setProperty("primary", True)
         self.run_button.setAccessibleName("创建并运行任务")
         self.run_button.clicked.connect(self._run)
+        self.ai_report_button = QPushButton("打开 AI 汇总报告")
+        self.ai_report_button.setProperty("secondary", True)
+        self.ai_report_button.setAccessibleName("打开竹丝水分AI汇总报告")
+        self.ai_report_button.clicked.connect(self._open_ai_report)
+        self.ai_report_button.setVisible(False)
         card = QFrame()
         card.setProperty("card", True)
         card_layout = QVBoxLayout(card)
@@ -79,6 +85,7 @@ class ModuleTaskPage(QWidget):
         card_layout.addWidget(self.file_list, 1)
         card_layout.addWidget(self.intake_feedback)
         card_layout.addWidget(self.run_button)
+        card_layout.addWidget(self.ai_report_button)
         layout.addWidget(self.title)
         layout.addWidget(self.subtitle)
         layout.addWidget(card, 1)
@@ -89,6 +96,8 @@ class ModuleTaskPage(QWidget):
         module_id: object,
         title: str,
         supported_extensions: list[str] | None = None,
+        *,
+        ai_report_available: bool = False,
     ) -> None:
         self.module_id = module_id
         self.title.setText(title)
@@ -97,6 +106,10 @@ class ModuleTaskPage(QWidget):
             extension.casefold() if extension.startswith(".") else f".{extension.casefold()}"
             for extension in extensions
         }
+        self.ai_report_button.setVisible(
+            getattr(module_id, "value", module_id) == "moisture"
+            and ai_report_available
+        )
         self.clear_files()
 
     def add_files(self, paths: list[Path]) -> None:
@@ -168,3 +181,7 @@ class ModuleTaskPage(QWidget):
     def _run(self) -> None:
         if self.module_id is not None and self.files:
             self.task_requested.emit(self.module_id, list(self.files))
+
+    def _open_ai_report(self) -> None:
+        if self.module_id is not None:
+            self.ai_report_requested.emit(self.module_id)

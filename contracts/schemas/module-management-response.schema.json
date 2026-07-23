@@ -1,0 +1,226 @@
+{
+  "$defs": {
+    "ApprovedExperienceItem": {
+      "additionalProperties": false,
+      "properties": {
+        "entry_id": {
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+          "title": "Entry Id",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "valid_from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid From"
+        },
+        "valid_until": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Valid Until"
+        },
+        "version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "entry_id",
+        "title",
+        "version",
+        "sha256"
+      ],
+      "title": "ApprovedExperienceItem",
+      "type": "object"
+    },
+    "HistorySummaryItem": {
+      "additionalProperties": false,
+      "properties": {
+        "active": {
+          "default": true,
+          "title": "Active",
+          "type": "boolean"
+        },
+        "date_end": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Date End"
+        },
+        "date_start": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Date Start"
+        },
+        "display_name": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Display Name",
+          "type": "string"
+        },
+        "history_id": {
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+          "title": "History Id",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        }
+      },
+      "required": [
+        "history_id",
+        "display_name",
+        "sha256"
+      ],
+      "title": "HistorySummaryItem",
+      "type": "object"
+    },
+    "ModuleId": {
+      "enum": [
+        "moisture",
+        "boiling",
+        "after_sales"
+      ],
+      "title": "ModuleId",
+      "type": "string"
+    },
+    "ModuleManagementOperation": {
+      "enum": [
+        "list_approved_experiences",
+        "import_history_summary",
+        "list_history_summaries",
+        "retire_history_summary"
+      ],
+      "title": "ModuleManagementOperation",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "error_code": {
+      "anyOf": [
+        {
+          "maxLength": 80,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error Code"
+    },
+    "experience_items": {
+      "items": {
+        "$ref": "#/$defs/ApprovedExperienceItem"
+      },
+      "maxItems": 500,
+      "title": "Experience Items",
+      "type": "array"
+    },
+    "history_items": {
+      "items": {
+        "$ref": "#/$defs/HistorySummaryItem"
+      },
+      "maxItems": 1000,
+      "title": "History Items",
+      "type": "array"
+    },
+    "imported_history_id": {
+      "anyOf": [
+        {
+          "pattern": "^[A-Za-z0-9._:-]{1,128}$",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Imported History Id"
+    },
+    "message": {
+      "anyOf": [
+        {
+          "maxLength": 300,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Message"
+    },
+    "module_id": {
+      "$ref": "#/$defs/ModuleId"
+    },
+    "operation": {
+      "$ref": "#/$defs/ModuleManagementOperation"
+    },
+    "request_id": {
+      "pattern": "^[A-Za-z0-9-]{6,64}$",
+      "title": "Request Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "pattern": "^1\\.0$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "pattern": "^(ok|error)$",
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "request_id",
+    "module_id",
+    "operation",
+    "status"
+  ],
+  "title": "ModuleManagementResponse",
+  "type": "object"
+}

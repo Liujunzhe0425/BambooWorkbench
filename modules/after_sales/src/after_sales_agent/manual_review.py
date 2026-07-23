@@ -102,6 +102,24 @@ def apply_business_review_value(record: dict[str, Any], field: str, value: Any) 
                     else "竹简工作台人工复核：金额留空"
                 ),
                 "after_sales_fee_reviewed": True,
+                "fee_amount": amount,
+                "cost": amount,
+                "enterprise_cost_amount": amount,
+                "enterprise_cost_status": "exact" if amount is not None else "not_found",
+                "enterprise_cost_evidence": (
+                    "竹简工作台人工复核值"
+                    if amount is not None
+                    else "竹简工作台人工复核：金额留空"
+                ),
+                "enterprise_cost_reviewed": True,
+                "fee_status": "exact" if amount is not None else "not_found",
+                "cost_included": amount is not None,
+                "cost_status": "人工复核确认" if amount is not None else "人工复核后未知",
+                "cost_evidence": (
+                    "竹简工作台人工复核值"
+                    if amount is not None
+                    else "竹简工作台人工复核：金额留空"
+                ),
             }
         )
         refresh_manual_review_state(record)

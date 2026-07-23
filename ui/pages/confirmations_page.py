@@ -14,8 +14,10 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListView,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QToolButton,
     QToolTip,
     QVBoxLayout,
     QWidget,
@@ -51,6 +53,11 @@ _REMEMBER_HELP = (
     "勾选后，系统会把当前字段与答案的对应关系保存为本机映射，供后续相同字段自动匹配。"
     "仅在字段含义长期稳定、以后仍应采用同一映射时勾选；一次性判断或可能变化的内容请勿勾选。"
 )
+_REDACTED_PREVIEW_MARKER = "[[REDACTED_PREVIEW]]"
+_LOCATION_LABELS = {
+    "arrival_date": "到货日期",
+    "test_date": "检测日期",
+}
 
 
 class InstantHelpBadge(QLabel):
@@ -407,12 +414,34 @@ class ConfirmationsPage(QWidget):
         self.answer_inputs[prompt.confirmation_id] = answer
         editor_layout.addWidget(answer)
 
-        reason = QLabel(prompt.reason)
+        reason_text, preview_text = self._split_preview(prompt.reason)
+        reason = QLabel(reason_text)
         reason.setWordWrap(True)
         reason.setProperty("confirmationReason", True)
         reason.setAccessibleName(f"{prompt.field}确认原因")
         self.reason_labels[prompt.confirmation_id] = reason
         editor_layout.addWidget(reason)
+
+        if preview_text:
+            detail_button = QToolButton()
+            detail_button.setText("▶  查看发送明细")
+            detail_button.setCheckable(True)
+            detail_button.setProperty("detailToggle", True)
+            detail_button.setAccessibleName("查看发送给AI的脱敏明细")
+            detail = QPlainTextEdit()
+            detail.setReadOnly(True)
+            detail.setPlainText(preview_text)
+            detail.setMaximumHeight(190)
+            detail.setVisible(False)
+            detail.setAccessibleName("发送给AI的脱敏明细")
+            detail_button.toggled.connect(
+                lambda checked, button=detail_button, editor=detail: (
+                    button.setText("▼  收起发送明细" if checked else "▶  查看发送明细"),
+                    editor.setVisible(checked),
+                )
+            )
+            editor_layout.addWidget(detail_button)
+            editor_layout.addWidget(detail)
 
         source = QLabel(self._source_location_text(prompt))
         source.setWordWrap(True)
@@ -477,12 +506,33 @@ class ConfirmationsPage(QWidget):
     @staticmethod
     def _source_location_text(prompt: ConfirmationPrompt) -> str:
         source = prompt.source
+        raw_location = str(source.cell_or_range or "").strip()
+        raw_tokens = [item.strip() for item in raw_location.split("/") if item.strip()]
+        if raw_tokens and all(item in _LOCATION_LABELS for item in raw_tokens):
+            return "涉及日期：" + "、".join(_LOCATION_LABELS[item] for item in raw_tokens)
         parts: list[str] = []
         if source.sheet:
             parts.append(str(source.sheet).strip())
         if source.cell_or_range:
-            parts.append(source.cell_or_range)
-        return "位置：" + (" · ".join(parts) if parts else "未提供工作表位置")
+            location_names = [
+                _LOCATION_LABELS.get(item.strip(), item.strip())
+                for item in raw_location.split("/")
+                if item.strip()
+            ]
+            parts.extend(location_names)
+        if not parts:
+            return "来源位置：模块未提供具体工作表位置"
+        if all(part in _LOCATION_LABELS.values() for part in parts):
+            return "涉及日期：" + "、".join(parts)
+        return "来源位置：" + " · ".join(parts)
+
+    @staticmethod
+    def _split_preview(reason: str) -> tuple[str, str]:
+        marker = f"\n\n{_REDACTED_PREVIEW_MARKER}\n"
+        if marker not in reason:
+            return reason, ""
+        summary, preview = reason.split(marker, 1)
+        return summary.strip(), preview.strip()
 
     @staticmethod
     def _answer_value(editor: QLineEdit | QComboBox) -> str:
