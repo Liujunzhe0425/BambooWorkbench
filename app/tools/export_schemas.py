@@ -80,7 +80,8 @@ EXAMPLES: tuple[tuple[str, dict[str, object]], ...] = (
 
 def _write_json(path: Path, payload: object) -> None:
     text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
-    path.write_text(text + "\n", encoding="utf-8")
+    with path.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(text + "\n")
 
 
 def export_contracts(root: Path) -> list[Path]:

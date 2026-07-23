@@ -3,6 +3,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QHBoxLayout,
@@ -68,7 +69,24 @@ class SettingsPage(QWidget):
 
         self.output_dir_edit = QLineEdit(settings.get("output_dir", "") or "")
         self.output_dir_edit.setAccessibleName("输出目录")
-        form.addRow("输出目录", self.output_dir_edit)
+        self.output_dir_edit.setPlaceholderText("留空则仅保存在本机任务数据目录")
+        output_row = QWidget()
+        output_layout = QHBoxLayout(output_row)
+        output_layout.setContentsMargins(0, 0, 0, 0)
+        output_layout.setSpacing(8)
+        self.output_browse_button = QPushButton("选择…")
+        self.output_browse_button.setProperty("secondary", True)
+        self.output_browse_button.clicked.connect(self._choose_output_directory)
+        output_layout.addWidget(self.output_dir_edit, 1)
+        output_layout.addWidget(self.output_browse_button)
+        form.addRow("输出目录", output_row)
+        output_hint = QLabel(
+            "留空时，成果只保存在竹简工作台的本机任务目录；选择目录后，"
+            "每个完成任务会自动复制到独立文件夹，原始任务结果仍保留。"
+        )
+        output_hint.setWordWrap(True)
+        output_hint.setProperty("caption", True)
+        form.addRow("", output_hint)
 
         self.provider_combo = QComboBox()
         self.provider_combo.setAccessibleName("AI提供商")
@@ -183,6 +201,12 @@ class SettingsPage(QWidget):
         self.base_url_edit.setText(default_base_url)
         self.model_edit.setText(default_model)
         self.credential_status_label.setText(self._credential_status())
+
+    def _choose_output_directory(self) -> None:
+        initial = self.output_dir_edit.text().strip() or str(self.paths.root)
+        selected = QFileDialog.getExistingDirectory(self, "选择成果输出目录", initial)
+        if selected:
+            self.output_dir_edit.setText(selected)
 
     def open_log_directory(self) -> None:
         try:

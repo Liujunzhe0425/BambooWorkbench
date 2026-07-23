@@ -18,6 +18,7 @@ from moisture.adapters.experience.local_approved_repository import (
 from moisture.adapters.rules.builtin_evaluators import evaluate_rules
 from moisture.adapters.rules.package_loader import RulePackageLoader
 from moisture.application.ai_request_builder import candidates_from_batches
+from moisture.application.decision_aggregation import ordered_decisions, primary_decision
 from moisture.application.run_result import InternalAnomaly, ReviewState
 from moisture.application.screening_presentation import (
     screening_bounds,
@@ -27,12 +28,10 @@ from moisture.domain.enums import (
     ConfirmationState,
     DisplayColor,
     ReviewStatus,
-    ScreenStatus,
 )
 from moisture.domain.models import (
     AIReviewDecision,
     BusinessConfirmationIssue,
-    ScreeningDecision,
 )
 from moisture.domain.review import AIReviewCandidate
 from moisture.domain.rules import PendingRuleMatch, RulePackageSnapshot
@@ -255,11 +254,8 @@ class DeterministicPipeline:
                                 rule_id=hit.rule_id,
                             )
                         )
-                decision = (
-                    evaluation.decisions[0]
-                    if evaluation.decisions
-                    else ScreeningDecision(status=ScreenStatus.NORMAL)
-                )
+                decisions = ordered_decisions(evaluation.decisions)
+                decision = primary_decision(decisions)
                 lower_threshold, upper_threshold = screening_bounds(evaluation)
                 display_color = decision.display_color
                 experience_references, experience_error = self._experience_citations(record)
@@ -282,6 +278,7 @@ class DeterministicPipeline:
                         lower_threshold,
                         upper_threshold,
                         pending=bool(evaluation.pending_matches),
+                        target_field=decision.target_field,
                     ),
                     rule_hash=snapshot.rules_sha256,
                     rule_applicable_scope=snapshot.applicable_scope,
@@ -289,6 +286,7 @@ class DeterministicPipeline:
                     lower_threshold=lower_threshold,
                     upper_threshold=upper_threshold,
                     experience_references=experience_references,
+                    screening_decisions=decisions,
                 )
                 batches.append(batch)
                 processed += 1

@@ -12,3 +12,4 @@ class ServiceRequest(BaseModel):
     purpose: str = Field(min_length=1, max_length=300)
     payload: dict[str, object]
     requires_user_consent: bool = True
+    response_format: Literal["text", "json_object"] = "text"

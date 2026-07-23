@@ -136,6 +136,7 @@ def build_context(data_root: Path | None = None, use_mocks: bool = False) -> App
             task_repository,
             confirmation_repository,
             service_orchestrator=service_orchestrator,
+            settings=settings,
         )
         confirmation_service = ConfirmationService(
             paths,

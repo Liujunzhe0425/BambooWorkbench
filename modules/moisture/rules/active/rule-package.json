@@ -1,12 +1,12 @@
 {
   "schema_version": "1.0",
-  "package_id": "moisture-default-approved",
-  "rule_version": "default-v1-approved",
+  "package_id": "moisture-default-v2-approved",
+  "rule_version": "default-v2-approved",
   "rules_file": "rules.yaml",
-  "rules_sha256": "15f9b33c8a46bb0576e0b9a9432711a3e36742d3966d7abed6a21d3d862c4bee",
-  "source": "legacy d98433b defaults; owner and business approval recorded 2026-07-17",
+  "rules_sha256": "9b07a3ec23855ce67128b90680f98171ec5fed050f02a4583a79d436d1306b1f",
+  "source": "legacy d98433b defaults; range threshold approved by module owner 2026-07-21",
   "applicable_scope": "竹丝/原竹丝；全年",
   "customer_confirmation_status": "confirmed",
-  "released_at": "2026-07-17T00:00:00+08:00",
-  "module_version": "0.1.0"
+  "released_at": "2026-07-21T00:00:00+08:00",
+  "module_version": "1.0.0"
 }

@@ -284,6 +284,32 @@ QComboBox QAbstractItemView {
     border: 1px solid #CFD9CE;
     selection-background-color: #E4EFE3;
     selection-color: #294D3C;
+    outline: 0;
+    margin: 0;
+    padding: 0;
+}
+
+QListView#confirmationOptions,
+QListView#confirmationOptions::viewport {
+    color: #294D3C;
+    background: #FFFDF8;
+    border: 0;
+    outline: 0;
+    margin: 0;
+    padding: 0;
+}
+
+QListView#confirmationOptions::item {
+    color: #294D3C;
+    background: #FFFDF8;
+    min-height: 30px;
+    padding: 5px 10px;
+}
+
+QListView#confirmationOptions::item:selected,
+QListView#confirmationOptions::item:hover {
+    color: #294D3C;
+    background: #DDECD9;
 }
 
 QListWidget, QTreeWidget, QTableWidget, QTableView {
@@ -370,6 +396,38 @@ QLabel[confirmationSource="true"] {
     font-size: 10px;
 }
 
+QFrame[confirmationFileGroup="true"] {
+    background: #F4F8EF;
+    border: 1px solid #BFD2BF;
+    border-radius: 8px;
+}
+
+QLabel[confirmationFileCounter="true"] {
+    color: #2F6F56;
+    background: #DDECD9;
+    border: 1px solid #B8CFB8;
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 700;
+}
+
+QLabel[confirmationFileName="true"] {
+    color: #244F3D;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+QWidget[confirmationField="true"] {
+    background: transparent;
+}
+
+QLabel[confirmationFieldLabel="true"] {
+    color: #294D3C;
+    font-size: 12px;
+    font-weight: 700;
+}
+
 QToolTip {
     color: #FFFDF8;
     background: #294D3C;
@@ -427,4 +485,35 @@ QMessageBox {
 
 #windowSizeGrip {
     background: transparent;
+}
+
+#pageHost {
+    background: #F7F8F3;
+}
+
+QPushButton#pageBackButton {
+    margin: 12px 0 2px 30px;
+    padding: 6px 14px;
+    min-height: 24px;
+}
+
+QToolButton[detailToggle="true"] {
+    color: #2F6F56;
+    background: transparent;
+    border: 0;
+    padding: 5px 2px;
+    text-align: left;
+    font-weight: 600;
+}
+
+QToolButton[detailToggle="true"]:hover {
+    color: #1D5942;
+    background: #E8F1E4;
+    border-radius: 5px;
+}
+
+QFrame[failureDetails="true"] {
+    background: #FFF7E8;
+    border: 1px solid #E6C98C;
+    border-radius: 7px;
 }

@@ -11,9 +11,17 @@ from moisture.domain.enums import DisplayColor
 from moisture.domain.review import AIReviewCandidate
 from moisture.domain.rules import RulePackageSnapshot
 from moisture.ports.writers import WorkbookBatch
+from moisture.runtime_paths import module_root
 
 MAX_CANDIDATES = 50
 MAX_PAYLOAD_BYTES = 65_536
+_JSON_INSTRUCTION = (
+    "仅返回符合 response_schema 的 JSON 对象，不要输出 Markdown、代码块或额外说明。"
+    "decisions 必须逐一覆盖 candidates 中的每个候选，并原样复制 rule_hash、candidate_id、"
+    "direction、field、observed_value 和候选已有的 evidence_refs；decision 固定为 escalate；"
+    "confidence 必须不低于 0.80；reason 只说明辅助复核依据，不得修改阈值、替代人工确认"
+    "或形成正式质量责任结论。"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,49 +73,53 @@ def candidates_from_batches(
     definitions = {item.rule_id: item for item in snapshot.definitions}
     candidates: list[AIReviewCandidate] = []
     for batch in batches:
-        decision = batch.screening_decision
-        if decision.display_color not in {DisplayColor.ORANGE, DisplayColor.GREEN}:
-            continue
-        target = decision.target_field
-        if target is None:
-            continue
-        observed = getattr(batch.statistics, target, None)
-        if target == "total_weight_kg":
-            observed = batch.record.total_weight_kg
-        if not hasattr(observed, "as_tuple"):
-            continue
-        hit = next((item for item in decision.rule_hits if item.target_field == target), None)
-        definition = definitions.get(hit.rule_id) if hit is not None else None
-        if hit is None or definition is None:
-            continue
-        threshold = definition.threshold
-        if threshold is None:
-            threshold = (
-                definition.upper
-                if decision.display_color is DisplayColor.ORANGE
-                else definition.lower
+        decisions = batch.screening_decisions or (batch.screening_decision,)
+        for decision in decisions:
+            if decision.display_color not in {DisplayColor.ORANGE, DisplayColor.GREEN}:
+                continue
+            target = decision.target_field
+            if target is None:
+                continue
+            observed = getattr(batch.statistics, target, None)
+            if target == "total_weight_kg":
+                observed = batch.record.total_weight_kg
+            if not hasattr(observed, "as_tuple"):
+                continue
+            hit = next((item for item in decision.rule_hits if item.target_field == target), None)
+            definition = definitions.get(hit.rule_id) if hit is not None else None
+            if hit is None or definition is None:
+                continue
+            threshold = definition.threshold
+            if threshold is None:
+                threshold = (
+                    definition.upper
+                    if decision.display_color is DisplayColor.ORANGE
+                    else definition.lower
+                )
+            if threshold is None:
+                continue
+            relative = abs(observed - threshold) / abs(threshold) if threshold else abs(observed)
+            fingerprint = batch.record.source_file_hash or batch.record.record_id
+            raw_identity = f"{fingerprint}:{hit.rule_id}:{target}:{snapshot.rules_sha256}"
+            evidence_refs = (f"rule:{hit.rule_id}",) + tuple(
+                f"experience:{item.entry_id}@{item.version}"
+                for item in batch.experience_references
             )
-        if threshold is None:
-            continue
-        relative = abs(observed - threshold) / abs(threshold) if threshold else abs(observed)
-        fingerprint = batch.record.source_file_hash or batch.record.record_id
-        raw_identity = f"{fingerprint}:{hit.rule_id}:{target}:{snapshot.rules_sha256}"
-        evidence_refs = (f"rule:{hit.rule_id}",) + tuple(
-            f"experience:{item.entry_id}@{item.version}" for item in batch.experience_references
-        )
-        candidates.append(
-            AIReviewCandidate(
-                candidate_id=raw_identity,
-                target_field=target,
-                observed_value=observed,
-                reference_value=threshold,
-                relative_deviation=relative,
-                direction=("high" if decision.display_color is DisplayColor.ORANGE else "low"),
-                rule_id=hit.rule_id,
-                evidence_refs=evidence_refs,
-                record_id=batch.record.record_id,
+            candidates.append(
+                AIReviewCandidate(
+                    candidate_id=raw_identity,
+                    target_field=target,
+                    observed_value=observed,
+                    reference_value=threshold,
+                    relative_deviation=relative,
+                    direction=(
+                        "high" if decision.display_color is DisplayColor.ORANGE else "low"
+                    ),
+                    rule_id=hit.rule_id,
+                    evidence_refs=evidence_refs,
+                    record_id=batch.record.record_id,
+                )
             )
-        )
     return ordered_candidates(tuple(candidates))
 
 
@@ -120,6 +132,17 @@ def _payload_size(payload: dict[str, object]) -> int:
             separators=(",", ":"),
         ).encode("utf-8")
     )
+
+
+def _response_schema() -> dict[str, object]:
+    payload = json.loads(
+        (module_root() / "schemas" / "ai-review-response.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    if not isinstance(payload, dict):
+        raise ValueError("AI review response schema must be an object")
+    return payload
 
 
 def build_ai_request(
@@ -135,13 +158,15 @@ def build_ai_request(
     if not ordered:
         return AIRequestBuildResult(None, 0, 0, 0)
 
+    response_schema = _response_schema()
     summaries: list[dict[str, object]] = []
     for candidate in ordered[:MAX_CANDIDATES]:
         proposed = [*summaries, _candidate_summary(candidate)]
         payload = {
             "schema_version": "1.0",
             "rule_hash": rule_hash,
-            "instruction": "仅基于规范化候选摘要提供竹丝水分复核建议",
+            "instruction": _JSON_INSTRUCTION,
+            "response_schema": response_schema,
             "candidates": proposed,
             "candidate_total": total,
             "candidate_sent": len(proposed),
@@ -156,7 +181,8 @@ def build_ai_request(
     payload = {
         "schema_version": "1.0",
         "rule_hash": rule_hash,
-        "instruction": "仅基于规范化候选摘要提供竹丝水分复核建议",
+        "instruction": _JSON_INSTRUCTION,
+        "response_schema": response_schema,
         "candidates": summaries,
         "candidate_total": total,
         "candidate_sent": sent,
@@ -181,5 +207,6 @@ def build_ai_request(
         "purpose": "复核水分规则候选摘要",
         "payload": payload,
         "requires_user_consent": True,
+        "response_format": "json_object",
     }
     return AIRequestBuildResult(request, total, sent, omitted)

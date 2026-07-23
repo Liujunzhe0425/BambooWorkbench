@@ -46,9 +46,25 @@ class TaskRepository:
             raise KeyError(job_id)
         return dict(row)
 
+    def get_number(self, job_id: str) -> int:
+        row = self.database.connection.execute(
+            "SELECT task_number FROM ("
+            "SELECT job_id, ROW_NUMBER() OVER (ORDER BY created_at, rowid) AS task_number "
+            "FROM tasks"
+            ") WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(job_id)
+        return int(row["task_number"])
+
     def list_recent(self, limit: int = 20) -> list[dict[str, object]]:
         rows = self.database.connection.execute(
-            "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ?", (limit,)
+            "SELECT * FROM ("
+            "SELECT ROW_NUMBER() OVER (ORDER BY created_at, rowid) AS task_number, tasks.* "
+            "FROM tasks"
+            ") ORDER BY created_at DESC, task_number DESC LIMIT ?",
+            (limit,),
         ).fetchall()
         return [dict(row) for row in rows]
 

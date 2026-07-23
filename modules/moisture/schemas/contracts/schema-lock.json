@@ -3,6 +3,6 @@
   "schemas": {
     "schemas/contracts/job-request.schema.json": "f84593eb8df8fe9363c059afca62e0f80e67228be54b1352fa674f0000305abe",
     "schemas/contracts/module-manifest.schema.json": "313f7f894d6300bc5421e89b66ac3583a5b27c1983de10400f0195e54e62a13f",
-    "schemas/contracts/module-result.schema.json": "05ef425e74ebb051039afd167b27a016aaf1f5c32319be8f8ad49ccf54127db0"
+    "schemas/contracts/module-result.schema.json": "709304ef4a6fa95ce2fe129bc9a67e400e7b7ae0beb9e48fe83fb8df81f698a0"
   }
 }

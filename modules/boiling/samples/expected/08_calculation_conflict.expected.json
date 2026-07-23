@@ -9,8 +9,8 @@
     "expansion_ratio"
   ],
   "expected_confirmation_fields": [
-    "density_g_cm3",
-    "expansion_ratio"
+    "密度｜08_calculation_conflict.xlsx｜样1（F12）｜原表1.280→复算1.200（建议复算值）",
+    "膨胀率｜08_calculation_conflict.xlsx｜样1（H12）｜原表8.00%→复算5.00%（建议复算值）"
   ],
   "expected_sample_count": 1,
   "expected_retest_count": 0,
