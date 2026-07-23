@@ -1,3 +1,7 @@
+> 文档状态：历史归档
+> 不作为当前实现和验收依据。
+> 该请求范围过大，已由分阶段框架请求取代。
+
 ---
 request_id: FCR-moisture-20260723-three-function-workbench
 module_id: moisture

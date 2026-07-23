@@ -154,8 +154,9 @@ powershell -ExecutionPolicy Bypass -File modules\moisture\build_portable_runtime
 
 | 文档 | 内容 |
 |------|------|
-| [下一阶段三功能简化架构](docs/architecture/moisture-next-stage-architecture.md) | 汇总表生产、AI辅助分析、经验指导和轻量三栏规则管理；取代旧重型治理方案 |
-| [框架适配请求 FCR-moisture-20260723](docs/framework-change-requests/FCR-moisture-20260723-three-function-workbench.md) | 请求框架提供三功能页面、轻量历史资料、独立管理进程、任务规则快照和AI报告展示 |
+| [下一阶段三功能简化架构](docs/architecture/moisture-next-stage-architecture.md) | 总体方向；v1.0.1先实施四表确定性汇总和独立AI报告，规则治理延期 |
+| [v1.0.1独立AI报告开发计划](docs/architecture/moisture-v1.0.1-independent-ai-report-plan.md) | 删除模型分析表、停止普通任务AI复判，并建设经验/历史选择和独立报告的模块计划 |
+| [框架适配请求 FCR-moisture-20260723](docs/framework-change-requests/FCR-moisture-20260723-ai-report-context-selection.md) | 仅请求独立AI报告入口、approved经验选择、历史资料选择和现有Provider编排 |
 
 ## 记录文件
 
