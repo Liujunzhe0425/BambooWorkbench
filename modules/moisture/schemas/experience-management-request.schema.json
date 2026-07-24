@@ -1,0 +1,174 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bamboo:moisture:experience-management-request:1.0",
+  "title": "Experience Management Request",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "module_id", "operation", "data_dir"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "request_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]{6,64}$"
+    },
+    "module_id": {"const": "moisture"},
+    "operation": {
+      "enum": [
+        "list_experience_drafts",
+        "list_experience_approved",
+        "list_experience_history",
+        "show_experience",
+        "validate_experience_draft",
+        "create_experience_draft",
+        "update_experience_draft",
+        "publish_experience",
+        "retire_experience",
+        "copy_experience_history_to_draft"
+      ]
+    },
+    "data_dir": {
+      "type": "string",
+      "minLength": 1
+    },
+    "experience_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$"
+    },
+    "expected_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "new_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$"
+    },
+    "document": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 65536
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "operation": {
+            "enum": [
+              "list_experience_drafts",
+              "list_experience_approved",
+              "list_experience_history"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "operation": true,
+          "experience_id": {"not": {}},
+          "version": {"not": {}},
+          "expected_hash": {"not": {}},
+          "document": {"not": {}},
+          "new_version": {"not": {}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"operation": {"const": "show_experience"}}
+      },
+      "then": {
+        "required": ["experience_id", "version"],
+        "properties": {
+          "operation": true,
+          "expected_hash": {"not": {}},
+          "document": {"not": {}},
+          "new_version": {"not": {}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"operation": {"const": "validate_experience_draft"}}
+      },
+      "then": {
+        "required": ["document"],
+        "properties": {
+          "operation": true,
+          "experience_id": {"not": {}},
+          "version": {"not": {}},
+          "expected_hash": {"not": {}},
+          "new_version": {"not": {}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"operation": {"const": "create_experience_draft"}}
+      },
+      "then": {
+        "required": ["document"],
+        "properties": {
+          "operation": true,
+          "experience_id": {"not": {}},
+          "version": {"not": {}},
+          "expected_hash": {"not": {}},
+          "new_version": {"not": {}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"operation": {"const": "update_experience_draft"}}
+      },
+      "then": {
+        "required": ["experience_id", "version", "expected_hash", "document"],
+        "properties": {
+          "operation": true,
+          "new_version": {"not": {}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"operation": {"const": "publish_experience"}}
+      },
+      "then": {
+        "required": ["experience_id", "version", "expected_hash"],
+        "properties": {
+          "operation": true,
+          "document": {"not": {}},
+          "new_version": {"not": {}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"operation": {"const": "retire_experience"}}
+      },
+      "then": {
+        "required": ["experience_id", "version", "expected_hash"],
+        "properties": {
+          "operation": true,
+          "document": {"not": {}},
+          "new_version": {"not": {}}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {"operation": {"const": "copy_experience_history_to_draft"}}
+      },
+      "then": {
+        "required": ["experience_id", "version", "expected_hash", "new_version"],
+        "properties": {
+          "operation": true,
+          "document": {"not": {}}
+        }
+      }
+    }
+  ]
+}

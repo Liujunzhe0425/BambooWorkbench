@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bamboo:moisture:experience-management-response:1.0",
+  "title": "Experience Management Response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "module_id",
+    "operation",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9-]{6,64}$"},
+    "module_id": {"const": "moisture"},
+    "operation": {"$ref": "#/$defs/operation"},
+    "status": {"enum": ["ok", "error"]},
+    "experience_items": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {"$ref": "#/$defs/experience_item"}
+    },
+    "experience": {"$ref": "#/$defs/experience"},
+    "error_code": {
+      "enum": [
+        "MANAGEMENT_REQUEST_INVALID",
+        "EXPERIENCE_NOT_FOUND",
+        "EXPERIENCE_SCHEMA_INVALID",
+        "EXPERIENCE_HASH_CONFLICT",
+        "EXPERIENCE_VERSION_CONFLICT",
+        "EXPERIENCE_STATE_CONFLICT",
+        "EXPERIENCE_PATH_REJECTED",
+        "EXPERIENCE_WRITE_FAILED"
+      ]
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 300
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "ok"}}},
+      "then": {
+        "not": {
+          "anyOf": [
+            {"required": ["error_code"]},
+            {"required": ["message"]}
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "ok"},
+          "operation": {
+            "enum": [
+              "list_experience_drafts",
+              "list_experience_approved",
+              "list_experience_history"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": ["experience_items"],
+        "not": {"required": ["experience"]}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "ok"},
+          "operation": {
+            "enum": [
+              "show_experience",
+              "validate_experience_draft",
+              "create_experience_draft",
+              "update_experience_draft",
+              "publish_experience",
+              "retire_experience",
+              "copy_experience_history_to_draft"
+            ]
+          }
+        }
+      },
+      "then": {
+        "required": ["experience"],
+        "not": {"required": ["experience_items"]}
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "error"}}},
+      "then": {
+        "required": ["error_code", "message"],
+        "not": {
+          "anyOf": [
+            {"required": ["experience_items"]},
+            {"required": ["experience"]}
+          ]
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "operation": {
+      "enum": [
+        "list_experience_drafts",
+        "list_experience_approved",
+        "list_experience_history",
+        "show_experience",
+        "validate_experience_draft",
+        "create_experience_draft",
+        "update_experience_draft",
+        "publish_experience",
+        "retire_experience",
+        "copy_experience_history_to_draft"
+      ]
+    },
+    "experience_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-((?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\\+([0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*))?$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "scope_values": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "experience_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experience_id",
+        "version",
+        "status",
+        "title",
+        "source",
+        "sha256",
+        "effective_at",
+        "applicable_suppliers",
+        "applicable_materials",
+        "applicable_seasons",
+        "applicable_metrics",
+        "supersedes"
+      ],
+      "properties": {
+        "experience_id": {"$ref": "#/$defs/experience_id"},
+        "version": {"$ref": "#/$defs/semver"},
+        "status": {"enum": ["draft", "approved", "retired"]},
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+        "source": {"type": "string", "minLength": 1, "maxLength": 300},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "effective_at": {"type": "string", "format": "date-time"},
+        "applicable_suppliers": {"$ref": "#/$defs/scope_values"},
+        "applicable_materials": {"$ref": "#/$defs/scope_values"},
+        "applicable_seasons": {"$ref": "#/$defs/scope_values"},
+        "applicable_metrics": {"$ref": "#/$defs/scope_values"},
+        "supersedes": {
+          "anyOf": [
+            {"$ref": "#/$defs/semver"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "experience": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experience_id",
+        "version",
+        "status",
+        "sha256",
+        "document"
+      ],
+      "properties": {
+        "experience_id": {"$ref": "#/$defs/experience_id"},
+        "version": {"$ref": "#/$defs/semver"},
+        "status": {"enum": ["draft", "approved", "retired"]},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "document": {"type": "string", "minLength": 1, "maxLength": 65536}
+      }
+    }
+  }
+}

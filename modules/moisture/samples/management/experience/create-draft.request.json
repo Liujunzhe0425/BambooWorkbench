@@ -1,0 +1,8 @@
+{
+  "schema_version": "1.0",
+  "request_id": "req-demo-002",
+  "module_id": "moisture",
+  "operation": "create_experience_draft",
+  "data_dir": "C:\\BambooData\\moisture",
+  "document": "---\nexperience_id: EXP-DEMO-001\nversion: 1.0.0\ntitle: 夏季竹丝水分偏高复核经验\nsource: internal/synthetic-lab-001\nstatus: draft\neffective_at: 2026-07-01T00:00:00+00:00\napplicable_suppliers:\n  - 供应方Alpha\napplicable_materials:\n  - 竹丝\n  - 原竹丝\napplicable_seasons:\n  - 夏季\napplicable_metrics:\n  - mean\n  - range_value\nauthor: 测试员\nreviewer: 审核员\nevidence_sources:\n  - internal/synthetic-evidence-001\nsupersedes:\n---\n\n# 夏季竹丝水分偏高复核\n\n当夏季检测均值超过当前筛查阈值时，建议优先复核取样容器干燥程度和称量环境温湿度。\n\n本经验仅作为辅助参考，不构成正式不合格或责任结论。\n"
+}

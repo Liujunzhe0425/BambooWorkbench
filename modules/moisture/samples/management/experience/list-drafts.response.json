@@ -1,0 +1,23 @@
+{
+  "schema_version": "1.0",
+  "request_id": "req-demo-001",
+  "module_id": "moisture",
+  "operation": "list_experience_drafts",
+  "status": "ok",
+  "experience_items": [
+    {
+      "experience_id": "EXP-DEMO-001",
+      "version": "1.0.0",
+      "status": "draft",
+      "title": "夏季竹丝水分偏高复核经验",
+      "source": "internal/synthetic-lab-001",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "effective_at": "2026-07-01T00:00:00+00:00",
+      "applicable_suppliers": ["供应方Alpha"],
+      "applicable_materials": ["竹丝", "原竹丝"],
+      "applicable_seasons": ["夏季"],
+      "applicable_metrics": ["mean", "range_value"],
+      "supersedes": null
+    }
+  ]
+}
