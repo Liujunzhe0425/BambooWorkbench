@@ -35,6 +35,7 @@ PROVIDER_DEFAULTS = {
 class SettingsPage(QWidget):
     action_failed = Signal(str)
     settings_saved = Signal()
+    check_updates_requested = Signal()
 
     def __init__(
         self,
@@ -153,6 +154,58 @@ class SettingsPage(QWidget):
         layout.addWidget(title)
         layout.addWidget(subtitle)
         layout.addWidget(settings_card)
+
+        update_card = QFrame()
+        update_card.setProperty("card", True)
+        update_layout = QVBoxLayout(update_card)
+        update_layout.setContentsMargins(22, 20, 22, 20)
+        update_layout.setSpacing(12)
+        update_title = QLabel("软件更新")
+        update_title.setProperty("section", True)
+        update_hint = QLabel(
+            "安装版启动后可自动检查 GitHub Release；只有确认更新时才下载。"
+            "检查失败不会影响离线数据处理。"
+        )
+        update_hint.setWordWrap(True)
+        update_hint.setProperty("caption", True)
+        self.auto_update_checkbox = QCheckBox("启动后自动检查更新")
+        self.auto_update_checkbox.setChecked(
+            settings.get("update_auto_check", "true") == "true"
+        )
+        self.auto_update_checkbox.setAccessibleName("自动检查软件更新")
+        update_form = QFormLayout()
+        update_form.setHorizontalSpacing(24)
+        update_form.setVerticalSpacing(13)
+        self.update_token_edit = QLineEdit()
+        self.update_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.update_token_edit.setPlaceholderText("仅私有仓库团队测试需要")
+        self.update_token_edit.setAccessibleName("GitHub更新访问令牌")
+        self.update_credential_label = QLabel(self._update_credential_status())
+        self.update_credential_label.setAccessibleName("更新令牌保存状态")
+        update_form.addRow("团队测试令牌", self.update_token_edit)
+        update_form.addRow("令牌状态", self.update_credential_label)
+        private_hint = QLabel(
+            "当前源码仓库为私有仓库：团队成员可保存仅有 Contents: read 权限的细粒度令牌；"
+            "不要把令牌交给客户。客户自动更新需在正式发布前配置独立的公开二进制更新源。"
+        )
+        private_hint.setWordWrap(True)
+        private_hint.setProperty("caption", True)
+        self.update_status_label = QLabel("尚未检查")
+        self.update_status_label.setProperty("subtle", True)
+        self.check_update_button = QPushButton("立即检查更新")
+        self.check_update_button.setProperty("secondary", True)
+        self.check_update_button.clicked.connect(self.check_updates_requested)
+        update_actions = QHBoxLayout()
+        update_actions.addWidget(self.update_status_label)
+        update_actions.addStretch()
+        update_actions.addWidget(self.check_update_button)
+        update_layout.addWidget(update_title)
+        update_layout.addWidget(update_hint)
+        update_layout.addWidget(self.auto_update_checkbox)
+        update_layout.addLayout(update_form)
+        update_layout.addWidget(private_hint)
+        update_layout.addLayout(update_actions)
+        layout.addWidget(update_card)
         layout.addStretch()
 
     def save(self) -> None:
@@ -173,12 +226,31 @@ class SettingsPage(QWidget):
                 "ai_redaction_confirm",
                 "true" if self.redaction_checkbox.isChecked() else "false",
             )
+            self.settings.set(
+                "update_auto_check",
+                "true" if self.auto_update_checkbox.isChecked() else "false",
+            )
+            update_token = self.update_token_edit.text().strip()
+            if update_token:
+                self.credential_store.set_secret("github-updates", update_token)
         except Exception as error:
             self.action_failed.emit(f"设置保存失败：{error}")
             return
         self.api_key_edit.clear()
+        self.update_token_edit.clear()
         self.credential_status_label.setText(self._credential_status())
+        self.update_credential_label.setText(self._update_credential_status())
         self.settings_saved.emit()
+
+    def set_update_status(self, message: str) -> None:
+        self.update_status_label.setText(message)
+
+    def _update_credential_status(self) -> str:
+        try:
+            saved = self.credential_store.has_secret("github-updates")
+        except Exception:
+            saved = False
+        return "已安全保存" if saved else "未保存"
 
     def _has_credential(self) -> bool:
         provider_id = str(self.provider_combo.currentData())
