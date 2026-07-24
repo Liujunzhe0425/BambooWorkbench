@@ -105,8 +105,7 @@ def test_offline_complete_file_enters_required_business_review(tmp_path: Path) -
     records = json.loads(
         (tmp_path / "output" / "after_sales_records.json").read_text(encoding="utf-8")
     )
-    assert records[0]["analysis_status"] == "规则预分析完成（等待AI授权）"
-    assert result["service_requests"]
+    assert records[0]["analysis_status"] == "离线规则分析完成"
     assert records[0]["enterprise_cost_amount"] == 1000
 
 
@@ -126,18 +125,17 @@ def test_pr16_sanitized_fixture_preserves_second_round_baseline(tmp_path: Path) 
         "confirmation_count": 3,
     }
     assert {item["type"] for item in result["outputs"]} == {
-        "annual_rollup_excel",
-        "summary_excel",
-        "records_json",
-        "analysis_markdown",
+        "master_summary_excel",
         "analysis_word",
         "brand_share_chart_excel",
         "issue_share_chart_excel",
         "monthly_fee_chart_excel",
         "yearly_chart_dashboard_excel",
     }
-    annual = openpyxl.load_workbook(output / "after_sales_annual_rollup.xlsx", data_only=False)
-    assert annual.sheetnames == ["汇总表", "26年售后统计表", "输入文件对账"]
+    summary = openpyxl.load_workbook(
+        output / "after_sales_master_summary.xlsx", data_only=False
+    )
+    assert summary.sheetnames == ["售后全量总表"]
     assert record["brand"] == "桃花江"
     assert record["complaint_date"] == "2026-05-10"
     assert record["issue_types"] == ["性能", "加工"]
@@ -196,7 +194,7 @@ def test_external_amount_is_not_enterprise_cost_and_unknown_stays_null() -> None
     assert unknown.enterprise_cost.status == "not_found"
 
 
-def test_multilabel_summary_counts_labels_but_not_duplicate_cases(tmp_path: Path) -> None:
+def test_master_summary_keeps_one_row_and_all_issue_flags(tmp_path: Path) -> None:
     records = [
         {
             "included_in_summary": True,
@@ -212,17 +210,18 @@ def test_multilabel_summary_counts_labels_but_not_duplicate_cases(tmp_path: Path
     output = tmp_path / "multilabel.xlsx"
     write_summary_workbook(records, output, load_rules(MODULE_ROOT))
     workbook = openpyxl.load_workbook(output, data_only=False)
-    sheet = workbook["2026统计"]
-    labels = {sheet.cell(row, 2).value: row for row in range(1, sheet.max_row + 1)}
+    assert workbook.sheetnames == ["售后全量总表"]
+    sheet = workbook["售后全量总表"]
+    headers = {sheet.cell(3, col).value: col for col in range(1, sheet.max_column + 1)}
+    assert sheet.max_row == 4
+    assert sheet.cell(4, headers["原因分类（性能/外观/加工）"]).value == "性能、加工"
+    assert sheet.cell(4, headers["性能"]).value == "是"
+    assert sheet.cell(4, headers["加工"]).value == "是"
 
-    assert sheet["H4"].value == 1  # 5月性能标签
-    assert sheet["H6"].value == 1  # 5月加工标签
-    assert sheet.cell(labels["案件总数（每案计1次）"], 8).value == 1
-    notes = "\n".join(str(cell.value or "") for row in sheet.iter_rows() for cell in row)
-    assert "多标签统计" in notes
 
-
-def test_charts_and_markdown_use_the_same_structured_metrics(tmp_path: Path) -> None:
+def test_visual_workbooks_and_word_report_use_the_same_reviewed_metrics(
+    tmp_path: Path,
+) -> None:
     first = tmp_path / "一月.xlsx"
     second = tmp_path / "二月.xlsx"
     _make_workbook(first, complaint_date="2026-01-10", solution="已完成处理，企业售后成本100元。")
@@ -237,9 +236,7 @@ def test_charts_and_markdown_use_the_same_structured_metrics(tmp_path: Path) -> 
     result = _run(tmp_path, _job([first, second], output))
     records = json.loads((output / "after_sales_records.json").read_text(encoding="utf-8"))
     metrics = build_analysis_metrics(records)
-    report = (output / "after_sales_analysis.md").read_text(encoding="utf-8")
-    workbook = openpyxl.load_workbook(output / "after_sales_summary.xlsx", data_only=False)
-    word_report = _word_text(output / "after_sales_analysis_report.docx")
+    report = _word_text(output / "after_sales_analysis_report.docx")
     brand_book = openpyxl.load_workbook(
         output / "after_sales_brand_share.xlsx", data_only=False
     )
@@ -253,7 +250,6 @@ def test_charts_and_markdown_use_the_same_structured_metrics(tmp_path: Path) -> 
         output / "after_sales_yearly_dashboard.xlsx", data_only=False
     )
 
-    assert len(workbook["分析图表"]._charts) == 3
     assert len(brand_book["品牌占比"]._charts) == 1
     assert len(reason_book["原因占比"]._charts) == 1
     assert len(fee_book["年度月度费用"]._charts) == 1
@@ -263,14 +259,23 @@ def test_charts_and_markdown_use_the_same_structured_metrics(tmp_path: Path) -> 
     assert dashboard._charts[0].__class__.__name__ == "PieChart3D"
     assert dashboard._charts[1].__class__.__name__ == "PieChart3D"
     assert dashboard._charts[2].__class__.__name__ == "BarChart"
+    assert dashboard._charts[2].x_axis.title is None
+    assert dashboard._charts[2].y_axis.title is None
     assert dashboard._charts[2].x_axis.tickLblSkip == 1
     assert dashboard._charts[2].y_axis.majorUnit == 1
     assert dashboard._charts[2].dataLabels.showVal
-    assert f"输入文件 | {result['summary']['input_count']}" in report
-    assert f"企业售后成本合计：{metrics['totals']['enterprise_cost_amount']:.2f} 元" in report
-    assert f"案件总数（每案计一次）：{metrics['case_count']}" in report
-    assert "售后分析报告" in word_report
-    assert f"{metrics['case_count']} 件" in word_report
+    brand_labels = brand_book["品牌占比"]._charts[0].dataLabels
+    reason_labels = reason_book["原因占比"]._charts[0].dataLabels
+    assert brand_labels.showCatName
+    assert brand_labels.showVal
+    assert brand_labels.showPercent
+    assert reason_labels.showCatName
+    assert reason_labels.showVal
+    assert reason_labels.showPercent
+    assert "售后分析报告" in report
+    assert f"{result['summary']['input_count']} 份" in report
+    assert f"{metrics['totals']['after_sales_fee_amount']:,.2f} 元" in report
+    assert f"{metrics['case_count']} 件" in report
 
 
 def test_user_outputs_never_contain_local_absolute_paths(tmp_path: Path) -> None:
@@ -281,21 +286,21 @@ def test_user_outputs_never_contain_local_absolute_paths(tmp_path: Path) -> None
     drive_path = re.compile(r"(?<![A-Za-z])[A-Za-z]:[\\/]")
 
     records_text = (output / "after_sales_records.json").read_text(encoding="utf-8")
-    report_text = (output / "after_sales_analysis.md").read_text(encoding="utf-8")
+    with ZipFile(output / "after_sales_analysis_report.docx") as archive:
+        report_text = "\n".join(
+            archive.read(name).decode("utf-8", errors="ignore")
+            for name in archive.namelist()
+            if name.endswith(".xml")
+        )
     assert not drive_path.search(records_text)
     assert not drive_path.search(report_text)
-    for filename in (
-        "after_sales_summary.xlsx",
-        "after_sales_yearly_dashboard.xlsx",
-        "after_sales_analysis_report.docx",
-    ):
-        with ZipFile(output / filename) as archive:
-            artifact_xml = "\n".join(
-                archive.read(name).decode("utf-8", errors="ignore")
-                for name in archive.namelist()
-                if name.endswith(".xml")
-            )
-        assert not drive_path.search(artifact_xml)
+    with ZipFile(output / "after_sales_master_summary.xlsx") as archive:
+        workbook_xml = "\n".join(
+            archive.read(name).decode("utf-8", errors="ignore")
+            for name in archive.namelist()
+            if name.endswith(".xml")
+        )
+    assert not drive_path.search(workbook_xml)
 
 
 def test_corrupted_workbook_is_isolated_with_stable_chinese_error(tmp_path: Path) -> None:
@@ -366,10 +371,12 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
     final = _run(tmp_path, final_payload, "final-job")
     records = json.loads((final_output / "after_sales_records.json").read_text(encoding="utf-8"))
     record = records[0]
-    report = (final_output / "after_sales_analysis.md").read_text(encoding="utf-8")
-    workbook = openpyxl.load_workbook(final_output / "after_sales_summary.xlsx", data_only=True)
-    detail = workbook["售后明细"]
-    headers = {detail.cell(1, col).value: col for col in range(1, detail.max_column + 1)}
+    report = _word_text(final_output / "after_sales_analysis_report.docx")
+    workbook = openpyxl.load_workbook(
+        final_output / "after_sales_master_summary.xlsx", data_only=True
+    )
+    detail = workbook["售后全量总表"]
+    headers = {detail.cell(3, col).value: col for col in range(1, detail.max_column + 1)}
 
     assert final["status"] == "success"
     assert final["summary"]["confirmation_count"] == 0
@@ -378,9 +385,9 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
     assert record["internal_accountability_amount"] == 200
     assert record["external_borne_amount"] == 300
     assert record["fee_amount"] == 1200
-    assert detail.cell(2, headers["企业售后成本"]).value == 1200
-    assert detail.cell(2, headers["内部责任扣款"]).value == 200
-    assert detail.cell(2, headers["外部承担金额"]).value == 300
-    assert "企业售后成本合计：1200.00 元" in report
+    assert detail.cell(4, headers["最终售后费用（企业承担）"]).value == 1200
+    assert detail.cell(4, headers["内部责任扣款"]).value == 200
+    assert detail.cell(4, headers["外部承担金额"]).value == 300
+    assert "企业承担金额合计：1,200.00 元" in report
     assert "内部责任扣款合计：200.00 元" in report
     assert "外部承担金额合计：300.00 元" in report

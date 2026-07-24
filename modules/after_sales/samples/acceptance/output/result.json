@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "job_id": "pr16-artifact-tool-sanitized",
   "module_id": "after_sales",
-  "module_version": "1.0.1",
+  "module_version": "1.3.1",
   "status": "success",
   "rule_version": "2026.07",
   "summary": {
@@ -16,12 +16,6 @@
   "anomalies": [],
   "confirmations": [],
   "outputs": [
-    {
-      "type": "annual_rollup_excel",
-      "path": "after_sales_annual_rollup.xlsx",
-      "label": "售后全量汇总表",
-      "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    },
     {
       "type": "summary_excel",
       "path": "after_sales_summary.xlsx",
@@ -53,7 +47,7 @@
     }
   ],
   "service_requests": [],
-  "analysis_summary": "已对账 1 个输入文件，成功处理 1 个，失败 0 个；已生成按报修时间排序的全量汇总、三类金额统计、分析图表和分析报告；AI辅助完成 1 个，AI降级 0 个，其余使用离线规则，所有高风险字段均以人工复核为准。",
+  "analysis_summary": "已对账 1 个输入文件，成功处理 1 个，失败 0 个；已生成三类金额汇总、分析图表和分析报告。",
   "errors": [],
   "started_at": "2026-07-19T02:40:41.204004+08:00",
   "finished_at": "2026-07-19T02:40:41.368576+08:00"

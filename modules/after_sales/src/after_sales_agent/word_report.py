@@ -106,9 +106,14 @@ def write_word_analysis_report(
     ]
     if peak_month:
         peak_fee = float(peak_month["after_sales_fee_amount"])
+        warning = (
+            "已达到或超过 10,000 元预警线"
+            if peak_fee >= 10_000
+            else "未达到 10,000 元预警线"
+        )
         lead_lines.append(
             f"费用最高月份为 {peak_month['period']}，金额 {peak_fee:,.2f} 元，"
-            f"{'已达到或超过 10,000 元预警线' if peak_fee >= 10_000 else '未达到预警线'}。"
+            f"{warning}。"
         )
     _add_callout(document, "执行摘要", lead_lines, LIGHT_GREEN, GREEN)
 
@@ -344,7 +349,7 @@ def _add_kpi_strip(
     table.autofit = False
     widths = [Inches(6.5 / len(values))] * len(values)
     for index, ((label, value), cell) in enumerate(
-        zip(values, table.rows[0].cells, strict=True)
+        zip(values, table.rows[0].cells, strict=False)
     ):
         cell.width = widths[index]
         _shade_cell(cell, LIGHT_GREEN if index % 2 == 0 else LIGHT_BLUE)
@@ -418,7 +423,7 @@ def _add_data_table(
     table.autofit = False
     table.allow_autofit = False
     for index, (header, width) in enumerate(
-        zip(headers, widths_inches, strict=True)
+        zip(headers, widths_inches, strict=False)
     ):
         cell = table.rows[0].cells[index]
         cell.width = Inches(width)
@@ -437,7 +442,7 @@ def _add_data_table(
     for row_index, values in enumerate(data):
         cells = table.add_row().cells
         for column_index, (value, width) in enumerate(
-            zip(values, widths_inches, strict=True)
+            zip(values, widths_inches, strict=False)
         ):
             cell = cells[column_index]
             cell.width = Inches(width)

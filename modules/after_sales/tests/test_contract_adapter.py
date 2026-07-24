@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import openpyxl
+from docx import Document
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MODULE_ROOT / "src"))
@@ -12,6 +13,21 @@ sys.path.insert(0, str(MODULE_ROOT / "src"))
 from after_sales_agent.cli import _create_sample_workbook, run_job  # noqa: E402
 
 from core.contracts.result import ModuleResult  # noqa: E402
+
+
+def _word_text(path: Path) -> str:
+    document = Document(path)
+    return "\n".join(
+        [
+            *(paragraph.text for paragraph in document.paragraphs),
+            *(
+                cell.text
+                for table in document.tables
+                for row in table.rows
+                for cell in row.cells
+            ),
+        ]
+    )
 
 
 def _job(input_file: Path, output_dir: Path, **overrides):
@@ -97,9 +113,13 @@ def test_draft_and_finalize_write_manual_fee_to_final_excel(tmp_path):
     assert records[0]["enterprise_cost_amount"] == 3200
     assert records[0]["enterprise_cost_reviewed"] is True
     assert records[0]["fee_status"] == "exact"
-    assert "3200.00" in (final_output / "after_sales_analysis.md").read_text(encoding="utf-8")
+    assert "3,200.00" in _word_text(
+        final_output / "after_sales_analysis_report.docx"
+    )
 
-    workbook = openpyxl.load_workbook(final_output / "after_sales_summary.xlsx", data_only=True)
+    workbook = openpyxl.load_workbook(
+        final_output / "after_sales_master_summary.xlsx", data_only=True
+    )
     assert any(
         cell.value == 3200
         for worksheet in workbook.worksheets
@@ -176,18 +196,16 @@ def test_required_business_review_updates_fee_factory_and_complaint_type(tmp_pat
     assert record["issue_types"] == ["加工"]
     assert record["manual_review_completed"] is True
 
-    annual = openpyxl.load_workbook(
-        final_output / "after_sales_annual_rollup.xlsx", data_only=True
+    summary = openpyxl.load_workbook(
+        final_output / "after_sales_master_summary.xlsx", data_only=True
     )
-    year_sheet = annual["26年售后统计表"]
-    headers = {year_sheet.cell(2, col).value: col for col in range(2, 20)}
-    assert year_sheet.cell(3, headers["售后费用"]).value == 3200
-    assert year_sheet.cell(3, headers["责任工厂"]).value == "成品厂"
-    assert year_sheet.cell(3, headers["投诉类型"]).value == "加工"
-
-    summary = openpyxl.load_workbook(final_output / "after_sales_summary.xlsx", data_only=True)
-    detail = summary["售后明细"]
-    detail_headers = {detail.cell(1, col).value: col for col in range(1, detail.max_column + 1)}
-    assert detail.cell(2, detail_headers["售后费用"]).value == 3200
-    assert detail.cell(2, detail_headers["责任工厂"]).value == "成品厂"
-    assert detail.cell(2, detail_headers["三项人工复核完成"]).value is True
+    detail = summary["售后全量总表"]
+    detail_headers = {
+        detail.cell(3, col).value: col for col in range(1, detail.max_column + 1)
+    }
+    assert detail.cell(4, detail_headers["售后费用（人工复核口径）"]).value == 3200
+    assert detail.cell(4, detail_headers["责任工厂（人工复核口径）"]).value == "成品厂"
+    assert detail.cell(4, detail_headers["主要原因"]).value == "加工"
+    assert detail.cell(4, detail_headers["售后费用复核状态"]).value == "已复核"
+    assert detail.cell(4, detail_headers["责任工厂复核状态"]).value == "已复核"
+    assert detail.cell(4, detail_headers["投诉类型复核状态"]).value == "已复核"

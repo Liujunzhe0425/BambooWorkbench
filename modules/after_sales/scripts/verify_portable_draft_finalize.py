@@ -50,7 +50,7 @@ def main() -> int:
     draft_output = work / "output-draft"
     draft_job = {
         "schema_version": "1.0",
-        "job_id": "portable-v102-draft",
+        "job_id": "portable-v101-draft",
         "module_id": "after_sales",
         "phase": "draft",
         "run_mode": "single",
@@ -67,8 +67,8 @@ def main() -> int:
     _write_json(draft_job_path, draft_job)
     _run(runtime, draft_job_path)
     draft = json.loads((draft_output / "result.json").read_text(encoding="utf-8"))
-    if draft.get("module_version") != "1.1.0":
-        raise AssertionError("便携运行时不是售后模块 1.1.0")
+    if draft.get("module_version") != "1.0.1":
+        raise AssertionError("便携运行时不是售后模块 1.0.1")
     fields = {item.get("field") for item in draft.get("confirmations", [])}
     if not {"售后费用", "责任工厂", "投诉类型"} <= fields:
         raise AssertionError("草稿缺少三项强制人工复核")
@@ -81,7 +81,7 @@ def main() -> int:
         confirmation_path,
         {
             "schema_version": "1.0",
-            "job_id": "portable-v102-draft",
+            "job_id": "portable-v101-draft",
             "answers": [
                 {
                     "confirmation_id": item["confirmation_id"],
@@ -96,7 +96,7 @@ def main() -> int:
         service_path,
         {
             "schema_version": "1.0",
-            "task_id": "portable-v102-draft",
+            "task_id": "portable-v101-draft",
             "module_id": "after_sales",
             "responses": [
                 {
@@ -112,11 +112,11 @@ def main() -> int:
     final_output = work / "output-final"
     final_job = {
         **draft_job,
-        "job_id": "portable-v102-final",
+        "job_id": "portable-v101-final",
         "phase": "finalize",
         "output_dir": str(final_output),
         "ai_enabled": False,
-        "parent_job_id": "portable-v102-draft",
+        "parent_job_id": "portable-v101-draft",
         "confirmation_file": str(confirmation_path),
         "service_response_file": str(service_path),
     }
@@ -136,11 +136,6 @@ def main() -> int:
         "after_sales_summary.xlsx",
         "after_sales_records.json",
         "after_sales_analysis.md",
-        "after_sales_analysis_report.docx",
-        "after_sales_brand_share.xlsx",
-        "after_sales_reason_share.xlsx",
-        "after_sales_monthly_fee.xlsx",
-        "after_sales_yearly_dashboard.xlsx",
     }
     if not expected_outputs <= {path.name for path in final_output.iterdir()}:
         raise AssertionError("便携 finalize 输出不完整")

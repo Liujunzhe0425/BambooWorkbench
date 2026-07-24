@@ -16,18 +16,12 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from after_sales_agent import MODULE_ID, MODULE_NAME, MODULE_VERSION
-from after_sales_agent.ai_service import (
-    apply_ai_service_outcome,
-    build_ai_service_requests,
-    read_ai_service_responses,
-)
-from after_sales_agent.analysis import write_analysis_report
-from after_sales_agent.annual_rollup import write_annual_rollup_workbook
 from after_sales_agent.extractor import file_sha256, process_workbook
 from after_sales_agent.manual_review import (
     apply_business_review_value,
     build_required_review_prompts,
 )
+from after_sales_agent.module_ai_config import load_saved_module_ai_config
 from after_sales_agent.report import write_summary_workbook
 from after_sales_agent.rules import load_rules
 from after_sales_agent.visual_reports import (
@@ -37,6 +31,32 @@ from after_sales_agent.visual_reports import (
     write_yearly_chart_dashboard_workbook,
 )
 from after_sales_agent.word_report import write_word_analysis_report
+
+_DRAFT_AI_SNAPSHOT_FIELDS = {
+    "api_analysis",
+    "api_cost_candidate",
+    "api_cost_evidence",
+    "analysis_note",
+    "brand",
+    "brand_confidence",
+    "brand_evidence",
+    "brand_reason",
+    "closed",
+    "closed_analysis_source",
+    "closed_reason",
+    "issue_analysis_source",
+    "issue_confidence",
+    "issue_evidence",
+    "issue_reason_summary",
+    "issue_types",
+    "primary_issue_type",
+    "responsible_factory",
+    "responsible_factory_reason",
+    "resolution_analysis_source",
+    "resolution_reason",
+    "resolution_status",
+    "selected_solution",
+}
 
 
 def _configure_standard_streams() -> None:
@@ -98,6 +118,9 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
     output_dir = Path(job["output_dir"]).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     rules = load_rules(module_root, job.get("module_config_file"))
+    api_config = (runtime_config or {}).get("api")
+    if api_config is None and job.get("phase") == "draft":
+        api_config = load_saved_module_ai_config()
     progress_callback = (runtime_config or {}).get("progress_callback")
     result = _empty_result(job, rules, started_at)
     root_job_id = (
@@ -110,6 +133,9 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
         input_files = expand_inputs(job.get("input_files", []))
         result["summary"]["input_count"] = len(input_files)
         records: list[dict[str, Any]] = []
+        draft_snapshots = (
+            _load_draft_ai_snapshots(output_dir) if job.get("phase") == "finalize" else {}
+        )
         seen_hashes: dict[str, str] = {}
         _notify_progress(
             progress_callback,
@@ -131,7 +157,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
             _notify_progress(
                 progress_callback,
                 {
-                    "phase": "规则解析",
+                    "phase": "智能辅助分析" if api_config else "离线规则分析",
                     "message": progress_message,
                     "total": len(input_files),
                     "completed": input_index - 1,
@@ -160,9 +186,11 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 duplicate_of = seen_hashes.get(digest)
                 seen_hashes.setdefault(digest, str(input_file))
 
-                # 桌面入口只执行确定性解析。AI 必须经统一 service_requests 协议，
-                # 这里不得读取密钥、调用模块网关或接收运行时凭据。
-                record, anomalies, extractor_confirmations = process_workbook(input_file, rules)
+                record, anomalies, extractor_confirmations = process_workbook(
+                    input_file, rules, api_config
+                )
+                if record:
+                    _restore_draft_ai_snapshot(record, draft_snapshots)
                 confirmations = [
                     item
                     for item in extractor_confirmations
@@ -181,7 +209,11 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 if record:
                     record["input_index"] = input_index
                     record["case_id"] = f"{root_job_id}-{input_index}"
-                    record["analysis_status"] = "离线规则分析完成"
+                    record["analysis_status"] = (
+                        "智能分析完成"
+                        if record.get("issue_analysis_source") == "api"
+                        else "离线规则分析完成"
+                    )
                     record["analysis_error"] = ""
                     record["included_in_summary"] = True
                     if duplicate_of:
@@ -218,7 +250,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 _notify_progress(
                     progress_callback,
                     {
-                        "phase": "规则解析",
+                        "phase": "智能辅助分析" if api_config else "离线规则分析",
                         "message": f"已完成 {input_index}/{len(input_files)} 个文件",
                         "total": len(input_files),
                         "completed": input_index,
@@ -226,42 +258,6 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                         "failed": result["summary"]["failed_count"],
                         "current_file": input_file.name,
                     },
-                )
-
-        ai_requests = build_ai_service_requests(root_job_id=root_job_id, records=records)
-        if job.get("phase") == "draft":
-            result["service_requests"] = ai_requests
-            for record in records:
-                if record.get("ai_candidate_id"):
-                    record["analysis_status"] = "规则预分析完成（等待AI授权）"
-                    record["analysis_note"] = (
-                        "已生成脱敏AI辅助请求；授权与调用由竹简工作台统一处理"
-                    )
-        elif ai_requests:
-            response_path = (
-                Path(job["service_response_file"])
-                if job.get("service_response_file")
-                else None
-            )
-            outcome = read_ai_service_responses(
-                response_path,
-                root_job_id=root_job_id,
-                requests=ai_requests,
-            )
-            apply_ai_service_outcome(records, outcome)
-            for warning in outcome.warnings:
-                result["anomalies"].extend(
-                    _normalize_anomalies(
-                        [
-                            {
-                                "severity": "warning",
-                                "field": "AI辅助状态",
-                                "message": warning,
-                                "suggestion": "继续使用离线规则结果并完成人工复核",
-                            }
-                        ],
-                        len(result["anomalies"]),
-                    )
                 )
 
         answered_confirmation_ids: set[str] = set()
@@ -276,16 +272,6 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 for item in result["confirmations"]
                 if item["confirmation_id"] not in answered_confirmation_ids
             ]
-            for record in records:
-                if not record.get("manual_review_completed"):
-                    continue
-                current_status = str(record.get("analysis_status") or "")
-                if record.get("issue_analysis_source") == "api":
-                    record["analysis_status"] = "AI辅助分析完成（已人工复核）"
-                elif "降级" in current_status:
-                    record["analysis_status"] = "AI不可用，已降级为离线规则（已人工复核）"
-                elif record.get("included_in_summary"):
-                    record["analysis_status"] = "离线规则分析完成（已人工复核）"
 
         _notify_progress(
             progress_callback,
@@ -302,21 +288,17 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
         result["summary"]["anomaly_count"] = len(result["anomalies"])
         result["summary"]["confirmation_count"] = len(result["confirmations"])
         result["status"] = decide_status(result)
-        summary_path = output_dir / "after_sales_summary.xlsx"
-        annual_rollup_path = output_dir / "after_sales_annual_rollup.xlsx"
+        summary_path = output_dir / "after_sales_master_summary.xlsx"
         detail_path = output_dir / "after_sales_records.json"
-        analysis_path = output_dir / "after_sales_analysis.md"
-        analysis_word_path = output_dir / "after_sales_analysis_report.docx"
+        analysis_path = output_dir / "after_sales_analysis_report.docx"
         brand_chart_path = output_dir / "after_sales_brand_share.xlsx"
         issue_chart_path = output_dir / "after_sales_reason_share.xlsx"
         monthly_fee_chart_path = output_dir / "after_sales_monthly_fee.xlsx"
         yearly_dashboard_path = output_dir / "after_sales_yearly_dashboard.xlsx"
-        write_annual_rollup_workbook(records, annual_rollup_path, rules)
         write_summary_workbook(records, summary_path, rules)
         with detail_path.open("w", encoding="utf-8") as f:
             json.dump(records, f, ensure_ascii=False, indent=2)
-        write_analysis_report(records, result, analysis_path)
-        write_word_analysis_report(records, result, analysis_word_path)
+        write_word_analysis_report(records, result, analysis_path)
         write_brand_share_workbook(records, brand_chart_path)
         write_issue_share_workbook(records, issue_chart_path)
         write_annual_monthly_fee_workbook(records, monthly_fee_chart_path)
@@ -324,32 +306,14 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
 
         result["outputs"] = [
             {
-                "type": "annual_rollup_excel",
-                "path": str(annual_rollup_path),
+                "type": "master_summary_excel",
+                "path": str(summary_path),
                 "label": "售后全量汇总表",
                 "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             },
             {
-                "type": "summary_excel",
-                "path": str(summary_path),
-                "label": "售后年度统计表",
-                "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            },
-            {
-                "type": "records_json",
-                "path": str(detail_path),
-                "label": "售后结构化明细",
-                "mime_type": "application/json",
-            },
-            {
-                "type": "analysis_markdown",
-                "path": str(analysis_path),
-                "label": "售后分析报告",
-                "mime_type": "text/markdown",
-            },
-            {
                 "type": "analysis_word",
-                "path": str(analysis_word_path),
+                "path": str(analysis_path),
                 "label": "售后分析报告（Word）",
                 "mime_type": (
                     "application/vnd.openxmlformats-officedocument."
@@ -384,27 +348,13 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
         ai_completed = sum(
             1 for record in records if record.get("issue_analysis_source") == "api"
         )
-        ai_degraded = sum(
-            1
-            for record in records
-            if "降级" in str(record.get("analysis_status") or "")
-        )
-        if job.get("phase") == "draft":
-            ai_summary = (
-                f"；生成 {len(ai_requests)} 个脱敏AI辅助请求，须由用户逐次授权，"
-                "费用、责任工厂和投诉类型仍须人工复核"
-            )
-        else:
-            ai_summary = (
-                f"；AI辅助完成 {ai_completed} 个，AI降级 {ai_degraded} 个，"
-                "其余使用离线规则，所有高风险字段均以人工复核为准"
-            )
+        ai_summary = f"；AI智能分析完成 {ai_completed} 个，其余保留离线结果并由人工复核"
         result["analysis_summary"] = (
             f"已对账 {len(input_files)} 个输入文件，成功处理 "
             f"{result['summary']['processed_count']} 个，失败 "
-            f"{result['summary']['failed_count']} 个；已生成按报修时间排序的全量汇总、"
-            f"三类金额统计、Word 分析报告、年度占比图、费用图和年度图表总览"
-            f"{ai_summary}。"
+            f"{result['summary']['failed_count']} 个；已生成按报修时间排序的单一总表、"
+            f"Word 分析报告、品牌占比图、原因占比图、年度月度费用图"
+            f"和年度图表总览{ai_summary}。"
         )
         return 0
     finally:
@@ -412,6 +362,38 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
         result_path = output_dir / "result.json"
         with result_path.open("w", encoding="utf-8") as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
+
+
+def _load_draft_ai_snapshots(output_dir: Path) -> dict[str, dict[str, Any]]:
+    """Read validated draft suggestions so finalize never calls a paid API twice."""
+
+    path = output_dir.parent / "output-draft" / "after_sales_records.json"
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, TypeError, ValueError):
+        return {}
+    if not isinstance(payload, list):
+        return {}
+    snapshots: dict[str, dict[str, Any]] = {}
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        digest = str(item.get("file_sha256") or "").strip().casefold()
+        if re.fullmatch(r"[0-9a-f]{64}", digest):
+            snapshots[digest] = item
+    return snapshots
+
+
+def _restore_draft_ai_snapshot(
+    record: dict[str, Any], snapshots: dict[str, dict[str, Any]]
+) -> None:
+    digest = str(record.get("file_sha256") or "").strip().casefold()
+    snapshot = snapshots.get(digest)
+    if not snapshot or snapshot.get("issue_analysis_source") != "api":
+        return
+    for field in _DRAFT_AI_SNAPSHOT_FIELDS:
+        if field in snapshot:
+            record[field] = snapshot[field]
 
 
 def _notify_progress(callback: Any, payload: dict[str, Any]) -> None:
@@ -824,8 +806,11 @@ def self_check() -> int:
         if exit_code != 0 or result["summary"]["processed_count"] != 1:
             print("self-check failed", file=sys.stderr)
             return 3
-        print(f"{MODULE_NAME} self-check passed: {output_dir / 'after_sales_summary.xlsx'}")
-        return 0
+    print(
+        f"{MODULE_NAME} self-check passed: "
+        f"{output_dir / 'after_sales_master_summary.xlsx'}"
+    )
+    return 0
 
 
 def _create_sample_workbook(
