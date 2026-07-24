@@ -31,7 +31,7 @@ except ImportError as exc:  # pragma: no cover - exercised in a clean environmen
 
 
 MODULE_ID = "boiling"
-MODULE_VERSION = "1.0.1"
+MODULE_VERSION = "1.1.0"
 MAX_AI_RECORDS = 50
 MAX_AI_PAYLOAD_BYTES = 65_536
 MAX_AI_RESPONSE_CHARS = 8_000
@@ -2817,22 +2817,18 @@ def run_job(job_path):
 
     ai_request = None
     ai_review = None
-    ai_requested = (not is_finalize and job.get("ai_enabled")) or (
-        is_finalize and bool(job.get("service_response_file"))
+    ai_request = build_ai_service_request(
+        job,
+        records,
+        result["anomalies"],
+        rules,
     )
-    if ai_requested:
-        ai_request = build_ai_service_request(
-            job,
-            records,
-            result["anomalies"],
-            rules,
-        )
-        if ai_request is not None:
-            if is_finalize:
-                ai_review = read_ai_service_response(job, ai_request)
-            else:
-                result["service_requests"].append(ai_request)
-                ai_review = read_ai_service_response(job, ai_request)
+    if ai_request is not None:
+        if is_finalize:
+            ai_review = read_ai_service_response(job, ai_request)
+        else:
+            result["service_requests"].append(ai_request)
+            ai_review = read_ai_service_response(job, ai_request)
 
     result["summary"]["anomaly_count"] = len(result["anomalies"])
     result["summary"]["confirmation_count"] = len(result["confirmations"])

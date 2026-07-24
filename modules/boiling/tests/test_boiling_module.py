@@ -13,13 +13,19 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+from core.ai.audit import ConsentAuditRepository
+from core.ai.gateway import AIGateway
+from core.ai.providers import AIResponse
 from core.confirmations.service import ConfirmationService
 from core.contracts.confirmation import ConfirmationAnswer
 from core.contracts.enums import ModuleId
 from core.contracts.manifest import ModuleManifest
 from core.contracts.result import ModuleResult
+from core.knowledge.repository import KnowledgeRepository
 from core.modules.registry import ModuleRegistry, RegisteredModule
 from core.platform.paths import AppPaths
+from core.security.redaction import RedactionService
+from core.services.orchestrator import ServiceOrchestrator
 from core.storage.database import Database
 from core.storage.repositories.confirmations import ConfirmationRepository
 from core.storage.repositories.tasks import TaskRepository
@@ -522,7 +528,8 @@ def test_product_usage_in_source_does_not_request_confirmation(tmp_path):
     result = load_result(output)
     assert result["status"] == "success"
     assert result["confirmations"] == []
-    assert result["service_requests"] == []
+    assert len(result["service_requests"]) == 1
+    assert result["service_requests"][0]["service"] == "ai"
     assert {item["type"] for item in result["outputs"]} == {
         "summary_excel",
         "analysis_report",
@@ -783,7 +790,7 @@ def test_invalid_json_returns_two_without_creating_output(tmp_path):
     assert boiling_module.run_job(job_path) == 2
 
 
-def test_ai_toggle_only_emits_framework_request_when_enabled(tmp_path):
+def test_ai_candidate_emits_framework_request_independent_of_legacy_toggle(tmp_path):
     sample = tmp_path / "sample.xlsx"
     make_labeled_sample(sample, density=1.45)
     for enabled in (False, True):
@@ -793,18 +800,17 @@ def test_ai_toggle_only_emits_framework_request_when_enabled(tmp_path):
         job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
         assert boiling_module.run_job(job_path) == 0
         requests = load_result(output)["service_requests"]
-        assert bool(requests) is enabled
-        if enabled:
-            assert requests[0]["service"] == "ai"
-            assert requests[0]["requires_user_consent"] is True
+        assert len(requests) == 1
+        assert requests[0]["service"] == "ai"
+        assert requests[0]["requires_user_consent"] is True
 
 
-def test_ai_enabled_without_candidate_stays_offline(tmp_path):
+def test_no_ai_candidate_stays_offline_independent_of_legacy_toggle(tmp_path):
     sample = tmp_path / "incomplete.xlsx"
     output = tmp_path / "output"
     job_path = tmp_path / "job.json"
     make_sample(sample, include_samples=False)
-    job = make_job(sample, output, ai_enabled=True)
+    job = make_job(sample, output, ai_enabled=False)
     job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
     assert boiling_module.run_job(job_path) == 0
     result = load_result(output)
@@ -939,6 +945,7 @@ def test_summary_lists_five_fixed_position_density_and_expansion_values(tmp_path
         "需要关注",
         "未纳入统计",
         "阅读说明",
+        "AI辅助建议",
     ]
     analysis_sheet = analysis_workbook["分析报告"]
     assert analysis_sheet["A1"].value == "水煮实验分析报告"
@@ -1406,15 +1413,43 @@ def test_outputs_do_not_leak_absolute_paths_even_with_anomalies(tmp_path):
     assert input_path not in result_text, (
         f"result.json leaks input path: {input_path}"
     )
-def test_real_task_service_closes_after_one_confirmation_round(qtbot, tmp_path):
-    sample = tmp_path / "task-service.xlsx"
-    make_labeled_sample(sample, product_usage="")
-    paths = AppPaths.for_root(tmp_path / "app-data")
+
+
+class StrictBoilingTestProvider:
+    provider_id = "boiling-test"
+
+    def complete(self, request):
+        payload = json.loads(request.prompt)
+        items = [
+            {
+                "candidate_id": candidate["candidate_id"],
+                "summary": "该候选由确定性规则筛出。",
+                "risk_level": "medium",
+                "review_recommendation": "核对原始读数并由业务人员确认。",
+                "evidence_refs": candidate["evidence_refs"],
+            }
+            for candidate in payload["candidates"]
+        ]
+        return AIResponse(
+            json.dumps(
+                {
+                    "schema_version": "1.0",
+                    "overall_summary": "AI 仅提供辅助复核说明。",
+                    "items": items,
+                    "limitations": ["不修改确定性业务输出。"],
+                },
+                ensure_ascii=False,
+            )
+        )
+
+
+def make_real_boiling_task_services(root):
+    paths = AppPaths.for_root(root / "app-data")
     database = Database.open(paths)
     database.migrate()
     task_repository = TaskRepository(database)
     confirmation_repository = ConfirmationRepository(database)
-    registry = ModuleRegistry(MODULE_ROOT.parent, tmp_path / "unused-mocks", use_mocks=False)
+    registry = ModuleRegistry(MODULE_ROOT.parent, root / "unused-mocks", use_mocks=False)
     manifest = ModuleManifest.model_validate_json(
         (MODULE_ROOT / "module.json").read_text(encoding="utf-8")
     )
@@ -1424,46 +1459,175 @@ def test_real_task_service_closes_after_one_confirmation_round(qtbot, tmp_path):
         is_mock=False,
         health="healthy",
     )
+    gateway = AIGateway(
+        StrictBoilingTestProvider(),
+        RedactionService(),
+        ConsentAuditRepository(database),
+    )
+    orchestrator = ServiceOrchestrator(
+        KnowledgeRepository(database),
+        gateway,
+        provider_id=StrictBoilingTestProvider.provider_id,
+        model="boiling-test-model",
+    )
     service = TaskService(
         paths=paths,
         registry=registry,
         task_repository=task_repository,
         confirmation_repository=confirmation_repository,
+        service_orchestrator=orchestrator,
+    )
+    confirmation_service = ConfirmationService(
+        paths,
+        confirmation_repository,
+        task_repository,
+    )
+    return {
+        "paths": paths,
+        "database": database,
+        "service": service,
+        "confirmation_service": confirmation_service,
+    }
+
+
+def close_real_boiling_task_services(services):
+    services["service"].shutdown()
+    services["database"].close()
+
+
+def task_confirmation_answers(pending_result, ai_decision):
+    answers = []
+    for prompt in pending_result.confirmations:
+        if prompt.confirmation_id.startswith("service-consent:"):
+            value = ai_decision
+        else:
+            value = prompt.suggested_value
+            if value is None and prompt.options:
+                value = prompt.options[0]
+        assert value is not None
+        answers.append(
+            ConfirmationAnswer(
+                confirmation_id=prompt.confirmation_id,
+                value=value,
+                apply_to_batch=prompt.batch_applicable,
+            )
+        )
+    return answers
+
+
+def run_real_density_candidate_flow(qtbot, root, ai_decision):
+    services = make_real_boiling_task_services(root)
+    service = services["service"]
+    sample = (
+        MODULE_ROOT
+        / "tests"
+        / "fixtures"
+        / "samples"
+        / "input"
+        / "02_density_observation.xlsx"
     )
     try:
         with qtbot.waitSignal(service.needs_confirmation, timeout=30_000) as waiting:
             job_id = service.create_and_start(ModuleId.BOILING, [sample])
         draft_result = waiting.args[1]
-        prompt = next(item for item in draft_result.confirmations if item.field == "product_usage")
-        confirmation_service = ConfirmationService(
-            paths,
-            confirmation_repository,
-            task_repository,
+        assert draft_result.service_requests
+        request = draft_result.service_requests[0]
+        assert any(
+            prompt.confirmation_id == f"service-consent:{request.request_id}"
+            for prompt in draft_result.confirmations
         )
-        bundle_path = confirmation_service.submit(
+        task_dir = services["paths"].tasks / job_id
+        draft_job = json.loads((task_dir / "job-draft.json").read_text(encoding="utf-8"))
+        assert draft_job["ai_enabled"] is False
+        bundle_path = services["confirmation_service"].submit(
             job_id,
-            [
-                ConfirmationAnswer(
-                    confirmation_id=prompt.confirmation_id,
-                    value="家具",
-                    apply_to_batch=True,
-                )
-            ],
+            task_confirmation_answers(draft_result, ai_decision),
         )
         with qtbot.waitSignal(service.finished, timeout=30_000) as finished:
             service.finalize(job_id, bundle_path)
         final_result = finished.args[0]
         assert final_result.status.value == "success"
         assert final_result.confirmations == []
+        assert final_result.service_requests == []
         assert {item.type for item in final_result.outputs} == {
             "summary_excel",
             "analysis_report",
             "analysis_report_markdown",
             "business_records",
         }
+        service_response = json.loads(
+            (task_dir / "protocol" / "service-response.json").read_text(encoding="utf-8")
+        )
+        final_job = json.loads((task_dir / "job-finalize.json").read_text(encoding="utf-8"))
+        assert final_job["service_response_file"] == str(
+            task_dir / "protocol" / "service-response.json"
+        )
+        records = json.loads(
+            (task_dir / "output-final" / "boiling_records.json").read_text(encoding="utf-8")
+        )
+        markdown = (task_dir / "output-final" / "boiling_analysis.md").read_text(
+            encoding="utf-8"
+        )
+        return {
+            "result": final_result,
+            "records": records,
+            "response": service_response,
+            "markdown": markdown,
+        }
     finally:
-        service.shutdown()
-        database.close()
+        close_real_boiling_task_services(services)
+
+
+def test_real_task_service_density_candidate_allow_and_deny_preserve_business_json(
+    qtbot, tmp_path
+):
+    allowed = run_real_density_candidate_flow(qtbot, tmp_path / "allowed", "允许")
+    denied = run_real_density_candidate_flow(qtbot, tmp_path / "denied", "拒绝")
+
+    assert allowed["response"]["responses"][0]["status"] == "ok"
+    assert "AI辅助状态：ok" in allowed["result"].analysis_summary
+    assert denied["response"]["responses"][0]["status"] == "denied"
+    assert "AI辅助状态：denied" in denied["result"].analysis_summary
+    assert "离线规则报告" in denied["markdown"]
+    assert allowed["records"] == denied["records"]
+
+
+def test_real_task_service_without_candidate_has_no_ai_consent(qtbot, tmp_path):
+    services = make_real_boiling_task_services(tmp_path)
+    service = services["service"]
+    sample = (
+        MODULE_ROOT
+        / "tests"
+        / "fixtures"
+        / "samples"
+        / "input"
+        / "07_empty_incomplete.xlsx"
+    )
+    try:
+        events = {}
+        service.finished.connect(lambda result: events.setdefault("finished", result))
+        service.needs_confirmation.connect(
+            lambda _job_id, result: events.setdefault("pending", result)
+        )
+        service.failed.connect(
+            lambda _job_id, message: events.setdefault("failed", message)
+        )
+        job_id = service.create_and_start(ModuleId.BOILING, [sample])
+        qtbot.waitUntil(lambda: bool(events), timeout=30_000)
+        assert set(events) == {"finished"}, events
+        result = events["finished"]
+        assert result.status.value == "success"
+        assert result.service_requests == []
+        assert not any(
+            prompt.confirmation_id.startswith("service-consent:")
+            for prompt in result.confirmations
+        )
+        task_dir = services["paths"].tasks / job_id
+        draft_job = json.loads((task_dir / "job-draft.json").read_text(encoding="utf-8"))
+        assert draft_job["ai_enabled"] is False
+        assert not (task_dir / "protocol" / "service-response.json").exists()
+    finally:
+        close_real_boiling_task_services(services)
 
 
 def test_batch_without_python_or_portable_runtime_returns_four(tmp_path):

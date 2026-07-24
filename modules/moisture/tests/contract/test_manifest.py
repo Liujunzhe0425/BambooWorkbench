@@ -18,7 +18,7 @@ def test_manifest_matches_canonical_schema() -> None:
         "schema_version": "1.0",
         "module_id": "moisture",
         "module_name": "竹丝水分检测",
-        "module_version": "1.0.1",
+        "module_version": "1.1.0",
         "entrypoint": "run_module.bat",
         "management_entrypoint": "run_management.bat",
         "capabilities": ["ai_report"],
