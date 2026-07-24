@@ -25,7 +25,7 @@ def test_manifest_matches_canonical_schema() -> None:
         "supported_extensions": [".xlsx"],
         "supports_single_file": True,
         "supports_batch": True,
-        "supports_incremental": False,
+        "supports_incremental": True,
         "requires_network": False,
     }
 
