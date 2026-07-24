@@ -10,6 +10,13 @@ from pathlib import Path
 from openpyxl import Workbook
 
 MODULE_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(MODULE_ROOT / "src"))
+
+from moisture.adapters.experience.data_root import initialize_managed_root  # noqa: E402
+from moisture.adapters.experience.local_editable_repository import (  # noqa: E402
+    LocalEditableExperienceRepository,
+)
+
 ENTRYPOINT = MODULE_ROOT / "run_management.bat"
 _WORKSPACE_IDS = count()
 
@@ -130,6 +137,28 @@ def test_management_entrypoint_imports_lists_and_retires_four_and_five_sheet(
 def test_management_entrypoint_lists_only_approved_experiences(tmp_path: Path) -> None:
     data_dir = tmp_path / "module-data"
     data_dir.mkdir()
+    initialize_managed_root(data_dir / "experience")
+    repository = LocalEditableExperienceRepository(data_dir / "experience")
+    document = """---
+experience_id: EXP-MANAGED-001
+version: 1.0.0
+title: Managed selection
+source: internal/synthetic
+status: draft
+effective_at: 2026-01-01T00:00:00+00:00
+applicable_suppliers: ["*"]
+applicable_materials: ["原竹丝"]
+applicable_seasons: ["*"]
+applicable_metrics: ["total_average"]
+author: synthetic-author
+reviewer: synthetic-reviewer
+evidence_sources: ["internal/synthetic"]
+supersedes:
+---
+Managed approved body.
+"""
+    draft = repository.create(document)
+    approved = repository.publish(draft.experience_id, draft.version, draft.sha256)
 
     completed, response = _call(tmp_path, data_dir, "list_approved_experiences")
 
@@ -137,6 +166,10 @@ def test_management_entrypoint_lists_only_approved_experiences(tmp_path: Path) -
     assert response["status"] == "ok"
     assert response["experience_items"]
     assert all(item["sha256"] for item in response["experience_items"])
+    assert {
+        (item["entry_id"], item["version"], item["sha256"])
+        for item in response["experience_items"]
+    } >= {(approved.experience_id, approved.version, approved.sha256)}
     _assert_progress_only(completed)
 
 

@@ -12,6 +12,10 @@ MODULE_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(MODULE_ROOT / "src"))
 sys.path.insert(0, str(MODULE_ROOT / "tests"))
 
+from moisture.adapters.experience.data_root import initialize_managed_root
+from moisture.adapters.experience.local_editable_repository import (
+    LocalEditableExperienceRepository,
+)
 from moisture.adapters.history.repository import HistoryRepository
 from moisture.application.draft_orchestrator import run_draft
 from moisture.application.finalize_orchestrator import run_finalize
@@ -19,6 +23,50 @@ from moisture.contract.job_models import JobPhase, JobRequest, ModuleId, RunMode
 from moisture.infrastructure.hashing import sha256_file
 
 pytest_plugins = ("fixtures.workbooks.workbook_factory",)
+
+
+def _experience_document(
+    experience_id: str,
+    *,
+    version: str = "1.0.0",
+    effective_at: str = "2026-01-01T00:00:00+00:00",
+) -> str:
+    return f"""---
+experience_id: {experience_id}
+version: {version}
+title: Synthetic approved guidance
+source: internal/synthetic
+status: draft
+effective_at: {effective_at}
+applicable_suppliers:
+  - "*"
+applicable_materials:
+  - 原竹丝
+applicable_seasons:
+  - "*"
+applicable_metrics:
+  - total_average
+author: synthetic-author
+reviewer: synthetic-reviewer
+evidence_sources:
+  - internal/synthetic-evidence
+supersedes:
+---
+
+Synthetic guidance body.
+"""
+
+
+def _publish_experience(
+    repository: LocalEditableExperienceRepository,
+    experience_id: str,
+    *,
+    effective_at: str = "2026-01-01T00:00:00+00:00",
+) -> object:
+    draft = repository.create(
+        _experience_document(experience_id, effective_at=effective_at)
+    )
+    return repository.publish(experience_id, "1.0.0", draft.sha256)
 
 
 def _summary(tmp_path: Path, workbook_factory) -> Path:
@@ -298,3 +346,129 @@ def test_selected_history_and_approved_experience_enter_bounded_context(
     serialized = json.dumps(payload, ensure_ascii=False)
     assert str(data_root) not in serialized
     assert "EXP-GENERIC-001" in serialized
+
+
+def test_managed_approved_selection_is_pinned_when_another_experience_is_published(
+    tmp_path: Path, workbook_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    summary = _summary(tmp_path, workbook_factory)
+    data_root = tmp_path / "module-data"
+    experience_root = data_root / "experience"
+    initialize_managed_root(experience_root)
+    repository = LocalEditableExperienceRepository(experience_root)
+    selected = _publish_experience(repository, "EXP-PINNED-001")
+    monkeypatch.setenv("BAMBOO_MOISTURE_DATA_DIR", str(data_root))
+    config = _config(
+        tmp_path / "pinned-config.json",
+        experiences=[
+            {
+                "entry_id": selected.experience_id,
+                "version": selected.version,
+                "sha256": selected.sha256,
+            }
+        ],
+    )
+
+    first_output = tmp_path / "pinned-draft-a"
+    assert run_draft(_job(summary, config, first_output, phase=JobPhase.DRAFT)) == 0
+    first_request = json.loads(
+        (first_output / "result.json").read_text(encoding="utf-8")
+    )["service_requests"][0]
+
+    _publish_experience(repository, "EXP-LATER-001")
+
+    second_output = tmp_path / "pinned-draft-b"
+    assert run_draft(_job(summary, config, second_output, phase=JobPhase.DRAFT)) == 0
+    second_request = json.loads(
+        (second_output / "result.json").read_text(encoding="utf-8")
+    )["service_requests"][0]
+
+    assert second_request == first_request
+    serialized = json.dumps(second_request["payload"]["experiences"], ensure_ascii=False)
+    assert "EXP-PINNED-001" in serialized
+    assert "EXP-LATER-001" not in serialized
+
+
+def test_nonapproved_future_and_hash_mismatched_experience_are_rejected(
+    tmp_path: Path, workbook_factory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    summary = _summary(tmp_path, workbook_factory)
+    cases: list[tuple[str, dict[str, str]]] = []
+
+    draft_data = tmp_path / "draft-data"
+    initialize_managed_root(draft_data / "experience")
+    draft_repository = LocalEditableExperienceRepository(draft_data / "experience")
+    draft = draft_repository.create(_experience_document("EXP-DRAFT-001"))
+    cases.append(
+        (
+            str(draft_data),
+            {
+                "entry_id": draft.experience_id,
+                "version": draft.version,
+                "sha256": draft.sha256,
+            },
+        )
+    )
+
+    retired_data = tmp_path / "retired-data"
+    initialize_managed_root(retired_data / "experience")
+    retired_repository = LocalEditableExperienceRepository(retired_data / "experience")
+    approved = _publish_experience(retired_repository, "EXP-RETIRED-001")
+    retired = retired_repository.retire(
+        approved.experience_id, approved.version, approved.sha256
+    )
+    cases.append(
+        (
+            str(retired_data),
+            {
+                "entry_id": retired.experience_id,
+                "version": retired.version,
+                "sha256": retired.sha256,
+            },
+        )
+    )
+
+    future_data = tmp_path / "future-data"
+    initialize_managed_root(future_data / "experience")
+    future_repository = LocalEditableExperienceRepository(future_data / "experience")
+    future = _publish_experience(
+        future_repository,
+        "EXP-FUTURE-001",
+        effective_at="2099-01-01T00:00:00+00:00",
+    )
+    cases.append(
+        (
+            str(future_data),
+            {
+                "entry_id": future.experience_id,
+                "version": future.version,
+                "sha256": future.sha256,
+            },
+        )
+    )
+
+    mismatch_data = tmp_path / "mismatch-data"
+    initialize_managed_root(mismatch_data / "experience")
+    cases.append(
+        (
+            str(mismatch_data),
+            {
+                "entry_id": "EXP-GENERIC-001",
+                "version": "1.0.0",
+                "sha256": "a" * 64,
+            },
+        )
+    )
+
+    for index, (data_root, selection) in enumerate(cases):
+        monkeypatch.setenv("BAMBOO_MOISTURE_DATA_DIR", data_root)
+        config = _config(
+            tmp_path / f"invalid-experience-{index}.json",
+            experiences=[selection],
+        )
+        output = tmp_path / f"invalid-experience-{index}"
+        run_draft(_job(summary, config, output, phase=JobPhase.DRAFT))
+        result = json.loads((output / "result.json").read_text(encoding="utf-8"))
+        assert result["status"] == "failed"
+        assert result["errors"] == ["AI_REPORT_CONTEXT_INVALID"]
+        assert result["service_requests"] == []

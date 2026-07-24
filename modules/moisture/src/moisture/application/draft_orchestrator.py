@@ -9,6 +9,11 @@ from pathlib import Path
 
 from moisture.application.confirmation_builder import build_confirmations
 from moisture.application.deterministic_pipeline import DeterministicPipeline
+from moisture.application.history_append import (
+    HistoryAppendError,
+    build_history_append_outcome,
+    build_history_conflict_prompts,
+)
 from moisture.application.module_config import (
     ModuleConfigError,
     ModuleOperation,
@@ -115,6 +120,18 @@ def _knowledge_requests(job: JobRequest, outcome: object) -> tuple[dict[str, obj
     return (request,) if request is not None else ()
 
 
+def _confirmation_prompts(
+    job: JobRequest,
+    outcome: object,
+) -> tuple[dict[str, object], ...]:
+    business_outcome = getattr(outcome, "new_outcome", outcome)
+    prompts = list(build_confirmations(job.root_job_id, _confirmation_issues(business_outcome)))
+    conflicts = tuple(getattr(outcome, "conflicts", ()))
+    if conflicts:
+        prompts.extend(build_history_conflict_prompts(job.root_job_id, conflicts))
+    return tuple(sorted(prompts, key=lambda prompt: str(prompt["confirmation_id"])))
+
+
 def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) -> int:
     """Run one draft and publish ``result.json`` after completed artifacts."""
 
@@ -125,9 +142,21 @@ def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) ->
             from moisture.application.ai_report import run_ai_report_draft
 
             return run_ai_report_draft(job, module_config)
-        outcome = (pipeline or DeterministicPipeline()).run(
-            job.input_files, default_year=module_config.default_year
+        selection = module_config.rule_selection
+        active_pipeline = pipeline or DeterministicPipeline(
+            rule_version=selection.version if selection else None,
+            rules_sha256=selection.sha256 if selection else None,
         )
+        if module_config.operation is ModuleOperation.APPEND_SUMMARY:
+            outcome = build_history_append_outcome(
+                job,
+                module_config,
+                pipeline=active_pipeline,
+            )
+        else:
+            outcome = active_pipeline.run(
+                job.input_files, default_year=module_config.default_year
+            )
     except ModuleConfigError:
         message = "MODULE_CONFIG_INVALID"
         internal = InternalMoistureRunResult(
@@ -149,7 +178,12 @@ def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) ->
         AtomicResultWriter(job.output_dir).write(mapped.result)
         return mapped.exit_code
     except Exception as error:
-        message = f"PIPELINE_INITIALIZATION_FAILED: {type(error).__name__}"
+        if not isinstance(error, HistoryAppendError):
+            message = f"PIPELINE_INITIALIZATION_FAILED: {type(error).__name__}"
+            summary = "确定性管线初始化失败。"
+        else:
+            message = error.code
+            summary = "历史汇总追加输入无效，未形成新汇总。"
         internal = InternalMoistureRunResult(
             job_id=job.job_id,
             root_job_id=job.root_job_id,
@@ -159,7 +193,7 @@ def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) ->
             skipped_count=0,
             failed_count=len(job.input_files),
             file_results=_global_failure_file_results(job, message),
-            analysis_summary="确定性管线初始化失败。",
+            analysis_summary=summary,
             errors=(message,),
             business_failed=True,
             started_at=started_at,
@@ -238,7 +272,7 @@ def run_draft(job: JobRequest, pipeline: DeterministicPipeline | None = None) ->
         anomalies=outcome.anomalies,
         outputs=outputs,
         file_results=outcome.file_results,
-        confirmations=build_confirmations(job.root_job_id, _confirmation_issues(outcome)),
+        confirmations=_confirmation_prompts(job, outcome),
         service_requests=service_requests,
         analysis_summary=(
             f"已处理 {outcome.processed_count} 个工作簿，"

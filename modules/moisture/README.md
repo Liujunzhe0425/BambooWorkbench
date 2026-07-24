@@ -7,6 +7,10 @@ BambooWorkbench 竹丝水分检测模块 v1.0.1。模块提供两条相互隔离
 
 模块不直接访问网络、Provider、数据库或凭据，AI 结果不修改汇总表、规则颜色或确定性结论。
 
+> `module/moisture-test` 已完成历史追加、轻量经验管理、轻量规则管理和固定规则快照的
+> 模块侧适配前内核；在对应FCR获批并完成主框架页面/管理合同适配前，这些能力不作为
+> 客户GUI已交付功能。
+
 ## 快速使用
 
 ### 客户安装版
@@ -126,6 +130,9 @@ spending limit 不足，在 Runner 分配前即被 GitHub 拒绝启动（无任�
 | [三功能简化架构](docs/architecture/moisture-next-stage-architecture.md) | 汇总生产、独立 AI 报告和后续规则治理方向 |
 | [v1.0.1 独立 AI 报告计划](docs/architecture/moisture-v1.0.1-independent-ai-report-plan.md) | 本版本模块实施边界 |
 | [框架适配请求](docs/framework-change-requests/FCR-moisture-20260723-ai-report-context-selection.md) | 已由框架 PR #43 实施的最小适配 |
+| [历史追加FCR](docs/framework-change-requests/FCR-moisture-20260724-history-summary-append.md) | 待框架审核的历史追加入口 |
+| [经验管理FCR](docs/framework-change-requests/FCR-moisture-20260724-experience-management.md) | 待框架审核的三栏经验管理 |
+| [规则管理FCR](docs/framework-change-requests/FCR-moisture-20260724-rule-management-snapshot.md) | 待框架审核的规则治理与任务快照 |
 | [框架事项状态](docs/framework-issues.md) | 尚待业务/发布负责人处理的事项 |
 | [CHANGELOG](CHANGELOG.md) | 版本变更 |
 | [验收证据](docs/evidence/) | 测试和人工验收记录 |

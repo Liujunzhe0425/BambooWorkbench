@@ -16,7 +16,33 @@
       "properties": {
         "schema_version": {"const": "1.0"},
         "operation": {"const": "summary"},
-        "default_year": {"type": "integer", "minimum": 1900, "maximum": 2100}
+        "default_year": {"type": "integer", "minimum": 1900, "maximum": 2100},
+        "rule_selection": {"$ref": "#/$defs/rule_selection"}
+      }
+    },
+    {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "operation", "inputs"],
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "operation": {"const": "append_summary"},
+        "default_year": {"type": "integer", "minimum": 1900, "maximum": 2100},
+        "rule_selection": {"$ref": "#/$defs/rule_selection"},
+        "inputs": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["role", "input_index"],
+            "properties": {
+              "role": {"enum": ["base_summary", "new_raw"]},
+              "input_index": {"type": "integer", "minimum": 0}
+            }
+          }
+        }
       }
     },
     {
@@ -58,6 +84,7 @@
           "maxItems": 50,
           "items": {"$ref": "#/$defs/experience_selection"}
         },
+        "rule_selection": {"$ref": "#/$defs/rule_selection"},
         "question": {"type": "string", "minLength": 1, "maxLength": 2000}
       }
     }
@@ -74,6 +101,15 @@
       "required": ["entry_id", "version", "sha256"],
       "properties": {
         "entry_id": {"$ref": "#/$defs/stable_id"},
+        "version": {"$ref": "#/$defs/stable_id"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "rule_selection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "sha256"],
+      "properties": {
         "version": {"$ref": "#/$defs/stable_id"},
         "sha256": {"$ref": "#/$defs/sha256"}
       }

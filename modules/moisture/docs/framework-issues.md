@@ -2,7 +2,7 @@
 
 > 文档职责：只维护事项状态、责任方和下一步，不重复保存实施规格。
 >
-> 最后核对：2026-07-23；当前模块版本：`1.0.1`。
+> 最后核对：2026-07-24；当前模块版本：`1.0.1`。
 
 v1.0.1独立AI报告、approved经验选择和轻量历史资料选择的框架需求，以
 [`framework-change-requests/FCR-moisture-20260723-ai-report-context-selection.md`](framework-change-requests/FCR-moisture-20260723-ai-report-context-selection.md)
@@ -17,7 +17,9 @@ v1.0.1独立AI报告、approved经验选择和轻量历史资料选择的框架�
 | --- | --- | --- | --- |
 | 正式 moisture 注册与独立进程调用 | 已完成模块与源码验收 | 框架方 | 默认使用正式模块；继续纳入发布回归，不再作为开放缺陷 |
 | DeepSeek / OpenAI-compatible Provider 基础接入 | 已实现，待真实环境验收 | 框架方、安全负责人 | 使用 Windows 凭据、联网开关和逐次同意完成生产环境联调；Provider 异常仍需结构化降级 |
-| 历史追加、候选规则和规则管理 | 延期 | 模块方、框架方 | 不进入v1.0.1当前FCR，后续分别提交独立请求 |
+| 历史汇总追加 | 模块适配前内核已完成，待框架审核 | 框架方 | [`FCR-moisture-20260724-history-summary-append.md`](framework-change-requests/FCR-moisture-20260724-history-summary-append.md) |
+| 轻量经验管理 | 模块适配前内核已完成，待框架审核 | 框架方 | [`FCR-moisture-20260724-experience-management.md`](framework-change-requests/FCR-moisture-20260724-experience-management.md) |
+| 轻量规则管理与任务快照 | 模块适配前内核已完成，待框架审核 | 框架方 | [`FCR-moisture-20260724-rule-management-snapshot.md`](framework-change-requests/FCR-moisture-20260724-rule-management-snapshot.md) |
 | `0.55/0.47` 均值阈值业务批准 | 待业务批准 | 业务负责人 | 当前 `default-v2-approved` 机器资产仍标记 confirmed；业务批准完成前继续按“待批准筛查提示”说明 |
 | GitHub Actions `quality` | 外部阻塞 | 仓库负责人 | job 未获 Runner、无测试步骤；按 GitHub 注释处理账户付款或 Actions spending limit 后重跑 |
 | 便携包正式发布签署 | 待发布阶段完成 | 发布负责人 | 完整便携构建、portable verification 和冻结 EXE 闭环已通过；正式发布仍需签名与发布批准 |
@@ -34,6 +36,7 @@ v1.0.1独立AI报告、approved经验选择和轻量历史资料选择的框架�
 - 本地最终门禁为模块 418 passed，冻结 EXE 主框架闭环 5 passed；CI 红叉为 GitHub Billing 阻塞，不是代码失败；
 - 旧“冻结数据集、复杂治理工作器、全量回放和人工复核中心”方案已归档，不再作为下一阶段实施依据。
 - 旧“三功能工作台一次性交付”FCR已归档；框架适配改为按独立AI报告、历史追加、规则治理分阶段申请。
+- 测试分支已完成历史追加、经验三栏治理、规则三栏治理及固定规则快照的模块侧适配前实现；这些能力在对应FCR获批并完成主框架适配前，不得描述为客户GUI已可用。
 
 ## 维护规则
 

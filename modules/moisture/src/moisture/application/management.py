@@ -6,14 +6,19 @@ import os
 from pathlib import Path
 from typing import Any
 
-from moisture.adapters.experience.catalog import build_approved_catalog
+from moisture.adapters.experience.data_root import (
+    initialize_managed_root,
+    needs_initialization,
+)
+from moisture.adapters.experience.local_approved_repository import (
+    LocalApprovedExperienceRepository,
+)
 from moisture.adapters.history.repository import HistoryRepository
 from moisture.contract.management import (
     ManagementContractError,
     validate_management_response,
 )
 from moisture.infrastructure.atomic_write import write_json_atomic
-from moisture.runtime_paths import module_root
 
 
 class ManagementOperationError(RuntimeError):
@@ -48,18 +53,21 @@ def _history_items(repository: HistoryRepository) -> list[dict[str, object]]:
     ]
 
 
-def _experience_items() -> list[dict[str, object]]:
-    catalog = build_approved_catalog(module_root() / "experience")
+def _experience_items(data_dir: Path) -> list[dict[str, object]]:
+    experience_root = data_dir / "experience"
+    if needs_initialization(experience_root):
+        initialize_managed_root(experience_root)
+    references = LocalApprovedExperienceRepository(experience_root).list_approved()
     return [
         {
-            "entry_id": entry["entry_id"],
-            "title": entry["title"],
-            "version": entry["version"],
-            "sha256": entry["sha256"],
-            "valid_from": entry["effective_from"],
-            "valid_until": entry["effective_to"],
+            "entry_id": reference.experience_id,
+            "title": reference.title,
+            "version": reference.version,
+            "sha256": reference.content_hash,
+            "valid_from": reference.effective_at.date().isoformat(),
+            "valid_until": None,
         }
-        for entry in catalog["entries"]
+        for reference in references
     ]
 
 
@@ -85,7 +93,7 @@ def execute_management(request: dict[str, Any]) -> dict[str, Any]:
     elif operation == "retire_history_summary":
         repository.retire_entry(request["history_id"])
     elif operation == "list_approved_experiences":
-        base["experience_items"] = _experience_items()
+        base["experience_items"] = _experience_items(data_dir)
     else:
         raise ManagementOperationError("不支持的资料管理操作")
     return validate_management_response(base)
