@@ -3,10 +3,13 @@ from pathlib import Path
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QFileDialog,
+    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
     QPushButton,
     QVBoxLayout,
@@ -18,6 +21,7 @@ from ui.widgets.file_drop_zone import FileDropZone
 
 class ModuleTaskPage(QWidget):
     task_requested = Signal(object, list)
+    configured_task_requested = Signal(object, list, object)
     ai_report_requested = Signal(object)
 
     def __init__(self) -> None:
@@ -26,6 +30,8 @@ class ModuleTaskPage(QWidget):
         self.module_id: object | None = None
         self.files: list[Path] = []
         self.supported_extensions: set[str] = set()
+        self.base_summary: Path | None = None
+        self.incremental_available = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 24, 30, 28)
@@ -42,6 +48,28 @@ class ModuleTaskPage(QWidget):
         self.file_list.itemSelectionChanged.connect(self._update_buttons)
         self.intake_feedback = QLabel("请选择或拖放待处理文件")
         self.intake_feedback.setAccessibleName("文件接收状态")
+
+        self.operation_form = QFormLayout()
+        self.operation_combo = QComboBox()
+        self.operation_combo.setAccessibleName("水分汇总方式")
+        self.operation_combo.addItem("创建新的水分汇总表", "summary")
+        self.operation_combo.addItem("在历史标准汇总表上追加", "append_summary")
+        self.operation_combo.currentIndexChanged.connect(self._operation_changed)
+        self.operation_form.addRow("处理方式", self.operation_combo)
+        self.base_summary_row = QWidget()
+        base_layout = QHBoxLayout(self.base_summary_row)
+        base_layout.setContentsMargins(0, 0, 0, 0)
+        base_layout.setSpacing(8)
+        self.base_summary_edit = QLineEdit()
+        self.base_summary_edit.setReadOnly(True)
+        self.base_summary_edit.setPlaceholderText("请选择一份由水分模块生成的标准汇总表")
+        self.base_summary_edit.setAccessibleName("历史标准水分汇总表")
+        self.base_summary_button = QPushButton("选择历史汇总表…")
+        self.base_summary_button.setProperty("secondary", True)
+        self.base_summary_button.clicked.connect(self._pick_base_summary)
+        base_layout.addWidget(self.base_summary_edit, 1)
+        base_layout.addWidget(self.base_summary_button)
+        self.operation_form.addRow("历史汇总表", self.base_summary_row)
 
         picker_row = QHBoxLayout()
         self.add_files_button = QPushButton("添加文件")
@@ -80,6 +108,7 @@ class ModuleTaskPage(QWidget):
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(20, 18, 20, 20)
         card_layout.setSpacing(12)
+        card_layout.addLayout(self.operation_form)
         card_layout.addWidget(self.file_drop_zone)
         card_layout.addLayout(picker_row)
         card_layout.addWidget(self.file_list, 1)
@@ -98,6 +127,7 @@ class ModuleTaskPage(QWidget):
         supported_extensions: list[str] | None = None,
         *,
         ai_report_available: bool = False,
+        incremental_available: bool = False,
     ) -> None:
         self.module_id = module_id
         self.title.setText(title)
@@ -110,6 +140,16 @@ class ModuleTaskPage(QWidget):
             getattr(module_id, "value", module_id) == "moisture"
             and ai_report_available
         )
+        is_moisture = getattr(module_id, "value", module_id) == "moisture"
+        self.incremental_available = is_moisture and incremental_available
+        self.operation_combo.setVisible(is_moisture and incremental_available)
+        label = self.operation_form.labelForField(self.operation_combo)
+        if label is not None:
+            label.setVisible(is_moisture and incremental_available)
+        self.operation_combo.setCurrentIndex(0)
+        self.base_summary = None
+        self.base_summary_edit.clear()
+        self._operation_changed()
         self.clear_files()
 
     def add_files(self, paths: list[Path]) -> None:
@@ -151,6 +191,42 @@ class ModuleTaskPage(QWidget):
         self.intake_feedback.setText("请选择或拖放待处理文件")
         self._update_buttons()
 
+    def _pick_base_summary(self) -> None:
+        selected, _filter = QFileDialog.getOpenFileName(
+            self,
+            "选择历史标准水分汇总表",
+            "",
+            "Excel 工作簿 (*.xlsx)",
+        )
+        if not selected:
+            return
+        try:
+            candidate = Path(selected).resolve(strict=True)
+        except OSError:
+            self.intake_feedback.setText("选择的历史汇总表不可用")
+            return
+        if not candidate.is_file() or candidate.suffix.casefold() != ".xlsx":
+            self.intake_feedback.setText("历史汇总表必须是有效的 .xlsx 文件")
+            return
+        self.base_summary = candidate
+        self.base_summary_edit.setText(str(candidate))
+        self._update_buttons()
+
+    def _operation_changed(self) -> None:
+        append_mode = self.incremental_available and (
+            self.operation_combo.currentData() == "append_summary"
+        )
+        self.base_summary_row.setVisible(append_mode)
+        label = self.operation_form.labelForField(self.base_summary_row)
+        if label is not None:
+            label.setVisible(append_mode)
+        self.file_drop_zone.setAccessibleDescription(
+            "拖放需要追加的新原始水分Excel文件"
+            if append_mode
+            else "拖放需要处理的业务文件"
+        )
+        self._update_buttons()
+
     def _pick_files(self) -> None:
         filters = " ".join(f"*{extension}" for extension in sorted(self.supported_extensions))
         selected, _ = QFileDialog.getOpenFileNames(
@@ -174,13 +250,44 @@ class ModuleTaskPage(QWidget):
         self.add_files(candidates)
 
     def _update_buttons(self) -> None:
-        self.run_button.setEnabled(self.module_id is not None and bool(self.files))
+        append_mode = self.incremental_available and (
+            self.operation_combo.currentData() == "append_summary"
+        )
+        ready = bool(self.files) and (not append_mode or self.base_summary is not None)
+        self.run_button.setEnabled(self.module_id is not None and ready)
         self.remove_button.setEnabled(bool(self.file_list.selectedItems()))
         self.clear_button.setEnabled(bool(self.files))
 
     def _run(self) -> None:
-        if self.module_id is not None and self.files:
+        if self.module_id is None or not self.files:
+            return
+        append_mode = self.incremental_available and (
+            self.operation_combo.currentData() == "append_summary"
+        )
+        if not append_mode:
             self.task_requested.emit(self.module_id, list(self.files))
+            return
+        if self.base_summary is None:
+            self.intake_feedback.setText("请先选择一份历史标准汇总表")
+            return
+        if self.base_summary in self.files:
+            self.intake_feedback.setText("历史汇总表不能同时作为新原始数据")
+            return
+        inputs = [self.base_summary, *self.files]
+        roles = [{"role": "base_summary", "input_index": 0}]
+        roles.extend(
+            {"role": "new_raw", "input_index": index}
+            for index in range(1, len(inputs))
+        )
+        self.configured_task_requested.emit(
+            self.module_id,
+            inputs,
+            {
+                "schema_version": "1.0",
+                "operation": "append_summary",
+                "inputs": roles,
+            },
+        )
 
     def _open_ai_report(self) -> None:
         if self.module_id is not None:

@@ -24,6 +24,8 @@ v1.1.0 完成客户首轮反馈优化并正式集成三个业务模块的最新�
 
 应用无需登录，业务数据、任务历史和输出默认保存在本机。完整说明见[用户使用指南](docs/USER-GUIDE.md)，现场验收见[客户验收测试说明](docs/acceptance/CUSTOMER-UAT-GUIDE.md)。
 
+开发中的下一维护版已加入安装版自动更新框架：启动后异步检查正式 Release，只有用户确认后才下载，完成 SHA-256 校验后覆盖安装并重启，失败不影响离线业务。由于当前源码仓库为私有仓库，团队测试需使用只读细粒度 GitHub Token；普通客户启用自动更新前必须配置独立的公开二进制分发源，严禁在安装包中内置或向客户分发仓库令牌。详见[自动更新设计与发布约定](docs/release/automatic-updates.md)。
+
 ## 可选 AI 配置
 
 系统设置支持离线模式、DeepSeek 和 OpenAI 兼容接口。API 密钥只保存到 Windows 安全凭据，不写入 SQLite、任务文件或日志；每次联网发送前仍须查看脱敏预览并明确授权。
@@ -55,6 +57,8 @@ powershell -ExecutionPolicy Bypass -File scripts\prepare_release.ps1
 ```
 
 模块负责人后续更新必须阅读[三个业务模块后续更新与兼容接入验收说明](docs/handoff/模块后续更新与兼容接入验收说明.md)。
+
+水分模块 PR #52 的框架请求审核和待补公开合同见[水分模块框架适配请求审核记录](docs/acceptance/moisture-fcr-review-2026-07-24.md)。
 
 ## 项目信息
 

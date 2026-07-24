@@ -18,6 +18,8 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 WizardStyle=modern
 ChangesAssociations=yes
+CloseApplications=yes
+RestartApplications=no
 SetupIconFile=..\logo\BambooWorkbench.ico
 UninstallDisplayIcon={app}\logo\BambooWorkbench.ico
 
