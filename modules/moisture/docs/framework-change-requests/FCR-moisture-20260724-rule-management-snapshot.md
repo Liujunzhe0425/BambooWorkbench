@@ -2,52 +2,54 @@
 request_id: FCR-moisture-20260724-rule-management-snapshot
 module_id: moisture
 module_version: 1.1.0
-owner: moisture模块负责人
-status: proposed
+owner: moisture 模块负责人
+status: superseded_by_unified_contract
 framework_areas:
   - ui
   - management
   - workflow
   - storage
 breaking_change: false
-required_before_module_merge: false
+required_before_module_merge: true
+superseded_by: FCR-moisture-20260724-public-management-contract
 ---
 
 # 框架适配请求：轻量规则管理与任务快照
 
-## 目标
+> 本文件不再单独定义公开进程合同。
+> 唯一有效的公开合同、操作名、字段、错误码、规则身份查询和任务快照要求见：
+>
+> `FCR-moisture-20260724-public-management-contract.md`
 
-提供“规则草稿、当前有效规则、历史版本”三栏入口，并让框架创建任务时固定模块返回的规则`{version, sha256}`。模块侧已经完成文件式草稿/不可变版本、active指针、命中预览、原子发布、停用、恢复和固定快照运行。
+## 保留的业务目标
 
-## 最小框架改动
+规则管理继续采用三栏：
 
-1. 独立规则管理页面通过模块管理进程完成创建/更新/校验/预览/发布/停用/恢复/历史复制；
-2. 页面只支持现有RuleDefinition、字段、运算符、Decimal阈值和scope；
-3. 发布前显示格式错误、明显重复/阈值冲突及所选标准汇总表的命中数量；
-4. 用户明确确认后才允许发布，AI候选只能保存为草稿；
-5. TaskService创建moisture任务时读取当前规则身份，并写入模块私有`rule_selection={version,sha256}`；
-6. draft与finalize沿用同一私有配置，禁止finalize重新选择当前active规则。
+```text
+规则草稿 | 当前有效规则 | 历史版本
+```
 
-## 固定边界
+模块继续复用现有：
 
-- 规则包仍由现有Schema、RulePackageLoader和Evaluator校验；
-- 已发布版本不可原地修改；切换active使用原子指针；
-- 管理目录一旦启用即为权威来源，损坏、缺失或hash不符明确失败；
-- 草稿和停用版本不参与新任务；发布新版本不改变已固定的旧任务；
-- `0.55/0.47`是否作为正式生产标准仍由业务负责人批准；
-- 不支持自由公式、代码、AND/OR新语言、自动阈值发布、多人审批或数据库。
+- `RuleDefinition`、规则包 Schema 和 Evaluator；
+- 草稿、不可变发布版本、active/retired 指针；
+- 创建、更新、校验、预览、发布、停用、恢复和历史复制；
+- package hash 和 rules SHA-256；
+- 原子写入；
+- `rule_selection={version,sha256}` 固定 draft/finalize 快照。
 
-## 验收
+AI 候选只能进入草稿，不能自动发布。`0.55/0.47` 仍待业务负责人批准，
+不得描述为正式生产阈值。
 
-- 草稿不影响当前检测，非法字段/运算符被拒绝；
-- 发布失败保留旧active，恢复不删除历史版本；
-- 命中预览复用标准汇总reader和现有Evaluator；
-- 同一任务draft/finalize规则版本/hash及结果一致；
-- 新任务使用新active规则；
-- 快照缺失、hash不符、active损坏均明确失败且不回退内置规则；
-- 正式运行依赖图不包含可写规则管理repository。
+## 当前状态
 
-## 框架方审核
+- 内部 repository/service：已存在；
+- 私有规则快照加载：已存在；
+- 当前规则公开查询：尚未接入；
+- `run_management.bat manage`：尚未接入规则治理操作；
+- TaskService 自动固定快照：等待统一合同和框架复审；
+- manifest capability：尚未声明；
+- 框架页面：尚未接入；
+- 合并前置：是，必须先批准统一 FCR。
 
-- 审核结论：待审核
-- 实施分支/PR：待填写
+本文件不得再用于绕过统一合同复审。
