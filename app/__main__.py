@@ -13,6 +13,9 @@ def compose_application(application: QApplication, context: AppContext) -> MainW
     application.setStyleSheet(context.stylesheet)
     window = MainWindow(context)
     window.show()
+    schedule_update = getattr(window, "schedule_automatic_update_check", None)
+    if callable(schedule_update):
+        schedule_update()
     return window
 
 
