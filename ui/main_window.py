@@ -1,8 +1,9 @@
 import ctypes
+import os
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon, QResizeEvent, QShowEvent
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -32,6 +33,7 @@ from ui.pages.result_center_page import ResultCenterPage
 from ui.pages.settings_page import SettingsPage
 from ui.pages.task_progress_page import TaskProgressPage
 from ui.pages.workbench_page import WorkbenchPage
+from ui.updates import UpdateController
 from ui.widgets.window_title_bar import WindowTitleBar
 
 
@@ -137,6 +139,9 @@ class MainWindow(QMainWindow):
         self.history_page.result_requested.connect(self._open_history_result)
         self.workbench_page.module_selected.connect(self._open_module)
         self.module_task_page.task_requested.connect(self._start_task)
+        self.module_task_page.configured_task_requested.connect(
+            self._start_configured_task
+        )
         self.module_task_page.ai_report_requested.connect(self._open_moisture_ai_report)
         self.moisture_ai_report_page.task_requested.connect(self._start_moisture_ai_report)
         self.moisture_ai_report_page.action_failed.connect(
@@ -152,6 +157,13 @@ class MainWindow(QMainWindow):
             lambda message: self._show_failure("设置操作失败", message)
         )
         self.settings_page.settings_saved.connect(context.reload_ai_configuration)
+        self.update_controller = UpdateController(self, context)
+        self.settings_page.check_updates_requested.connect(
+            self.update_controller.check_manually
+        )
+        self.update_controller.status_changed.connect(
+            self.settings_page.set_update_status
+        )
         self.knowledge_page.action_failed.connect(
             lambda message: self._show_failure("知识库操作失败", message)
         )
@@ -172,6 +184,13 @@ class MainWindow(QMainWindow):
             nav_page=PageId.WORKBENCH,
             record_history=False,
         )
+
+    def schedule_automatic_update_check(self) -> None:
+        if not getattr(sys, "frozen", False) and os.environ.get(
+            "BAMBOO_ENABLE_SOURCE_UPDATE_CHECK"
+        ) != "1":
+            return
+        QTimer.singleShot(1500, self.update_controller.check_automatically)
 
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -284,14 +303,38 @@ class MainWindow(QMainWindow):
             module.manifest.module_name,
             module.manifest.supported_extensions,
             ai_report_available="ai_report" in module.manifest.capabilities,
+            incremental_available=module.manifest.supports_incremental,
         )
         self._show_widget(self.module_task_page, nav_page=PageId.WORKBENCH)
 
     def _start_task(self, module_id: object, files: list) -> None:
+        self._start_task_with_config(module_id, files, None)
+
+    def _start_configured_task(
+        self,
+        module_id: object,
+        files: list,
+        module_config: object,
+    ) -> None:
+        if not isinstance(module_config, dict):
+            self._show_failure("任务创建失败", "模块任务配置无效")
+            return
+        self._start_task_with_config(module_id, files, module_config)
+
+    def _start_task_with_config(
+        self,
+        module_id: object,
+        files: list,
+        module_config: dict[str, object] | None,
+    ) -> None:
         self._starting_task = True
         self._start_failure_job_id = None
         try:
-            job_id = self.context.task_service.create_and_start(module_id, files)
+            job_id = self.context.task_service.create_and_start(
+                module_id,
+                files,
+                module_config=module_config,
+            )
         except Exception as error:
             self._show_failure("任务创建失败", str(error))
             return

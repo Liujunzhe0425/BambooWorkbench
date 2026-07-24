@@ -231,7 +231,12 @@ class TaskService(QObject):
     ) -> str:
         module = self.registry.get(module_id)
         if module_config is not None:
-            self._validate_module_config_support(module_id, module, module_config)
+            self._validate_module_config_support(
+                module_id,
+                module,
+                module_config,
+                input_count=len(inputs),
+            )
         timestamp = datetime.now().astimezone()
         job_id = self.job_id_factory()
         if not _JOB_ID_PATTERN.fullmatch(job_id):
@@ -580,13 +585,44 @@ class TaskService(QObject):
         module_id: ModuleId,
         module: object,
         payload: dict[str, object],
+        *,
+        input_count: int,
     ) -> None:
         manifest = getattr(module, "manifest", None)
         capabilities = getattr(manifest, "capabilities", [])
-        if module_id is not ModuleId.MOISTURE or "ai_report" not in capabilities:
-            raise ValueError("当前模块版本不支持独立 AI 汇总报告")
-        if payload.get("schema_version") != "1.0" or payload.get("operation") != "ai_report":
-            raise ValueError("AI 汇总报告配置版本或操作类型无效")
+        if module_id is not ModuleId.MOISTURE or payload.get("schema_version") != "1.0":
+            raise ValueError("当前模块不支持该任务配置")
+        operation = payload.get("operation")
+        if operation == "ai_report":
+            if "ai_report" not in capabilities:
+                raise ValueError("当前模块版本不支持独立 AI 汇总报告")
+            return
+        if operation != "append_summary":
+            raise ValueError("水分模块任务配置的操作类型无效")
+        manifest = getattr(module, "manifest", None)
+        if not getattr(manifest, "supports_incremental", False):
+            raise ValueError("当前水分模块尚未声明支持历史汇总追加")
+        inputs = payload.get("inputs")
+        if (
+            not isinstance(inputs, list)
+            or len(inputs) < 2
+            or len(inputs) != input_count
+        ):
+            raise ValueError("历史追加至少需要一份历史汇总表和一份新原始数据")
+        expected_indexes = set(range(len(inputs)))
+        actual_indexes: set[int] = set()
+        base_count = 0
+        for item in inputs:
+            if not isinstance(item, dict) or set(item) != {"role", "input_index"}:
+                raise ValueError("历史追加输入角色配置无效")
+            role = item.get("role")
+            index = item.get("input_index")
+            if role not in {"base_summary", "new_raw"} or type(index) is not int:
+                raise ValueError("历史追加输入角色或序号无效")
+            actual_indexes.add(index)
+            base_count += int(role == "base_summary")
+        if base_count != 1 or actual_indexes != expected_indexes:
+            raise ValueError("历史追加必须完整且不重复地分配一份基表和全部新数据")
 
     @staticmethod
     def _sha256(path: Path) -> str:
