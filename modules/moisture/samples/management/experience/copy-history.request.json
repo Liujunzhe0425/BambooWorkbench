@@ -1,11 +1,13 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "request_id": "req-demo-006",
   "module_id": "moisture",
   "operation": "copy_experience_history_to_draft",
   "data_dir": "C:\\BambooData\\moisture",
-  "experience_id": "EXP-DEMO-001",
-  "version": "1.0.0",
-  "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "new_version": "2.0.0"
+  "parameters": {
+    "experience_id": "EXP-DEMO-001",
+    "version": "1.0.0",
+    "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "new_version": "2.0.0"
+  }
 }

@@ -2,45 +2,42 @@
 
 > 文档职责：只维护事项状态、责任方和下一步，不重复保存实施规格。
 >
-> 最后核对：2026-07-24；当前模块版本：`1.0.1`。
-
-v1.0.1独立AI报告、approved经验选择和轻量历史资料选择的框架需求，以
-[`framework-change-requests/FCR-moisture-20260723-ai-report-context-selection.md`](framework-change-requests/FCR-moisture-20260723-ai-report-context-selection.md)
-为当前唯一有效FCR。下一阶段总体业务架构以
-[`architecture/moisture-next-stage-architecture.md`](architecture/moisture-next-stage-architecture.md)
-为准；v1.0.1模块实施边界见
-[`architecture/moisture-v1.0.1-independent-ai-report-plan.md`](architecture/moisture-v1.0.1-independent-ai-report-plan.md)。本文件不复制其字段、流程、Schema或验收矩阵。
+> 最后核对：2026-07-24；当前模块版本：`1.1.1`。
 
 ## 当前状态
 
 | 事项 | 状态 | 责任方 | 下一步/权威依据 |
 | --- | --- | --- | --- |
-| 正式 moisture 注册与独立进程调用 | 已完成模块与源码验收 | 框架方 | 默认使用正式模块；继续纳入发布回归，不再作为开放缺陷 |
-| DeepSeek / OpenAI-compatible Provider 基础接入 | 已实现，待真实环境验收 | 框架方、安全负责人 | 使用 Windows 凭据、联网开关和逐次同意完成生产环境联调；Provider 异常仍需结构化降级 |
-| 历史汇总追加 | 模块适配前内核已完成，待框架审核 | 框架方 | [`FCR-moisture-20260724-history-summary-append.md`](framework-change-requests/FCR-moisture-20260724-history-summary-append.md) |
-| 轻量经验管理 | 模块适配前内核已完成，待框架审核 | 框架方 | [`FCR-moisture-20260724-experience-management.md`](framework-change-requests/FCR-moisture-20260724-experience-management.md) |
-| 轻量规则管理与任务快照 | 模块适配前内核已完成，待框架审核 | 框架方 | [`FCR-moisture-20260724-rule-management-snapshot.md`](framework-change-requests/FCR-moisture-20260724-rule-management-snapshot.md) |
-| `0.55/0.47` 均值阈值业务批准 | 待业务批准 | 业务负责人 | 当前 `default-v2-approved` 机器资产仍标记 confirmed；业务批准完成前继续按“待批准筛查提示”说明 |
-| GitHub Actions `quality` | 外部阻塞 | 仓库负责人 | job 未获 Runner、无测试步骤；按 GitHub 注释处理账户付款或 Actions spending limit 后重跑 |
-| 便携包正式发布签署 | 待发布阶段完成 | 发布负责人 | 完整便携构建、portable verification 和冻结 EXE 闭环已通过；正式发布仍需签名与发布批准 |
+| 正式 moisture 注册、任务进程与历史追加 | 已完成模块实现 | 框架方 | 保持 `supports_incremental=true`，复验 Registry → TaskService → Runner → BAT |
+| 统一 v1.1 管理进程合同 | 模块已实现，待框架复验 | 框架方 | [`FCR-moisture-20260724-public-management-contract.md`](framework-change-requests/FCR-moisture-20260724-public-management-contract.md) |
+| 经验管理三栏 | 模块 10 个公开操作已接入 BAT，GUI 待适配 | 框架方 | 通过中央 ManagementService/Runner 调用，不得直接 import 模块内部服务 |
+| 规则管理三栏 | 模块 12 个治理操作已接入 BAT，GUI 待适配 | 框架方 | 复验草稿、预览、发布、停用、恢复和历史复制 |
+| 当前规则身份与任务快照 | 模块查询和固定快照已实现，自动注入待适配 | 框架方 | TaskService 创建任务时查询并固定 `{version, sha256}`，draft/finalize 使用同一身份 |
+| 管理合同发现 | 中央 manifest 尚不支持模块自有 Schema 描述 | 框架方 | 按统一 FCR 增加安全的相对 Schema 路径发现及请求/响应前后置校验 |
+| DeepSeek / OpenAI-compatible Provider | 已有框架能力，待生产环境验收 | 框架方、安全负责人 | 使用 Windows 凭据、联网开关和逐次同意；异常结构化降级 |
+| `0.55/0.47` 均值阈值业务批准 | 待业务批准 | 业务负责人 | 继续标注为待批准筛查提示，不得称为正式生产标准 |
+| 便携包正式发布签署 | 待发布阶段 | 发布负责人 | 复验 v1.1.1 管理入口后执行签名、发布与回滚准备 |
 
-## 已关闭事项
+## 模块已交付边界
 
-- 主框架默认 `use_mocks=False`，正式 `modules/moisture` 可由 Registry 发现；
-- Runner 通过 `run_module.bat` 启动独立模块进程，不需要框架 import moisture 业务实现；
-- 模块合同、`version`、`self-check`、历史样本和源码调用链已完成验收；
-- 框架 Bootstrap 已能组合 DeepSeek、OpenAI-compatible、Mock 和不可用 Provider；
-- 模块继续只声明 service request、校验 service response，不持有 HTTP 客户端或 API Key。
-- 框架 PR #43 已提供独立 AI 报告入口、受控模块数据目录、管理进程宿主、历史/approved 经验选择和 Provider 编排；
-- v1.0.1 模块已提供四表汇总、独立 AI 报告、历史资料管理入口和 approved 经验目录；
-- 本地最终门禁为模块 418 passed，冻结 EXE 主框架闭环 5 passed；CI 红叉为 GitHub Billing 阻塞，不是代码失败；
-- 旧“冻结数据集、复杂治理工作器、全量回放和人工复核中心”方案已归档，不再作为下一阶段实施依据。
-- 旧“三功能工作台一次性交付”FCR已归档；框架适配改为按独立AI报告、历史追加、规则治理分阶段申请。
-- 测试分支已完成历史追加、经验三栏治理、规则三栏治理及固定规则快照的模块侧适配前实现；这些能力在对应FCR获批并完成主框架适配前，不得描述为客户GUI已可用。
+- 正式任务入口继续为 `run_module.bat`，管理入口为 `run_management.bat manage`；
+- 模块 v1.1.1 的管理合同覆盖 27 个操作：旧历史四操作、经验十操作、规则十二操作和当前规则身份查询；
+- v1.0 四操作保持兼容；v1.1 请求/响应由模块 Schema 严格校验；
+- 正式 draft/finalize 依赖图不能触达可写经验或规则管理端；
+- 规则发布生成不可变版本和 SHA-256；已有 draft/finalize 使用固定规则快照；
+- AI 不得自动发布规则，模块不持有 HTTP Provider、API Key 或网络职责；
+- 模块测试结果和提交号以 Draft PR #52 最新证据为准，不沿用旧版本固定测试数量。
+
+## 框架不得绕过的边界
+
+1. 不得因中央 v1.0 管理合同不足而直接 import 模块 repository/service。
+2. 不得在未校验模块请求和响应 Schema 时向 GUI 宣称新管理能力可用。
+3. 正式任务失败时不得静默回退 moisture Mock。
+4. TaskService 必须在任务创建时固定规则身份；finalize 不得重新选择当前 active。
+5. 业务阈值、规则含义和经验内容仍由业务负责人批准，框架不接管业务判断。
 
 ## 维护规则
 
-1. 这里只更新状态、责任方和链接；不得复制 FCR 的详细协议或验收条款。
-2. 已完成事项移入“已关闭事项”，不继续描述为待开发能力。
-3. FCR 获批、拒绝或拆分后，只同步状态和新文档链接。
-4. 业务阈值批准必须引用正式批准记录，不能仅凭机器包中的 `confirmed` 字段关闭。
+1. 本文件只更新状态、责任方和链接，不复制 FCR 的详细协议。
+2. FCR 批准、拒绝或拆分后，只同步状态和新文档链接。
+3. 业务阈值批准必须引用正式批准记录，不能仅凭规则包字段关闭。

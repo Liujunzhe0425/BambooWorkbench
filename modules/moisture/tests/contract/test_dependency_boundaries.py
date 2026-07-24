@@ -30,7 +30,11 @@ FORBIDDEN_PATH_PARTS = {
 }
 ADMIN_MODULES = {
     "moisture.adapters.experience.local_editable_repository",
+    "moisture.adapters.rules.local_editable_repository",
+    "moisture.application.management",
     "moisture.application.experience_management",
+    "moisture.application.rule_management",
+    "moisture.management_cli",
     "moisture.ports.experience_admin_repository",
     "moisture.tools.manage_experience",
 }
@@ -95,7 +99,7 @@ def test_module_has_no_legacy_runtime_responsibilities() -> None:
     assert not (MODULE_ROOT / "schemas" / "result.schema.json").exists()
 
 
-def test_formal_runtime_cannot_reach_offline_experience_management() -> None:
+def test_formal_runtime_cannot_reach_offline_management() -> None:
     reached = _runtime_modules()
     assert reached.isdisjoint(ADMIN_MODULES)
     assert "moisture.application.draft_orchestrator" in reached

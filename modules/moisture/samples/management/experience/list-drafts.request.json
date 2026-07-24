@@ -1,7 +1,8 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "request_id": "req-demo-001",
   "module_id": "moisture",
   "operation": "list_experience_drafts",
-  "data_dir": "C:\\BambooData\\moisture"
+  "data_dir": "C:\\BambooData\\moisture",
+  "parameters": {}
 }

@@ -1,0 +1,462 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bamboo:moisture:management-response:1.1",
+  "title": "Moisture Management Response (v1.1)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "request_id", "module_id", "operation", "status"],
+  "properties": {
+    "schema_version": {"const": "1.1"},
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9-]{6,64}$"},
+    "module_id": {"const": "moisture"},
+    "operation": {"$ref": "#/$defs/operation"},
+    "status": {"enum": ["ok", "error"]},
+    "result": {"$ref": "#/$defs/result"},
+    "error_code": {"$ref": "#/$defs/error_code"},
+    "message": {"type": "string", "minLength": 1, "maxLength": 300}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "ok"}}},
+      "then": {
+        "required": ["result"],
+        "not": {"anyOf": [{"required": ["error_code"]}, {"required": ["message"]}]}
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "error"}}},
+      "then": {
+        "required": ["error_code", "message"],
+        "not": {"required": ["result"]}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "ok"},
+          "operation": {
+            "enum": [
+              "list_approved_experiences",
+              "list_experience_drafts",
+              "list_experience_approved",
+              "list_experience_history"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {"result": {"required": ["experience_items"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "ok"},
+          "operation": {"const": "import_history_summary"}
+        }
+      },
+      "then": {
+        "properties": {"result": {"required": ["imported_history_id"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "ok"},
+          "operation": {"const": "list_history_summaries"}
+        }
+      },
+      "then": {
+        "properties": {"result": {"required": ["history_items"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "ok"},
+          "operation": {"const": "retire_history_summary"}
+        }
+      },
+      "then": {
+        "properties": {"result": {"required": ["history_item"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "ok"},
+          "operation": {
+            "enum": [
+              "show_experience",
+              "validate_experience_draft",
+              "create_experience_draft",
+              "update_experience_draft",
+              "publish_experience",
+              "retire_experience",
+              "copy_experience_history_to_draft"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {"result": {"required": ["experience"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "ok"},
+          "operation": {"const": "get_active_rule_identity"}
+        }
+      },
+      "then": {
+        "properties": {"result": {"required": ["active_rule"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "ok"},
+          "operation": {
+            "enum": [
+              "list_rule_drafts",
+              "list_current_rules",
+              "list_rule_history"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {"result": {"required": ["rule_items"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "ok"},
+          "operation": {"const": "show_rule_package"}
+        }
+      },
+      "then": {
+        "properties": {"result": {"required": ["rule_package"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "ok"},
+          "operation": {
+            "enum": [
+              "validate_rule_draft",
+              "create_rule_draft",
+              "update_rule_draft",
+              "publish_rule",
+              "retire_current_rule",
+              "restore_rule_version",
+              "copy_rule_history_to_draft"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {"result": {"required": ["rule"]}}
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "ok"},
+          "operation": {"const": "preview_rule_draft"}
+        }
+      },
+      "then": {
+        "properties": {"result": {"required": ["rule_preview"]}}
+      }
+    }
+  ],
+  "$defs": {
+    "operation": {
+      "enum": [
+        "list_approved_experiences",
+        "import_history_summary",
+        "list_history_summaries",
+        "retire_history_summary",
+        "list_experience_drafts",
+        "list_experience_approved",
+        "list_experience_history",
+        "show_experience",
+        "validate_experience_draft",
+        "create_experience_draft",
+        "update_experience_draft",
+        "publish_experience",
+        "retire_experience",
+        "copy_experience_history_to_draft",
+        "get_active_rule_identity",
+        "list_rule_drafts",
+        "list_current_rules",
+        "list_rule_history",
+        "show_rule_package",
+        "validate_rule_draft",
+        "preview_rule_draft",
+        "create_rule_draft",
+        "update_rule_draft",
+        "publish_rule",
+        "retire_current_rule",
+        "restore_rule_version",
+        "copy_rule_history_to_draft"
+      ]
+    },
+    "error_code": {
+      "enum": [
+        "MANAGEMENT_REQUEST_INVALID",
+        "MANAGEMENT_OPERATION_UNSUPPORTED",
+        "MANAGEMENT_OPERATION_FAILED",
+        "MANAGEMENT_PATH_REJECTED",
+        "MANAGEMENT_RESPONSE_WRITE_FAILED",
+        "MANAGEMENT_DATA_CORRUPTED",
+        "EXPERIENCE_NOT_FOUND",
+        "EXPERIENCE_SCHEMA_INVALID",
+        "EXPERIENCE_HASH_CONFLICT",
+        "EXPERIENCE_VERSION_CONFLICT",
+        "EXPERIENCE_STATE_CONFLICT",
+        "EXPERIENCE_PATH_REJECTED",
+        "EXPERIENCE_WRITE_FAILED",
+        "RULE_NOT_FOUND",
+        "RULE_ACTIVE_NOT_FOUND",
+        "RULE_SCHEMA_INVALID",
+        "RULE_HASH_CONFLICT",
+        "RULE_VERSION_CONFLICT",
+        "RULE_STATE_CONFLICT",
+        "RULE_PREVIEW_INPUT_INVALID",
+        "RULE_PATH_REJECTED",
+        "RULE_WRITE_FAILED"
+      ]
+    },
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "legacy_experience_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry_id", "title", "version", "sha256", "valid_from", "valid_until"],
+      "properties": {
+        "entry_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+        "version": {"type": "string", "minLength": 1, "maxLength": 128},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "valid_from": {"type": ["string", "null"]},
+        "valid_until": {"type": ["string", "null"]}
+      }
+    },
+    "experience_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "experience_id", "version", "status", "title", "source", "sha256",
+        "effective_at", "applicable_suppliers", "applicable_materials",
+        "applicable_seasons", "applicable_metrics", "supersedes"
+      ],
+      "properties": {
+        "experience_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "version": {"type": "string", "minLength": 1, "maxLength": 128},
+        "status": {"enum": ["draft", "approved", "retired"]},
+        "title": {"type": "string", "minLength": 1, "maxLength": 200},
+        "source": {"type": "string", "minLength": 1, "maxLength": 300},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "effective_at": {"type": "string", "minLength": 1},
+        "applicable_suppliers": {"$ref": "#/$defs/scope_values"},
+        "applicable_materials": {"$ref": "#/$defs/scope_values"},
+        "applicable_seasons": {"$ref": "#/$defs/scope_values"},
+        "applicable_metrics": {"$ref": "#/$defs/scope_values"},
+        "supersedes": {"type": ["string", "null"]}
+      }
+    },
+    "scope_values": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "minLength": 1}
+    },
+    "experience": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["experience_id", "version", "status", "sha256", "document"],
+      "properties": {
+        "experience_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "version": {"type": "string", "minLength": 1, "maxLength": 128},
+        "status": {"enum": ["draft", "approved", "retired"]},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "document": {"type": "string", "minLength": 1, "maxLength": 65536}
+      }
+    },
+    "history_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "history_id", "display_name", "sha256", "date_start", "date_end", "active"
+      ],
+      "properties": {
+        "history_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "display_name": {"type": "string", "minLength": 1, "maxLength": 160},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "date_start": {"type": ["string", "null"]},
+        "date_end": {"type": ["string", "null"]},
+        "active": {"type": "boolean"}
+      }
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule_version", "package_id", "lifecycle", "rules_sha256",
+        "package_hash", "source", "applicable_scope", "confirmation_status"
+      ],
+      "properties": {
+        "rule_version": {"type": "string", "minLength": 1, "maxLength": 128},
+        "package_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "lifecycle": {"enum": ["draft", "current", "history", "retired"]},
+        "rules_sha256": {"$ref": "#/$defs/sha256"},
+        "package_hash": {"$ref": "#/$defs/sha256"},
+        "source": {"type": "string", "minLength": 1},
+        "applicable_scope": {"type": "string", "minLength": 1},
+        "confirmation_status": {"type": "string", "minLength": 1}
+      }
+    },
+    "rule_package": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule_version", "package_id", "lifecycle", "rules_sha256",
+        "package_hash", "source", "applicable_scope", "confirmation_status",
+        "manifest", "rules_yaml"
+      ],
+      "properties": {
+        "rule_version": {"type": "string", "minLength": 1, "maxLength": 128},
+        "package_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "lifecycle": {"enum": ["draft", "current", "history", "retired"]},
+        "rules_sha256": {"$ref": "#/$defs/sha256"},
+        "package_hash": {"$ref": "#/$defs/sha256"},
+        "source": {"type": "string", "minLength": 1},
+        "applicable_scope": {"type": "string", "minLength": 1},
+        "confirmation_status": {"type": "string", "minLength": 1},
+        "manifest": {"type": "object"},
+        "rules_yaml": {"type": "string", "minLength": 1, "maxLength": 262144}
+      }
+    },
+    "result": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["experience_items"],
+          "properties": {
+            "experience_items": {
+              "type": "array",
+              "maxItems": 500,
+              "items": {
+                "oneOf": [
+                  {"$ref": "#/$defs/legacy_experience_item"},
+                  {"$ref": "#/$defs/experience_item"}
+                ]
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["history_items"],
+          "properties": {
+            "history_items": {
+              "type": "array",
+              "maxItems": 1000,
+              "items": {"$ref": "#/$defs/history_item"}
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["imported_history_id"],
+          "properties": {
+            "imported_history_id": {"type": "string", "minLength": 1, "maxLength": 128}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["history_item"],
+          "properties": {"history_item": {"$ref": "#/$defs/history_item"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["experience"],
+          "properties": {"experience": {"$ref": "#/$defs/experience"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["active_rule"],
+          "properties": {
+            "active_rule": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["version", "sha256"],
+              "properties": {
+                "version": {"type": "string", "minLength": 1, "maxLength": 128},
+                "sha256": {"$ref": "#/$defs/sha256"}
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rule_items"],
+          "properties": {
+            "rule_items": {
+              "type": "array",
+              "maxItems": 500,
+              "items": {"$ref": "#/$defs/rule"}
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rule"],
+          "properties": {"rule": {"$ref": "#/$defs/rule"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rule_package"],
+          "properties": {"rule_package": {"$ref": "#/$defs/rule_package"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["rule_preview"],
+          "properties": {
+            "rule_preview": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "batch_count", "matched_batch_count", "decision_count",
+                "pending_match_count", "warnings"
+              ],
+              "properties": {
+                "batch_count": {"type": "integer", "minimum": 0},
+                "matched_batch_count": {"type": "integer", "minimum": 0},
+                "decision_count": {"type": "integer", "minimum": 0},
+                "pending_match_count": {"type": "integer", "minimum": 0},
+                "warnings": {
+                  "type": "array",
+                  "items": {"type": "string", "minLength": 1}
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

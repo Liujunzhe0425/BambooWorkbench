@@ -3,7 +3,7 @@ request_id: FCR-moisture-20260724-public-management-contract
 module_id: moisture
 target_module_version: 1.1.1
 owner: moisture 模块负责人
-status: framework_review_required
+status: module_implemented_framework_review_required
 framework_areas:
   - registry
   - management
@@ -21,13 +21,15 @@ pull_request: 52
 
 本文件是水分模块经验管理、规则管理和规则快照的唯一公开合同提案。
 
-框架批准本合同以前，模块不得：
+模块 v1.1.1 已按本提案提供版本化 Schema、真实 `run_management.bat manage`
+分发、能力声明和进程测试；这些属于待框架复验的模块公开合同，不能描述为中央
+ManagementService 已经批准或已接入。框架批准并实现发现、前后置校验和 UI/TaskService
+调用以前：
 
-- 把模块私有 Schema 描述为已批准的框架合同；
-- 将新管理操作接入正式 `run_management.bat manage`；
-- 在 `module.json capabilities` 中声明经验管理、规则管理或规则快照；
-- 将公开版本升级为 `1.1.1`；
-- 把本请求标为非合并前置。
+- 中央管理 Runner 仍只能使用既有 v1.0 四操作；
+- GUI 不得宣称经验管理、规则管理或规则快照已经可用；
+- TaskService 不得绕过进程合同直接 import 模块内部 repository/service；
+- 本请求继续是 PR #52 的合并前置复验项。
 
 现有历史汇总追加能力和 `supports_incremental: true` 不属于本次重做范围。
 
@@ -53,14 +55,15 @@ schemas/experience-management-request.schema.json
 schemas/experience-management-response.schema.json
 ```
 
-目前只是模块私有设计资产，不是已批准的中央合同，也尚未接入正式管理进程。
+是模块 v1.1.1 的公开进程合同资产，已由模块入口自校验；中央 manifest/Runner 对其
+发现和校验仍待框架实现。
 
 ## 3. 唯一实施方案
 
 框架增加“模块自有、版本化管理合同”的发现和校验能力，仍复用现有管理进程入口，
 不得直接 import 模块 Python 内部类。
 
-目标 `module.json` 在框架批准后增加：
+目标 `module.json` 在框架支持扩展 manifest 字段后增加：
 
 ```json
 {
@@ -84,7 +87,7 @@ schemas/experience-management-response.schema.json
 7. `data_dir` 由框架授权并使用绝对路径传入；
 8. 正式 `run_module.bat` 不暴露管理写操作。
 
-框架批准后，模块公开 capabilities 固定为：
+模块 v1.1.1 已声明、框架需复验的 capabilities 固定为：
 
 ```json
 [

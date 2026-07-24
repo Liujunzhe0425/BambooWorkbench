@@ -339,6 +339,7 @@ class LocalEditableExperienceRepository:
             hashlib.sha256(content).hexdigest(),
             body,
             relative.as_posix(),
+            text,
         )
 
     @staticmethod

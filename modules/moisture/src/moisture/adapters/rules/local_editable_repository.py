@@ -80,6 +80,13 @@ class RulePreview:
     warnings: tuple[str, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class RuleAdminPackage:
+    summary: RuleAdminSummary
+    manifest: dict[str, object]
+    rules_yaml: str
+
+
 def _package_hash(path: Path) -> str:
     digest = hashlib.sha256()
     for name in ("rule-package.json", "rules.yaml"):
@@ -252,6 +259,41 @@ class LocalEditableRuleRepository:
                 )
             )
         return items
+
+    def show_package(self, version: str) -> RuleAdminPackage:
+        candidates = [
+            ("draft", self._package("drafts", version)),
+            ("version", self._package("versions", version)),
+        ]
+        existing = [(kind, path) for kind, path in candidates if path.is_dir()]
+        if not existing:
+            raise KeyError(f"rule package not found: {version}")
+        if len(existing) != 1:
+            raise RuleAdminConflictError("rule version exists in multiple lifecycles")
+        kind, path = existing[0]
+        if kind == "draft":
+            lifecycle = "draft"
+        else:
+            active = _read_pointer(self._root)
+            retired = _retired_identities(self._root)
+            summary = self._summary(path, "history")
+            if active is not None and active["rule_version"] == version:
+                lifecycle = "current"
+            elif (summary.rule_version, summary.rules_sha256) in retired:
+                lifecycle = "retired"
+            else:
+                lifecycle = "history"
+        summary = self._summary(path, lifecycle)
+        try:
+            manifest = json.loads(
+                (path / "rule-package.json").read_text(encoding="utf-8")
+            )
+            rules_yaml = (path / "rules.yaml").read_text(encoding="utf-8")
+        except (OSError, UnicodeError, json.JSONDecodeError) as error:
+            raise RuleAdminValidationError("invalid rule package content") from error
+        if not isinstance(manifest, dict):
+            raise RuleAdminValidationError("invalid rule package manifest")
+        return RuleAdminPackage(summary, manifest, rules_yaml)
 
     def _write_package(
         self,

@@ -1,7 +1,7 @@
 ---
 request_id: FCR-moisture-20260724-experience-management
 module_id: moisture
-module_version: 1.1.0
+module_version: 1.1.1
 owner: moisture 模块负责人
 status: superseded_by_unified_contract
 framework_areas:

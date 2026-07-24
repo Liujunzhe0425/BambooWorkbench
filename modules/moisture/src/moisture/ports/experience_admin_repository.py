@@ -14,6 +14,7 @@ class AdminExperience:
     sha256: str
     body: str
     path: str
+    document: str
 
 
 @dataclass(frozen=True, slots=True)

@@ -16,6 +16,7 @@ from moisture.adapters.rules.local_editable_repository import (  # noqa: E402
 )
 from moisture.application.draft_orchestrator import run_draft  # noqa: E402
 from moisture.application.finalize_orchestrator import run_finalize  # noqa: E402
+from moisture.application.management import execute_management  # noqa: E402
 from moisture.contract.job_models import (  # noqa: E402
     JobPhase,
     JobRequest,
@@ -39,7 +40,7 @@ def _manifest(version: str) -> dict[str, object]:
         "applicable_scope": "原竹丝；全年",
         "customer_confirmation_status": "confirmed",
         "released_at": "2026-07-24T00:00:00+08:00",
-        "module_version": "1.0.1",
+        "module_version": "1.1.1",
     }
 
 
@@ -120,12 +121,22 @@ def test_pinned_draft_finalize_ignore_later_active_publication(
     data_dir = tmp_path / "module-data"
     monkeypatch.setenv("BAMBOO_MOISTURE_DATA_DIR", str(data_dir))
     repository = LocalEditableRuleRepository(data_dir / "rules")
-    pinned = repository.list_current()[0]
+    active_response = execute_management(
+        {
+            "schema_version": "1.1",
+            "request_id": "snapshot-query",
+            "module_id": "moisture",
+            "operation": "get_active_rule_identity",
+            "data_dir": str(data_dir.resolve()),
+            "parameters": {},
+        }
+    )
+    pinned = active_response["result"]["active_rule"]
     source = _source(tmp_path, workbook_factory)
     config = _config(
         tmp_path / "pinned.json",
-        version=pinned.rule_version,
-        sha256=pinned.rules_sha256,
+        version=pinned["version"],
+        sha256=pinned["sha256"],
     )
 
     draft_dir = tmp_path / "draft"

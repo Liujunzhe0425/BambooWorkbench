@@ -1,0 +1,13 @@
+{
+  "schema_version": "1.1",
+  "request_id": "req-rule-demo-001",
+  "module_id": "moisture",
+  "operation": "get_active_rule_identity",
+  "status": "ok",
+  "result": {
+    "active_rule": {
+      "version": "default-v2-approved",
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  }
+}

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from moisture.adapters.rules.local_editable_repository import (
     LocalEditableRuleRepository,
+    RuleAdminPackage,
     RuleAdminSummary,
     RulePreview,
 )
@@ -25,6 +26,9 @@ class RuleManagementService:
 
     def list_history(self) -> list[RuleAdminSummary]:
         return self._repository.list_history()
+
+    def show_package(self, version: str) -> RuleAdminPackage:
+        return self._repository.show_package(version)
 
     def create_draft(
         self, manifest: dict[str, object], rules_yaml: str

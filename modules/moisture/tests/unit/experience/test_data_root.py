@@ -18,6 +18,7 @@ from moisture.adapters.experience.data_root import (
     resolve_bundled_root,
     resolve_managed_root,
 )
+from moisture.adapters.experience import data_root
 
 
 class TestResolveManagedRoot:
@@ -36,6 +37,12 @@ class TestResolveManagedRoot:
         bundled = resolve_bundled_root()
         assert bundled.is_dir()
         assert (bundled / "manifest.json").is_file()
+
+    def test_resolve_bundled_root_uses_frozen_runtime_root(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(data_root, "module_root", lambda: tmp_path)
+        assert resolve_bundled_root() == (tmp_path / "experience").resolve()
 
 
 class TestNeedsInitialization:

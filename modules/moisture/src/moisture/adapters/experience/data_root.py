@@ -15,12 +15,10 @@ from pathlib import Path
 from moisture.adapters.experience.local_approved_repository import (
     LocalApprovedExperienceRepository,
 )
+from moisture.runtime_paths import module_root
 
 _STATES = ("draft", "approved", "retired")
 
-# Bundled seed (shipped inside the module)
-_BUNDLED_ROOT = Path(__file__).resolve().parents[4] / "experience"
-_BUNDLED_MANIFEST = _BUNDLED_ROOT / "manifest.json"
 _SEED_ID = "EXP-GENERIC-001"
 _SEED_VERSION = "1.0.0"
 
@@ -35,7 +33,7 @@ def resolve_managed_root() -> Path | None:
 
 def resolve_bundled_root() -> Path:
     """Return the read-only baseline inside the module."""
-    return _BUNDLED_ROOT.resolve()
+    return (module_root() / "experience").resolve()
 
 
 def resolve_runtime_experience_root() -> Path:
@@ -75,17 +73,19 @@ def initialize_managed_root(managed_root: Path) -> None:
             f"Experience managed root already initialised: {managed_root}"
         )
 
-    if not _BUNDLED_MANIFEST.is_file():
+    bundled_root = resolve_bundled_root()
+    bundled_manifest = bundled_root / "manifest.json"
+    if not bundled_manifest.is_file():
         raise ValueError(
-            f"Bundled experience manifest is missing: {_BUNDLED_MANIFEST}"
+            f"Bundled experience manifest is missing: {bundled_manifest}"
         )
 
     import json as _json
 
     # Validate the complete bundled projection before creating managed files.
     # This checks the manifest, Schema, paths and every referenced SHA-256.
-    LocalApprovedExperienceRepository(resolve_bundled_root()).list_approved()
-    manifest_data = _json.loads(_BUNDLED_MANIFEST.read_text(encoding="utf-8"))
+    LocalApprovedExperienceRepository(bundled_root).list_approved()
+    manifest_data = _json.loads(bundled_manifest.read_text(encoding="utf-8"))
     entries = manifest_data.get("entries", [])
     created_files: list[Path] = []
     created_directories: list[Path] = []
@@ -100,7 +100,7 @@ def initialize_managed_root(managed_root: Path) -> None:
                 created_directories.append(directory)
 
         for entry in entries:
-            src_path = _BUNDLED_ROOT / entry["path"]
+            src_path = bundled_root / entry["path"]
             dst_path = managed_root / entry["path"]
             if not src_path.is_file():
                 raise ValueError(f"Bundled seed file missing: {src_path}")

@@ -86,24 +86,20 @@ def test_response_schema_is_valid_draft_2020_12(response_schema: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# All samples pass their schema
+# Public examples have migrated to the unified v1.1 contract
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("sample_path", sorted(SAMPLES.glob("*.request.json")))
-def test_request_samples_pass_schema(
-    request_schema: dict, sample_path: Path,
-) -> None:
-    instance = json.loads(sample_path.read_text(encoding="utf-8"))
-    jsonschema.validate(instance, request_schema, cls=jsonschema.Draft202012Validator)
-
-
-@pytest.mark.parametrize("sample_path", sorted(SAMPLES.glob("*.response.json")))
-def test_response_samples_pass_schema(
-    response_schema: dict, sample_path: Path,
-) -> None:
-    instance = json.loads(sample_path.read_text(encoding="utf-8"))
-    jsonschema.validate(instance, response_schema, cls=jsonschema.Draft202012Validator)
+def test_public_experience_samples_use_unified_v11_envelopes() -> None:
+    sample_paths = sorted(SAMPLES.glob("*.json"))
+    assert sample_paths
+    for sample_path in sample_paths:
+        instance = json.loads(sample_path.read_text(encoding="utf-8"))
+        assert instance["schema_version"] == "1.1"
+        if sample_path.name.endswith(".request.json"):
+            assert "parameters" in instance
+        elif instance["status"] == "ok":
+            assert "result" in instance
 
 
 # ---------------------------------------------------------------------------

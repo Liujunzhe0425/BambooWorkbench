@@ -1,5 +1,5 @@
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "request_id": "req-demo-003",
   "module_id": "moisture",
   "operation": "update_experience_draft",
