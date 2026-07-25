@@ -682,7 +682,13 @@ class TaskService(QObject):
             raise RuntimeError("当前规则版本无效")
         if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256):
             raise RuntimeError("当前规则哈希无效")
-        configured = dict(module_config or {"schema_version": "1.0"})
+        configured = dict(
+            module_config
+            or {
+                "schema_version": "1.0",
+                "operation": "summary",
+            }
+        )
         configured.setdefault("schema_version", "1.0")
         existing = configured.get("rule_selection")
         selection = {"version": version, "sha256": sha256}
