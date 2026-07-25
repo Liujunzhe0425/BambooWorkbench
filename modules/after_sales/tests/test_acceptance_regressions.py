@@ -20,6 +20,7 @@ from after_sales_agent.cli import run_job  # noqa: E402
 from after_sales_agent.normalizer import determine_fee_breakdown  # noqa: E402
 from after_sales_agent.report import write_summary_workbook  # noqa: E402
 from after_sales_agent.rules import load_rules  # noqa: E402
+from framework_ai_helpers import write_service_response  # noqa: E402
 
 from core.contracts.result import ModuleResult  # noqa: E402
 
@@ -91,10 +92,36 @@ def _run(tmp_path: Path, payload: dict[str, object], name: str = "job") -> dict[
     return result
 
 
+def _run_framework_draft(
+    tmp_path: Path,
+    payload: dict[str, object],
+    name: str = "job",
+    *,
+    response_status: str = "error",
+) -> tuple[dict[str, object], Path]:
+    first = _run(tmp_path, payload, f"{name}-first")
+    assert first["confirmations"] == []
+    assert first["service_requests"]
+    response_path = write_service_response(
+        tmp_path / f"{name}-service-response.json",
+        first["service_requests"],
+        task_id=str(payload["job_id"]),
+        status=response_status,
+    )
+    rebound = {
+        **payload,
+        "ai_enabled": True,
+        "service_response_file": str(response_path),
+    }
+    return _run(tmp_path, rebound, f"{name}-bound"), response_path
+
+
 def test_offline_complete_file_enters_required_business_review(tmp_path: Path) -> None:
     source = tmp_path / "完整脱敏样表.xlsx"
     _make_workbook(source)
-    result = _run(tmp_path, _job([source], tmp_path / "output"))
+    result, _response = _run_framework_draft(
+        tmp_path, _job([source], tmp_path / "output")
+    )
 
     assert result["status"] == "needs_confirmation"
     assert result["summary"]["confirmation_count"] == 3
@@ -105,13 +132,15 @@ def test_offline_complete_file_enters_required_business_review(tmp_path: Path) -
     records = json.loads(
         (tmp_path / "output" / "after_sales_records.json").read_text(encoding="utf-8")
     )
-    assert records[0]["analysis_status"] == "离线规则分析完成"
+    assert records[0]["analysis_status"] == "AI不可用，离线降级"
     assert records[0]["enterprise_cost_amount"] == 1000
 
 
 def test_pr16_sanitized_fixture_preserves_second_round_baseline(tmp_path: Path) -> None:
     output = tmp_path / "pr16-fixture-output"
-    result = _run(tmp_path, _job([PR16_ACCEPTANCE_FIXTURE], output))
+    result, _response = _run_framework_draft(
+        tmp_path, _job([PR16_ACCEPTANCE_FIXTURE], output)
+    )
     records = json.loads((output / "after_sales_records.json").read_text(encoding="utf-8"))
     record = records[0]
 
@@ -153,7 +182,9 @@ def test_offline_batch_never_creates_api_config_confirmations(tmp_path: Path) ->
             complaint_date=f"2026-0{index}-10",
             solution=f"已完成处理，企业售后成本{index * 100}元。",
         )
-    result = _run(tmp_path, _job(files, tmp_path / "batch-output"))
+    result, _response = _run_framework_draft(
+        tmp_path, _job(files, tmp_path / "batch-output")
+    )
 
     assert result["status"] == "needs_confirmation"
     assert result["summary"]["confirmation_count"] == 9
@@ -233,7 +264,9 @@ def test_visual_workbooks_and_word_report_use_the_same_reviewed_metrics(
         solution="正在返工，企业售后成本200元。",
     )
     output = tmp_path / "analysis-output"
-    result = _run(tmp_path, _job([first, second], output))
+    result, _response = _run_framework_draft(
+        tmp_path, _job([first, second], output)
+    )
     records = json.loads((output / "after_sales_records.json").read_text(encoding="utf-8"))
     metrics = build_analysis_metrics(records)
     report = _word_text(output / "after_sales_analysis_report.docx")
@@ -282,7 +315,9 @@ def test_user_outputs_never_contain_local_absolute_paths(tmp_path: Path) -> None
     source = tmp_path / "路径脱敏.xlsx"
     _make_workbook(source)
     output = tmp_path / "path-output"
-    _run(tmp_path, _job([source], output))
+    _result, _response = _run_framework_draft(
+        tmp_path, _job([source], output)
+    )
     drive_path = re.compile(r"(?<![A-Za-z])[A-Za-z]:[\\/]")
 
     records_text = (output / "after_sales_records.json").read_text(encoding="utf-8")
@@ -309,7 +344,9 @@ def test_corrupted_workbook_is_isolated_with_stable_chinese_error(tmp_path: Path
     _make_workbook(valid)
     broken.write_bytes(b"not an xlsx file")
     output = tmp_path / "mixed-output"
-    result = _run(tmp_path, _job([valid, broken], output))
+    result, _response = _run_framework_draft(
+        tmp_path, _job([valid, broken], output)
+    )
     records = json.loads((output / "after_sales_records.json").read_text(encoding="utf-8"))
 
     assert result["status"] == "partial_success"
@@ -327,7 +364,9 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
         solution=("企业售后成本待确认；内部责任扣款待确认；供应商承担金额待确认；已完成更换。"),
     )
     draft_output = tmp_path / "draft-output"
-    draft = _run(tmp_path, _job([source], draft_output), "draft-job")
+    draft, response_path = _run_framework_draft(
+        tmp_path, _job([source], draft_output), "draft-job"
+    )
     expected_fields = {
         "售后费用",
         "internal_accountability_amount",
@@ -367,6 +406,8 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
         phase="finalize",
         parent_job_id="acceptance-draft",
         confirmation_file=str(confirmation_file),
+        service_response_file=str(response_path),
+        ai_enabled=True,
     )
     final = _run(tmp_path, final_payload, "final-job")
     records = json.loads((final_output / "after_sales_records.json").read_text(encoding="utf-8"))

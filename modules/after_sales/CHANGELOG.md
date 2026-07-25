@@ -1,6 +1,6 @@
 # 更新记录
 
-## 1.1.1 - 2026-07-24
+## 1.1.1 - 2026-07-25
 
 - 将模块清单和运行时版本统一为 `1.1.1`，纳入工作台统一版本线。
 - 恢复并适配现有统一 `service_requests` 和框架 AI Provider 流程；模块只生成脱敏请求并消费框架响应。
@@ -9,6 +9,8 @@
 - 模块联网边界严格限定为框架公共合同：`service_requests` 由工作台统一授权、调用和审计。
 - 保留 AI 失败降级、逐文件人工复核和 finalize 不重复调用 AI 的完整离线安全网。
 - 补充脱敏业务自测证据和整改验收文档。
+- 增加 `framework_ai.required=true`、`setup_page=module` 和 `service_before_confirmation=true`，适配框架 PR #58 的强制 AI 接入页与两次 draft 编排。
+- 第一次 draft 只生成脱敏请求；第二次 draft 绑定候选并生成业务确认；finalize 复用已绑定响应且服务请求数固定为 0。
 
 ## 1.0.2 - 2026-07-23
 

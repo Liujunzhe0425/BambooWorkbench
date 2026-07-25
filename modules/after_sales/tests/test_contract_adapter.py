@@ -11,6 +11,7 @@ MODULE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MODULE_ROOT / "src"))
 
 from after_sales_agent.cli import _create_sample_workbook, run_job  # noqa: E402
+from framework_ai_helpers import write_service_response  # noqa: E402
 
 from core.contracts.result import ModuleResult  # noqa: E402
 
@@ -50,6 +51,33 @@ def _job(input_file: Path, output_dir: Path, **overrides):
     return payload
 
 
+def _bind_framework_response(
+    tmp_path: Path,
+    job_path: Path,
+    payload: dict[str, object],
+    output_dir: Path,
+) -> tuple[dict[str, object], Path]:
+    first = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
+    assert first["confirmations"] == []
+    assert first["service_requests"]
+    response_path = write_service_response(
+        tmp_path / f"{payload['job_id']}-service-response.json",
+        first["service_requests"],
+        task_id=str(payload["job_id"]),
+        status="error",
+    )
+    rebound = {
+        **payload,
+        "ai_enabled": True,
+        "service_response_file": str(response_path),
+    }
+    job_path.write_text(json.dumps(rebound, ensure_ascii=False), encoding="utf-8")
+    assert run_job(job_path) == 0
+    result = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
+    ModuleResult.model_validate(result)
+    return result, response_path
+
+
 def test_draft_and_finalize_write_manual_fee_to_final_excel(tmp_path):
     input_file = tmp_path / "人工复核费用.xlsx"
     _create_sample_workbook(
@@ -66,9 +94,9 @@ def test_draft_and_finalize_write_manual_fee_to_final_excel(tmp_path):
     draft_job_path = tmp_path / "draft-job.json"
     draft_job_path.write_text(json.dumps(draft_job, ensure_ascii=False), encoding="utf-8")
     assert run_job(draft_job_path) == 0
-
-    draft_result = json.loads((draft_output / "result.json").read_text(encoding="utf-8"))
-    ModuleResult.model_validate(draft_result)
+    draft_result, response_path = _bind_framework_response(
+        tmp_path, draft_job_path, draft_job, draft_output
+    )
     answers = []
     for prompt in draft_result["confirmations"]:
         value = (
@@ -100,6 +128,8 @@ def test_draft_and_finalize_write_manual_fee_to_final_excel(tmp_path):
         phase="finalize",
         parent_job_id="adapter-draft",
         confirmation_file=str(confirmation_file),
+        service_response_file=str(response_path),
+        ai_enabled=True,
     )
     final_job_path = tmp_path / "final-job.json"
     final_job_path.write_text(json.dumps(final_job, ensure_ascii=False), encoding="utf-8")
@@ -144,7 +174,9 @@ def test_required_business_review_updates_fee_factory_and_complaint_type(tmp_pat
     draft_job_path = tmp_path / "review-draft-job.json"
     draft_job_path.write_text(json.dumps(draft_job, ensure_ascii=False), encoding="utf-8")
     assert run_job(draft_job_path) == 0
-    draft = json.loads((draft_output / "result.json").read_text(encoding="utf-8"))
+    draft, response_path = _bind_framework_response(
+        tmp_path, draft_job_path, draft_job, draft_output
+    )
     prompts = {item["field"]: item for item in draft["confirmations"]}
 
     assert {"售后费用", "责任工厂", "投诉类型"} <= prompts.keys()
@@ -180,6 +212,8 @@ def test_required_business_review_updates_fee_factory_and_complaint_type(tmp_pat
         phase="finalize",
         parent_job_id="review-draft",
         confirmation_file=str(confirmation_file),
+        service_response_file=str(response_path),
+        ai_enabled=True,
     )
     final_job_path = tmp_path / "review-final-job.json"
     final_job_path.write_text(json.dumps(final_job, ensure_ascii=False), encoding="utf-8")

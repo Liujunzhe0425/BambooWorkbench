@@ -8,5 +8,10 @@
   "supports_single_file": true,
   "supports_batch": true,
   "supports_incremental": true,
-  "requires_network": false
+  "requires_network": false,
+  "framework_ai": {
+    "required": true,
+    "setup_page": "module",
+    "service_before_confirmation": true
+  }
 }

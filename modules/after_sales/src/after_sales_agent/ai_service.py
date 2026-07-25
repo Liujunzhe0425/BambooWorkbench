@@ -8,18 +8,30 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from after_sales_agent.llm_analyzer import normalize_analysis
+from after_sales_agent.analysis_normalizer import normalize_analysis
 
 AI_RESPONSE_SCHEMA_VERSION = "1.0"
 ISSUE_CATEGORIES = ("性能", "外观", "加工", "其他")
 MAX_PAYLOAD_BYTES = 65_536
 MAX_CASES_PER_REQUEST = 10
 MAX_SECTION_CHARS = 2_000
+MAX_WORKBOOK_CHARS = 8_000
+_BATCH_ID_SIZE_PLACEHOLDER = "0" * 24
 
 _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _PHONE_RE = re.compile(r"(?<!\d)(?:\+?86[- ]?)?1\d{10}(?!\d)")
 _LOCAL_PATH_RE = re.compile(r"(?i)(?:[A-Z]:[\\/]|\\\\[^\\\s]+\\)[^\r\n；。]*")
+_NATIONAL_ID_RE = re.compile(r"(?<!\d)\d{17}[0-9Xx](?!\d)")
+_ORDER_CODE_RE = re.compile(
+    r"(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]{8,}(?![A-Za-z0-9_-]))"
+    r"(?=[A-Za-z0-9_-]*[A-Za-z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]+"
+)
+_SENSITIVE_WORKBOOK_ROW_RE = re.compile(
+    r"(?im)^.*(?:客户(?:/项目)?|联系人|姓名|销售(?:/代表)?|电话|手机|邮箱|"
+    r"地点|地址|订单(?:号)?|单号)\s*(?:[:：]|\|).*$"
+)
+_IDENTITY_FIELDS = ("customer", "location", "salesperson", "order_no", "source_file")
 
 
 class AIServiceResponseError(ValueError):
@@ -52,7 +64,8 @@ def build_ai_service_requests(
         proposed = [*current, case]
         if current and (
             len(proposed) > max_cases_per_request
-            or _payload_size(_request_payload("pending", proposed)) > max_payload_bytes
+            or _payload_size(_request_payload(_BATCH_ID_SIZE_PLACEHOLDER, proposed))
+            > max_payload_bytes
         ):
             chunks.append(current)
             current = [case]
@@ -76,6 +89,7 @@ def build_ai_service_requests(
                 "purpose": f"智能分析第 {first}-{last}/{total} 份售后Excel",
                 "payload": payload,
                 "requires_user_consent": True,
+                "response_format": "json_object",
             }
         )
         first = last + 1
@@ -139,8 +153,15 @@ def read_ai_service_responses(
             continue
         request_id = str(raw_response.get("request_id") or "")
         request = expected.get(request_id)
-        if request is None or request_id in seen_requests or raw_response.get("service") != "ai":
+        if request is None or raw_response.get("service") != "ai":
             errors.append("AI_SERVICE_RESPONSE_MISMATCH：AI响应编号重复或不属于当前任务。")
+            continue
+        if request_id in seen_requests:
+            errors.append(f"{request_id}：AI响应编号重复，对应批次已整体降级。")
+            for case in request["payload"]["cases"]:
+                case_id = str(case["case_id"])
+                analyses.pop(case_id, None)
+                statuses[case_id] = "返回无效"
             continue
         seen_requests.add(request_id)
         case_ids = {str(item["case_id"]) for item in request["payload"]["cases"]}
@@ -185,6 +206,7 @@ def apply_ai_service_outcome(records: list[dict[str, Any]], outcome: AIServiceOu
         record["ai_service_status"] = status
         analysis = outcome.analyses.get(case_id)
         if analysis is None:
+            record["analysis_status"] = "AI不可用，离线降级"
             record["analysis_note"] = f"AI辅助未完成（{status}），已保留离线结果并等待人工复核"
             record["needs_review"] = True
             continue
@@ -202,42 +224,43 @@ def apply_ai_service_outcome(records: list[dict[str, Any]], outcome: AIServiceOu
         record["issue_confidence"] = analysis["confidence"]
         record["issue_evidence"] = {"api": analysis["evidence"]}
         record["issue_analysis_source"] = "api"
-        record["selected_solution"] = analysis["selected_solution"] or record.get(
-            "selected_solution", ""
-        )
+        record["selected_solution_ai_candidate"] = analysis["selected_solution"]
         record["responsible_factory_ai_candidate"] = analysis["responsible_factory"]
         record["responsible_factory_ai_reason"] = analysis["responsible_factory_reason"]
-        if not record.get("responsibility_reviewed") and analysis["responsible_factory"]:
-            record["responsible_factory"] = analysis["responsible_factory"]
         record["api_cost_candidate"] = analysis["cost_amount"]
         record["api_cost_evidence"] = analysis["cost_reason"]
         record["api_cost_items"] = analysis["cost_items"]
-        record["resolution_status"] = analysis["resolution_status"]
-        record["resolution_reason"] = analysis["resolution_reason"]
-        record["resolution_analysis_source"] = "api"
-        record["closed"] = analysis["resolution_status"] == "已解决"
-        record["case_status"] = (
-            "已关闭"
-            if record["closed"]
-            else ("处理中" if analysis["resolution_status"] == "处理中" else "待确认")
-        )
+        record["resolution_status_ai_candidate"] = analysis["resolution_status"]
+        record["resolution_status_ai_reason"] = analysis["resolution_reason"]
         record["analysis_status"] = "AI智能分析完成"
         record["analysis_note"] = "已使用统一工作台授权的AI服务辅助分析，最终以人工复核为准"
         record["needs_review"] = True
 
 
 def _case_payload(record: dict[str, Any]) -> dict[str, Any]:
+    identity_values = _identity_values(record)
     return {
         "case_id": str(record.get("case_id") or ""),
-        "current_brand_candidate": _clean_text(record.get("brand"), 100),
-        "product": _clean_text(record.get("product"), 500),
-        "feedback": _clean_text(record.get("feedback"), MAX_SECTION_CHARS),
-        "application_detail": _clean_text(record.get("application"), MAX_SECTION_CHARS),
-        "investigation": _clean_text(record.get("investigation"), MAX_SECTION_CHARS),
-        "solution": _clean_text(record.get("solution"), MAX_SECTION_CHARS),
-        "responsibility": _clean_text(record.get("responsibility"), MAX_SECTION_CHARS),
+        "current_brand_candidate": _clean_text(record.get("brand"), 100, identity_values),
+        "product": _clean_text(record.get("product"), 500, identity_values),
+        "feedback": _clean_text(record.get("feedback"), MAX_SECTION_CHARS, identity_values),
+        "application_detail": _clean_text(
+            record.get("application"), MAX_SECTION_CHARS, identity_values
+        ),
+        "investigation": _clean_text(
+            record.get("investigation"), MAX_SECTION_CHARS, identity_values
+        ),
+        "solution": _clean_text(record.get("solution"), MAX_SECTION_CHARS, identity_values),
+        "responsibility": _clean_text(
+            record.get("responsibility"), MAX_SECTION_CHARS, identity_values
+        ),
+        "workbook_excerpt": _clean_text(
+            record.get("_ai_workbook_text"), MAX_WORKBOOK_CHARS, identity_values
+        ),
         "deterministic_fee_candidate": record.get("enterprise_cost_amount"),
-        "deterministic_fee_evidence": _clean_text(record.get("enterprise_cost_evidence"), 1_000),
+        "deterministic_fee_evidence": _clean_text(
+            record.get("enterprise_cost_evidence"), 1_000, identity_values
+        ),
     }
 
 
@@ -436,11 +459,29 @@ def _payload_size(payload: dict[str, Any]) -> int:
     )
 
 
-def _clean_text(value: Any, limit: int) -> str:
+def _identity_values(record: dict[str, Any]) -> tuple[str, ...]:
+    values: set[str] = set()
+    for field in _IDENTITY_FIELDS:
+        text = str(record.get(field) or "").strip()
+        if len(text) >= 2:
+            values.add(text)
+        if field == "source_file" and text:
+            stem = Path(text).stem.strip()
+            if len(stem) >= 2:
+                values.add(stem)
+    return tuple(sorted(values, key=len, reverse=True))
+
+
+def _clean_text(value: Any, limit: int, identity_values: tuple[str, ...] = ()) -> str:
     text = str(value or "").strip()
+    text = _SENSITIVE_WORKBOOK_ROW_RE.sub("[身份字段行已脱敏]", text)
+    for identity in identity_values:
+        text = text.replace(identity, "[身份信息已脱敏]")
     text = _EMAIL_RE.sub("[邮箱已脱敏]", text)
     text = _PHONE_RE.sub("[手机号已脱敏]", text)
     text = _LOCAL_PATH_RE.sub("[本地路径已脱敏]", text)
+    text = _NATIONAL_ID_RE.sub("[证件号已脱敏]", text)
+    text = _ORDER_CODE_RE.sub("[业务编号已脱敏]", text)
     text = re.sub(r"\s+", " ", text)
     return text[:limit]
 

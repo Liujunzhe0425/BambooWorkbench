@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MODULE_ROOT / "src"))
@@ -116,6 +115,21 @@ def test_build_requests_covers_100_files_once_with_bounded_payloads() -> None:
         + "售后调查结论和方案。" * 400
     )
     records = [_record(index, private_text) for index in range(1, 101)]
+    records[0].update(
+        {
+            "customer": "星海项目部",
+            "location": "示例路88号",
+            "salesperson": "示例业务员",
+            "order_no": "ORDER-2026-001",
+            "source_file": "星海项目售后.xlsx",
+            "feedback": private_text + " 星海项目部位于示例路88号，由示例业务员跟进。",
+            "_ai_workbook_text": (
+                "第1行：客户/项目 | 星海项目部 | 地点 | 示例路88号\n"
+                "第2行：产品名称 | 桃花江竹地板\n"
+                "第3行：反馈内容 | 产品开裂"
+            ),
+        }
+    )
 
     requests = build_ai_service_requests(root_job_id="ai-root", records=records)
 
@@ -132,7 +146,13 @@ def test_build_requests_covers_100_files_once_with_bounded_payloads() -> None:
         assert "13800138000" not in outbound
         assert "someone@example.com" not in outbound
         assert "D:\\private" not in outbound
+        assert "星海项目部" not in outbound
+        assert "示例路88号" not in outbound
+        assert "示例业务员" not in outbound
+        assert "ORDER-2026-001" not in outbound
+        assert "星海项目售后.xlsx" not in outbound
         assert request["requires_user_consent"] is True
+        assert request["response_format"] == "json_object"
 
 
 def test_valid_response_is_applied_but_does_not_replace_deterministic_fee(tmp_path: Path) -> None:
@@ -180,7 +200,142 @@ def test_incomplete_response_rejects_the_whole_chunk_and_keeps_every_record(tmp_
     assert all(record["needs_review"] is True for record in records)
 
 
-def test_cli_uses_module_ai_before_review_without_refusal_and_reuses_draft_snapshot(
+def test_denied_response_keeps_all_records_and_marks_offline_degradation(
+    tmp_path: Path,
+) -> None:
+    records = [_record(1), _record(2)]
+    requests = build_ai_service_requests(root_job_id="ai-root", records=records)
+    response_path = tmp_path / "service-response.json"
+    response_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "task_id": "ai-root",
+                "module_id": "after_sales",
+                "responses": [
+                    {
+                        "request_id": request["request_id"],
+                        "service": "ai",
+                        "status": "denied",
+                        "text": None,
+                    }
+                    for request in requests
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    outcome = read_ai_service_responses(
+        response_path,
+        root_job_id="ai-root",
+        requests=requests,
+    )
+    apply_ai_service_outcome(records, outcome)
+
+    assert len(records) == 2
+    assert outcome.errors
+    assert all(record["ai_service_status"] == "用户未授权" for record in records)
+    assert all(record["analysis_status"] == "AI不可用，离线降级" for record in records)
+
+
+def test_invalid_json_response_is_rejected_without_losing_offline_values(
+    tmp_path: Path,
+) -> None:
+    records = [_record(1)]
+    requests = build_ai_service_requests(root_job_id="ai-root", records=records)
+    response_path = tmp_path / "service-response.json"
+    response_path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "task_id": "ai-root",
+                "module_id": "after_sales",
+                "responses": [
+                    {
+                        "request_id": requests[0]["request_id"],
+                        "service": "ai",
+                        "status": "ok",
+                        "text": "{invalid-json",
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    outcome = read_ai_service_responses(
+        response_path,
+        root_job_id="ai-root",
+        requests=requests,
+    )
+    apply_ai_service_outcome(records, outcome)
+
+    assert outcome.analyses == {}
+    assert records[0]["brand"] == "未知"
+    assert records[0]["enterprise_cost_amount"] == 1500
+    assert records[0]["ai_service_status"] == "返回无效"
+
+
+def test_partial_chunk_failure_applies_successes_and_preserves_failed_cases(
+    tmp_path: Path,
+) -> None:
+    records = [_record(1), _record(2)]
+    requests = build_ai_service_requests(
+        root_job_id="ai-root",
+        records=records,
+        max_cases_per_request=1,
+    )
+    assert len(requests) == 2
+    response_path = tmp_path / "service-response.json"
+    _write_response(response_path, requests)
+    envelope = json.loads(response_path.read_text(encoding="utf-8"))
+    envelope["responses"][1].update(status="timeout", text=None)
+    response_path.write_text(
+        json.dumps(envelope, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    outcome = read_ai_service_responses(
+        response_path,
+        root_job_id="ai-root",
+        requests=requests,
+    )
+    apply_ai_service_outcome(records, outcome)
+
+    assert set(outcome.analyses) == {"ai-root-1"}
+    assert records[0]["issue_analysis_source"] == "api"
+    assert records[1]["brand"] == "未知"
+    assert records[1]["analysis_status"] == "AI不可用，离线降级"
+    assert records[1]["ai_service_status"] == "请求超时"
+
+
+def test_duplicate_response_id_degrades_the_whole_corresponding_chunk(
+    tmp_path: Path,
+) -> None:
+    records = [_record(1)]
+    requests = build_ai_service_requests(root_job_id="ai-root", records=records)
+    response_path = tmp_path / "service-response.json"
+    _write_response(response_path, requests)
+    envelope = json.loads(response_path.read_text(encoding="utf-8"))
+    envelope["responses"].append(dict(envelope["responses"][0]))
+    response_path.write_text(json.dumps(envelope, ensure_ascii=False), encoding="utf-8")
+
+    outcome = read_ai_service_responses(
+        response_path,
+        root_job_id="ai-root",
+        requests=requests,
+    )
+    apply_ai_service_outcome(records, outcome)
+
+    assert outcome.analyses == {}
+    assert records[0]["ai_service_status"] == "返回无效"
+    assert records[0]["analysis_status"] == "AI不可用，离线降级"
+
+
+def test_cli_runs_framework_ai_before_review_and_reuses_response_in_finalize(
     tmp_path: Path,
 ) -> None:
     source = tmp_path / "source.xlsx"
@@ -210,45 +365,28 @@ def test_cli_uses_module_ai_before_review_without_refusal_and_reuses_draft_snaps
     }
     draft_job_path = tmp_path / "draft-job.json"
     draft_job_path.write_text(json.dumps(draft_job, ensure_ascii=False), encoding="utf-8")
-    calls: list[str] = []
+    assert run_job(draft_job_path) == 0
+    first_draft = json.loads((draft_output / "result.json").read_text(encoding="utf-8"))
+    assert first_draft["confirmations"] == []
+    assert len(first_draft["service_requests"]) == 1
 
-    def fake_analysis(*_args, **_kwargs):
-        calls.append("analysis")
-        return _analysis("ai-draft-1")
+    response_path = tmp_path / "service-response.json"
+    _write_response(response_path, first_draft["service_requests"], task_id="ai-draft")
+    draft_job["ai_enabled"] = True
+    draft_job["service_response_file"] = str(response_path.resolve())
+    draft_job_path.write_text(json.dumps(draft_job, ensure_ascii=False), encoding="utf-8")
+    assert run_job(draft_job_path) == 0
 
-    with patch(
-        "after_sales_agent.extractor.analyze_issue_with_api",
-        side_effect=fake_analysis,
-    ):
-        assert (
-            run_job(
-                draft_job_path,
-                {
-                    "api": {
-                        "provider": "deepseek",
-                        "api_key": "sk-test",
-                        "base_url": "https://api.deepseek.com",
-                        "model": "deepseek-v4-flash",
-                    }
-                },
-            )
-            == 0
-        )
-    draft = json.loads((draft_output / "result.json").read_text(encoding="utf-8"))
-    assert draft["service_requests"] == []
-    assert calls == ["analysis"]
-    assert {item["field"] for item in draft["confirmations"]} >= {
+    rebound = json.loads((draft_output / "result.json").read_text(encoding="utf-8"))
+    assert rebound["service_requests"] == []
+    assert {item["field"] for item in rebound["confirmations"]} >= {
         "售后费用",
         "责任工厂",
         "投诉类型",
     }
-    prompts = {item["field"]: item for item in draft["confirmations"]}
+    prompts = {item["field"]: item for item in rebound["confirmations"]}
     assert prompts["售后费用"]["suggested_value"] == 1500
     assert prompts["责任工厂"]["suggested_value"] == "二厂"
-    assert all(
-        "拒绝" not in json.dumps(item, ensure_ascii=False)
-        for item in draft["confirmations"]
-    )
 
     confirmation_path = tmp_path / "confirmation.json"
     confirmation_path.write_text(
@@ -261,7 +399,7 @@ def test_cli_uses_module_ai_before_review_without_refusal_and_reuses_draft_snaps
                         "confirmation_id": item["confirmation_id"],
                         "value": item.get("suggested_value"),
                     }
-                    for item in draft["confirmations"]
+                    for item in rebound["confirmations"]
                 ],
             },
             ensure_ascii=False,
@@ -271,12 +409,10 @@ def test_cli_uses_module_ai_before_review_without_refusal_and_reuses_draft_snaps
     final_output = tmp_path / "output-final"
     final_job = {
         **draft_job,
-        "job_id": "ai-final",
         "phase": "finalize",
         "output_dir": str(final_output.resolve()),
         "parent_job_id": "ai-draft",
         "confirmation_file": str(confirmation_path.resolve()),
-        "service_response_file": None,
     }
     final_job_path = tmp_path / "final-job.json"
     final_job_path.write_text(json.dumps(final_job, ensure_ascii=False), encoding="utf-8")
@@ -285,7 +421,6 @@ def test_cli_uses_module_ai_before_review_without_refusal_and_reuses_draft_snaps
     records = json.loads((final_output / "after_sales_records.json").read_text(encoding="utf-8"))
 
     assert final["service_requests"] == []
-    assert calls == ["analysis"]
     assert records[0]["issue_analysis_source"] == "api"
     assert records[0]["issue_reason_summary"] == "开片指令错误导致尺寸不符"
     assert records[0]["responsible_factory"] == "二厂"

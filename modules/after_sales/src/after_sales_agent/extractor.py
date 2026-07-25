@@ -9,7 +9,6 @@ from typing import Any
 import openpyxl
 from openpyxl.utils.datetime import from_excel
 
-from after_sales_agent.llm_analyzer import analyze_issue_with_api, api_is_configured
 from after_sales_agent.normalizer import build_date_warnings, determine_fee_breakdown
 
 MONEY_RE = re.compile(r"(?<!\d)(\d+(?:\.\d+)?)\s*元")
@@ -22,7 +21,6 @@ ORDER_DATE_RE = re.compile(r"(20\d{2})(\d{2})(\d{2})")
 def process_workbook(
     path: Path,
     rules: dict[str, Any],
-    api_config: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]], list[dict[str, Any]]]:
     anomalies: list[dict[str, Any]] = []
     confirmations: list[dict[str, Any]] = []
@@ -65,48 +63,6 @@ def process_workbook(
     issue_confidence = 0.85 if issue_types else 0.0
     issue_analysis_source = "rules"
     analysis_note = "离线规则分析完成"
-    api_analysis: dict[str, Any] | None = None
-    strict_api = bool((api_config or {}).get("strict"))
-
-    if api_is_configured(api_config):
-        try:
-            api_analysis = analyze_issue_with_api(fields, rules, api_config)
-            api_brand = normalize_brand(api_analysis.get("brand_name"))
-            if api_brand != "未知":
-                brand = api_brand
-                brand_confidence = api_analysis.get("confidence", 0.0)
-                brand_evidence = api_analysis.get("brand_reason") or "api"
-            issue_types = api_analysis["issue_types"]
-            issue_primary = api_analysis["primary_issue_type"]
-            issue_reason_summary = api_analysis["reason_summary"]
-            issue_evidence = {"api": api_analysis["evidence"]}
-            issue_confidence = api_analysis["confidence"]
-            issue_analysis_source = "api"
-            analysis_note = "已使用授权 AI 服务辅助分析"
-            if (
-                issue_confidence < 0.65
-                or not issue_reason_summary
-                or not api_analysis.get("evidence")
-            ):
-                confirmations.append(
-                    _confirmation(
-                        path,
-                        "issue_types",
-                        "API分类置信度较低，建议人工复核",
-                        issue_types,
-                        rules.get("issue_order", []),
-                        issue_confidence,
-                        False,
-                    )
-                )
-        except Exception:
-            if strict_api:
-                raise
-            analysis_note = "AI 辅助不可用，离线规则分析完成"
-    elif strict_api:
-        raise RuntimeError("API key is required in strict AI mode")
-    else:
-        analysis_note = "离线规则分析完成"
 
     if not issue_types:
         issue_types = ["其他"]
@@ -168,20 +124,8 @@ def process_workbook(
     cost_items = fee.items
     cost_status = fee.status
     cost_analysis_source = "deterministic"
-    api_cost = api_analysis.get("cost_amount") if api_analysis else None
-    api_cost_evidence = api_analysis.get("cost_reason") if api_analysis else ""
-    if api_cost is not None and cost is not None and abs(float(api_cost) - float(cost)) > 0.01:
-        confirmations.append(
-            _confirmation(
-                path,
-                "enterprise_cost_amount",
-                f"模型候选费用 {float(api_cost):.2f} 元与后端复核金额 {float(cost):.2f} 元不一致",
-                cost,
-                [api_cost],
-                float(api_analysis.get("confidence") or 0.0),
-                False,
-            )
-        )
+    api_cost = None
+    api_cost_evidence = ""
     if fee.status in {"not_found", "needs_review"}:
         confirmations.append(
             _confirmation(
@@ -217,17 +161,6 @@ def process_workbook(
 
     resolution_analysis_source = "rules"
     resolution_status, resolution_reason = infer_resolution_status(fields, rules)
-    if api_analysis:
-        if api_analysis.get("resolution_status"):
-            resolution_status = str(api_analysis["resolution_status"])
-        elif api_analysis.get("closed") is True:
-            resolution_status = "已解决"
-        resolution_reason = (
-            api_analysis.get("resolution_reason")
-            or api_analysis.get("closed_reason")
-            or resolution_reason
-        )
-        resolution_analysis_source = "api"
     closed = resolution_status == "已解决"
     warnings = list(fee.warnings)
     warnings.extend(
@@ -269,7 +202,7 @@ def process_workbook(
         "brand": brand,
         "brand_confidence": brand_confidence,
         "brand_evidence": brand_evidence,
-        "brand_reason": api_analysis.get("brand_reason") if api_analysis else "",
+        "brand_reason": "",
         "issue_types": issue_types,
         "primary_issue_type": issue_primary,
         "issue_reason_summary": issue_reason_summary,
@@ -277,7 +210,7 @@ def process_workbook(
         "issue_analysis_source": issue_analysis_source,
         "analysis_note": analysis_note,
         "issue_evidence": issue_evidence,
-        "api_analysis": api_analysis,
+        "api_analysis": None,
         "cost": round(cost, 2) if cost is not None else None,
         "fee_amount": round(cost, 2) if cost is not None else None,
         "enterprise_cost_amount": round(cost, 2) if cost is not None else None,
@@ -309,15 +242,9 @@ def process_workbook(
         "api_cost_evidence": api_cost_evidence,
         "cost_evidence": cost_evidence,
         "cost_analysis_source": cost_analysis_source,
-        "selected_solution": api_analysis.get("selected_solution")
-        if api_analysis
-        else fields.get("solution", ""),
-        "responsible_factory": api_analysis.get("responsible_factory", "")
-        if api_analysis
-        else "",
-        "responsible_factory_reason": api_analysis.get("responsible_factory_reason", "")
-        if api_analysis
-        else "",
+        "selected_solution": fields.get("solution", ""),
+        "responsible_factory": "",
+        "responsible_factory_reason": "",
         "resolution_status": resolution_status,
         "resolution_reason": resolution_reason,
         "resolution_analysis_source": resolution_analysis_source,
@@ -336,6 +263,7 @@ def process_workbook(
         "investigation": fields.get("investigation", ""),
         "solution": fields.get("solution", ""),
         "responsibility": fields.get("responsibility", ""),
+        "_ai_workbook_text": raw_workbook_text,
     }
     return record, anomalies, confirmations
 

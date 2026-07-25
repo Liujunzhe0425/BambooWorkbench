@@ -16,12 +16,16 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from after_sales_agent import MODULE_ID, MODULE_NAME, MODULE_VERSION
+from after_sales_agent.ai_service import (
+    apply_ai_service_outcome,
+    build_ai_service_requests,
+    read_ai_service_responses,
+)
 from after_sales_agent.extractor import file_sha256, process_workbook
 from after_sales_agent.manual_review import (
     apply_business_review_value,
     build_required_review_prompts,
 )
-from after_sales_agent.module_ai_config import load_saved_module_ai_config
 from after_sales_agent.report import write_summary_workbook
 from after_sales_agent.rules import load_rules
 from after_sales_agent.visual_reports import (
@@ -51,11 +55,16 @@ _DRAFT_AI_SNAPSHOT_FIELDS = {
     "issue_types",
     "primary_issue_type",
     "responsible_factory",
+    "responsible_factory_ai_candidate",
+    "responsible_factory_ai_reason",
     "responsible_factory_reason",
+    "resolution_status_ai_candidate",
+    "resolution_status_ai_reason",
     "resolution_analysis_source",
     "resolution_reason",
     "resolution_status",
     "selected_solution",
+    "selected_solution_ai_candidate",
 }
 
 
@@ -118,9 +127,6 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
     output_dir = Path(job["output_dir"]).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     rules = load_rules(module_root, job.get("module_config_file"))
-    api_config = (runtime_config or {}).get("api")
-    if api_config is None and job.get("phase") == "draft":
-        api_config = load_saved_module_ai_config()
     progress_callback = (runtime_config or {}).get("progress_callback")
     result = _empty_result(job, rules, started_at)
     root_job_id = (
@@ -157,7 +163,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
             _notify_progress(
                 progress_callback,
                 {
-                    "phase": "智能辅助分析" if api_config else "离线规则分析",
+                    "phase": _analysis_phase(job),
                     "message": progress_message,
                     "total": len(input_files),
                     "completed": input_index - 1,
@@ -186,19 +192,13 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 duplicate_of = seen_hashes.get(digest)
                 seen_hashes.setdefault(digest, str(input_file))
 
-                record, anomalies, extractor_confirmations = process_workbook(
-                    input_file, rules, api_config
-                )
-                if record:
-                    _restore_draft_ai_snapshot(record, draft_snapshots)
+                record, anomalies, extractor_confirmations = process_workbook(input_file, rules)
                 confirmations = [
                     item
                     for item in extractor_confirmations
                     if item.get("field")
                     not in {"enterprise_cost_amount", "issue_types", "primary_issue_type"}
                 ]
-                if record:
-                    confirmations.extend(build_required_review_prompts(record, rules))
                 result["anomalies"].extend(
                     _normalize_anomalies(anomalies, len(result["anomalies"]))
                 )
@@ -250,7 +250,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 _notify_progress(
                     progress_callback,
                     {
-                        "phase": "智能辅助分析" if api_config else "离线规则分析",
+                        "phase": _analysis_phase(job),
                         "message": f"已完成 {input_index}/{len(input_files)} 个文件",
                         "total": len(input_files),
                         "completed": input_index,
@@ -259,6 +259,43 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                         "current_file": input_file.name,
                     },
                 )
+
+        service_requests = build_ai_service_requests(
+            root_job_id=root_job_id,
+            records=records,
+        )
+        for record in records:
+            record.pop("_ai_workbook_text", None)
+
+        response_file = (
+            Path(str(job["service_response_file"]))
+            if job.get("service_response_file")
+            else None
+        )
+        first_draft = job.get("phase") == "draft" and response_file is None
+        if first_draft:
+            result["service_requests"] = service_requests
+            result["confirmations"] = []
+        else:
+            if response_file is not None:
+                outcome = read_ai_service_responses(
+                    response_file,
+                    root_job_id=root_job_id,
+                    requests=service_requests,
+                )
+                apply_ai_service_outcome(records, outcome)
+                result["errors"].extend(outcome.errors)
+            elif job.get("phase") == "finalize":
+                for record in records:
+                    _restore_draft_ai_snapshot(record, draft_snapshots)
+            for record in records:
+                if record.get("included_in_summary"):
+                    result["confirmations"].extend(
+                        _normalize_confirmations(
+                            build_required_review_prompts(record, rules),
+                            len(result["confirmations"]),
+                        )
+                    )
 
         answered_confirmation_ids: set[str] = set()
         if job.get("phase") == "finalize":
@@ -382,6 +419,14 @@ def _load_draft_ai_snapshots(output_dir: Path) -> dict[str, dict[str, Any]]:
         if re.fullmatch(r"[0-9a-f]{64}", digest):
             snapshots[digest] = item
     return snapshots
+
+
+def _analysis_phase(job: dict[str, Any]) -> str:
+    if job.get("phase") == "finalize":
+        return "复用AI建议并应用人工确认"
+    if job.get("service_response_file"):
+        return "绑定框架AI建议"
+    return "解析Excel并生成脱敏AI请求"
 
 
 def _restore_draft_ai_snapshot(
