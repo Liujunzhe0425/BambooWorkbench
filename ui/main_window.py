@@ -24,11 +24,13 @@ from core.tasks.models import InvalidTaskTransition, TaskLifecycleState
 from core.tasks.result_status import normalized_result
 from ui.navigation import Navigation
 from ui.page_ids import PageId
+from ui.pages.after_sales_ai_setup_page import AfterSalesAiSetupPage
 from ui.pages.confirmations_page import ConfirmationsPage
 from ui.pages.history_page import HistoryPage
 from ui.pages.knowledge_page import KnowledgePage
 from ui.pages.module_task_page import ModuleTaskPage
 from ui.pages.moisture_ai_report_page import MoistureAIReportPage
+from ui.pages.moisture_governance_page import MoistureGovernancePage
 from ui.pages.result_center_page import ResultCenterPage
 from ui.pages.settings_page import SettingsPage
 from ui.pages.task_progress_page import TaskProgressPage
@@ -98,11 +100,21 @@ class MainWindow(QMainWindow):
             context.module_management_service,
             context.settings,
         )
+        self.moisture_governance_page = MoistureGovernancePage(
+            context.module_management_service
+        )
+        self.after_sales_ai_setup_page = AfterSalesAiSetupPage(
+            context.settings,
+            context.credential_store,
+            context.reload_ai_configuration,
+        )
         for page in (
             self.module_task_page,
             self.task_progress_page,
             self.result_center_page,
             self.moisture_ai_report_page,
+            self.moisture_governance_page,
+            self.after_sales_ai_setup_page,
         ):
             self.stack.addWidget(page)
 
@@ -113,6 +125,7 @@ class MainWindow(QMainWindow):
         self._finalize_failed = False
         self._confirmation_job_ids: set[str] = set()
         self._foreground_job_id: str | None = None
+        self._after_sales_ai_ready = False
         self._navigation_history: list[tuple[QWidget, PageId]] = []
         self._current_nav_page = PageId.WORKBENCH
 
@@ -143,6 +156,16 @@ class MainWindow(QMainWindow):
             self._start_configured_task
         )
         self.module_task_page.ai_report_requested.connect(self._open_moisture_ai_report)
+        self.module_task_page.governance_requested.connect(self._open_moisture_governance)
+        self.after_sales_ai_setup_page.setup_completed.connect(
+            self._continue_after_sales_setup
+        )
+        self.after_sales_ai_setup_page.action_failed.connect(
+            lambda message: self._show_failure("售后 AI 接入", message)
+        )
+        self.moisture_governance_page.action_failed.connect(
+            lambda message: self._show_failure("水分经验与规则管理", message)
+        )
         self.moisture_ai_report_page.task_requested.connect(self._start_moisture_ai_report)
         self.moisture_ai_report_page.action_failed.connect(
             lambda message: self._show_failure("AI汇总报告", message)
@@ -298,14 +321,46 @@ class MainWindow(QMainWindow):
         except KeyError as error:
             self._show_failure("模块不可用", str(error))
             return
+        policy = module.manifest.framework_ai
+        if (
+            module_id is ModuleId.AFTER_SALES
+            and policy is not None
+            and policy.required
+        ):
+            self._after_sales_ai_ready = False
+            self.after_sales_ai_setup_page.activate()
+            self._show_widget(
+                self.after_sales_ai_setup_page,
+                nav_page=PageId.WORKBENCH,
+            )
+            return
+        self._show_module_task(module_id, module)
+
+    def _show_module_task(self, module_id: object, module: object) -> None:
+        manifest = module.manifest
         self.module_task_page.set_module(
             module_id,
-            module.manifest.module_name,
-            module.manifest.supported_extensions,
-            ai_report_available="ai_report" in module.manifest.capabilities,
-            incremental_available=module.manifest.supports_incremental,
+            manifest.module_name,
+            manifest.supported_extensions,
+            ai_report_available="ai_report" in manifest.capabilities,
+            incremental_available=manifest.supports_incremental,
+            governance_available=bool(
+                manifest.management_contract
+                and {"experience_management", "rule_management"}
+                <= set(manifest.capabilities)
+            ),
+            framework_ai_required=bool(manifest.framework_ai and manifest.framework_ai.required),
         )
         self._show_widget(self.module_task_page, nav_page=PageId.WORKBENCH)
+
+    def _continue_after_sales_setup(self) -> None:
+        try:
+            module = self.context.registry.get(ModuleId.AFTER_SALES)
+        except KeyError as error:
+            self._show_failure("模块不可用", str(error))
+            return
+        self._after_sales_ai_ready = True
+        self._show_module_task(ModuleId.AFTER_SALES, module)
 
     def _start_task(self, module_id: object, files: list) -> None:
         self._start_task_with_config(module_id, files, None)
@@ -334,6 +389,11 @@ class MainWindow(QMainWindow):
                 module_id,
                 files,
                 module_config=module_config,
+                ai_consent_granted=(
+                    module_id is ModuleId.AFTER_SALES
+                    and self._after_sales_ai_ready
+                    and self.module_task_page.ai_consent.isChecked()
+                ),
             )
         except Exception as error:
             self._show_failure("任务创建失败", str(error))
@@ -343,6 +403,8 @@ class MainWindow(QMainWindow):
         if self._start_failure_job_id == job_id:
             return
         self._foreground_job_id = job_id
+        if module_id is ModuleId.AFTER_SALES:
+            self._after_sales_ai_ready = False
         self.task_progress_page.bind(job_id)
         self._show_widget(self.task_progress_page)
 
@@ -361,6 +423,24 @@ class MainWindow(QMainWindow):
         self.moisture_ai_report_page.activate()
         self._show_widget(
             self.moisture_ai_report_page,
+            nav_page=PageId.WORKBENCH,
+        )
+
+    def _open_moisture_governance(self, module_id: object) -> None:
+        if module_id is not ModuleId.MOISTURE:
+            self._show_failure("功能不可用", "经验与规则管理当前只属于竹丝水分模块")
+            return
+        try:
+            module = self.context.registry.get(ModuleId.MOISTURE)
+        except KeyError:
+            self._show_failure("功能不可用", "竹丝水分模块尚未安装")
+            return
+        if not module.manifest.management_contract:
+            self._show_failure("功能不可用", "当前水分模块尚未提供版本化管理合同")
+            return
+        self.moisture_governance_page.activate()
+        self._show_widget(
+            self.moisture_governance_page,
             nav_page=PageId.WORKBENCH,
         )
 

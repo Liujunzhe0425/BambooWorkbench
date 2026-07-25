@@ -3,6 +3,7 @@ from pathlib import Path
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QFormLayout,
@@ -23,6 +24,7 @@ class ModuleTaskPage(QWidget):
     task_requested = Signal(object, list)
     configured_task_requested = Signal(object, list, object)
     ai_report_requested = Signal(object)
+    governance_requested = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -32,6 +34,7 @@ class ModuleTaskPage(QWidget):
         self.supported_extensions: set[str] = set()
         self.base_summary: Path | None = None
         self.incremental_available = False
+        self.framework_ai_required = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 24, 30, 28)
@@ -98,11 +101,27 @@ class ModuleTaskPage(QWidget):
         self.run_button.setProperty("primary", True)
         self.run_button.setAccessibleName("创建并运行任务")
         self.run_button.clicked.connect(self._run)
+        self.ai_consent = QCheckBox(
+            "我已查看数据外发说明，并授权本批次由框架 AI Provider 处理脱敏摘要"
+        )
+        self.ai_consent.setVisible(False)
+        self.ai_consent.stateChanged.connect(self._update_buttons)
+        self.ai_disclosure = QLabel(
+            "框架只发送脱敏摘要和证据编号，不发送 Excel、原始文件名、客户身份或 API Key。"
+            "AI 仅给出候选建议，售后费用、责任工厂和投诉类型仍须逐文件人工确认。"
+        )
+        self.ai_disclosure.setWordWrap(True)
+        self.ai_disclosure.setProperty("subtle", True)
+        self.ai_disclosure.setVisible(False)
         self.ai_report_button = QPushButton("打开 AI 汇总报告")
         self.ai_report_button.setProperty("secondary", True)
         self.ai_report_button.setAccessibleName("打开竹丝水分AI汇总报告")
         self.ai_report_button.clicked.connect(self._open_ai_report)
         self.ai_report_button.setVisible(False)
+        self.governance_button = QPushButton("打开经验与规则管理")
+        self.governance_button.setProperty("secondary", True)
+        self.governance_button.clicked.connect(self._open_governance)
+        self.governance_button.setVisible(False)
         card = QFrame()
         card.setProperty("card", True)
         card_layout = QVBoxLayout(card)
@@ -113,8 +132,11 @@ class ModuleTaskPage(QWidget):
         card_layout.addLayout(picker_row)
         card_layout.addWidget(self.file_list, 1)
         card_layout.addWidget(self.intake_feedback)
+        card_layout.addWidget(self.ai_disclosure)
+        card_layout.addWidget(self.ai_consent)
         card_layout.addWidget(self.run_button)
         card_layout.addWidget(self.ai_report_button)
+        card_layout.addWidget(self.governance_button)
         layout.addWidget(self.title)
         layout.addWidget(self.subtitle)
         layout.addWidget(card, 1)
@@ -128,6 +150,8 @@ class ModuleTaskPage(QWidget):
         *,
         ai_report_available: bool = False,
         incremental_available: bool = False,
+        governance_available: bool = False,
+        framework_ai_required: bool = False,
     ) -> None:
         self.module_id = module_id
         self.title.setText(title)
@@ -139,6 +163,21 @@ class ModuleTaskPage(QWidget):
         self.ai_report_button.setVisible(
             getattr(module_id, "value", module_id) == "moisture"
             and ai_report_available
+        )
+        self.governance_button.setVisible(
+            getattr(module_id, "value", module_id) == "moisture" and governance_available
+        )
+        self.framework_ai_required = (
+            getattr(module_id, "value", module_id) == "after_sales"
+            and framework_ai_required
+        )
+        self.ai_consent.setChecked(False)
+        self.ai_consent.setVisible(self.framework_ai_required)
+        self.ai_disclosure.setVisible(self.framework_ai_required)
+        self.run_button.setText(
+            "开始智能分析并进入人工复核"
+            if self.framework_ai_required
+            else "创建任务"
         )
         is_moisture = getattr(module_id, "value", module_id) == "moisture"
         self.incremental_available = is_moisture and incremental_available
@@ -254,6 +293,8 @@ class ModuleTaskPage(QWidget):
             self.operation_combo.currentData() == "append_summary"
         )
         ready = bool(self.files) and (not append_mode or self.base_summary is not None)
+        if self.framework_ai_required:
+            ready = ready and self.ai_consent.isChecked()
         self.run_button.setEnabled(self.module_id is not None and ready)
         self.remove_button.setEnabled(bool(self.file_list.selectedItems()))
         self.clear_button.setEnabled(bool(self.files))
@@ -292,3 +333,7 @@ class ModuleTaskPage(QWidget):
     def _open_ai_report(self) -> None:
         if self.module_id is not None:
             self.ai_report_requested.emit(self.module_id)
+
+    def _open_governance(self) -> None:
+        if self.module_id is not None:
+            self.governance_requested.emit(self.module_id)
