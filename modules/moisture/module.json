@@ -5,6 +5,11 @@
   "module_version": "1.1.1",
   "entrypoint": "run_module.bat",
   "management_entrypoint": "run_management.bat",
+  "management_contract": {
+    "schema_version": "1.1",
+    "request_schema": "schemas/moisture-management-request.schema.json",
+    "response_schema": "schemas/moisture-management-response.schema.json"
+  },
   "capabilities": [
     "ai_report",
     "experience_management",

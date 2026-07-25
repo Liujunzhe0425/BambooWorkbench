@@ -2,18 +2,21 @@ import json
 import tomllib
 from pathlib import Path
 
-import jsonschema
+from core.contracts.manifest import ModuleManifest
+from core.contracts.validator import validate_module
 
 ROOT = Path(__file__).resolve().parents[4]
 MODULE_ROOT = ROOT / "modules" / "moisture"
-CANONICAL_SCHEMA = ROOT / "contracts" / "schemas" / "module-manifest.schema.json"
 
 
-def test_manifest_matches_canonical_schema() -> None:
+def test_manifest_matches_framework_contract() -> None:
     manifest = json.loads((MODULE_ROOT / "module.json").read_text(encoding="utf-8"))
-    schema = json.loads(CANONICAL_SCHEMA.read_text(encoding="utf-8"))
 
-    jsonschema.validate(manifest, schema)
+    parsed = ModuleManifest.model_validate(manifest)
+    report = validate_module(MODULE_ROOT)
+
+    assert report.ok, report.issues
+    assert parsed.management_contract is not None
     assert manifest == {
         "schema_version": "1.0",
         "module_id": "moisture",
@@ -21,6 +24,11 @@ def test_manifest_matches_canonical_schema() -> None:
         "module_version": "1.1.1",
         "entrypoint": "run_module.bat",
         "management_entrypoint": "run_management.bat",
+        "management_contract": {
+            "schema_version": "1.1",
+            "request_schema": "schemas/moisture-management-request.schema.json",
+            "response_schema": "schemas/moisture-management-response.schema.json",
+        },
         "capabilities": [
             "ai_report",
             "experience_management",
@@ -33,6 +41,18 @@ def test_manifest_matches_canonical_schema() -> None:
         "supports_incremental": True,
         "requires_network": False,
     }
+
+
+def test_management_contract_schema_assets_exist() -> None:
+    manifest = ModuleManifest.model_validate_json(
+        (MODULE_ROOT / "module.json").read_text(encoding="utf-8")
+    )
+    contract = manifest.management_contract
+
+    assert contract is not None
+    assert contract.schema_version == "1.1"
+    assert (MODULE_ROOT / contract.request_schema).is_file()
+    assert (MODULE_ROOT / contract.response_schema).is_file()
 
 
 def test_manifest_entrypoint_and_minimum_package_exist() -> None:
