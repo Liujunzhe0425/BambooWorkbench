@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -256,3 +257,55 @@ def test_knowledge_only_request_auto_finalizes_without_user_confirmation(
     )
     assert final_job.service_response_file is not None
     assert app_services["confirmation_repository"].list_for_job(job_id) == []
+
+
+def test_required_framework_ai_runs_before_business_confirmation(
+    qtbot, app_services: dict[str, object], tmp_path: Path
+) -> None:
+    registry = app_services["registry"]
+    module = registry.get(ModuleId.AFTER_SALES)
+    registry._modules[ModuleId.AFTER_SALES] = replace(
+        module,
+        manifest=type(module.manifest).model_validate(
+            {
+                **module.manifest.model_dump(mode="python"),
+                "framework_ai": {
+                    "required": True,
+                    "setup_page": "module",
+                    "service_before_confirmation": True,
+                },
+            }
+        ),
+    )
+    source = tmp_path / "ai-required.xlsx"
+    source.write_bytes(b"ai-required")
+    service = _task_service(app_services)
+
+    with qtbot.waitSignal(service.needs_confirmation, timeout=20_000) as pending:
+        job_id = service.create_and_start(
+            ModuleId.AFTER_SALES,
+            [source],
+            ai_consent_granted=True,
+        )
+
+    prompts = pending.args[1].confirmations
+    assert [prompt.confirmation_id for prompt in prompts] == ["mock-ai-review"]
+    task_dir = app_services["paths"].tasks / job_id
+    rebound = JobRequest.model_validate_json(
+        (task_dir / "job-draft.json").read_text(encoding="utf-8")
+    )
+    assert rebound.ai_enabled is True
+    assert rebound.service_response_file is not None
+
+    bundle_path = _confirmation_service(app_services).submit(
+        job_id,
+        [ConfirmationAnswer(confirmation_id="mock-ai-review", value="人工值")],
+    )
+    with qtbot.waitSignal(service.finished, timeout=20_000):
+        service.finalize(job_id, bundle_path)
+
+    final_job = JobRequest.model_validate_json(
+        (task_dir / "job-finalize.json").read_text(encoding="utf-8")
+    )
+    assert final_job.ai_enabled is True
+    assert final_job.service_response_file == rebound.service_response_file
