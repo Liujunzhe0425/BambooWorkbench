@@ -656,13 +656,22 @@ class TaskService(QObject):
         capabilities = getattr(manifest, "capabilities", [])
         if module_id is not ModuleId.MOISTURE or "rule_snapshot" not in capabilities:
             return module_config
-        if self.module_management_service is None:
-            raise RuntimeError("水分规则快照管理服务尚未配置")
-        response = self.module_management_service.execute_sync(
-            module_id,
-            "get_active_rule_identity",
-            {},
-        )
+        management = self.module_management_service
+        temporary_management = False
+        if management is None:
+            from core.modules.management_service import ModuleManagementService
+
+            management = ModuleManagementService(self.paths, self.registry)
+            temporary_management = True
+        try:
+            response = management.execute_sync(
+                module_id,
+                "get_active_rule_identity",
+                {},
+            )
+        finally:
+            if temporary_management:
+                management.shutdown()
         result = response.get("result")
         active = result.get("active_rule") if isinstance(result, dict) else None
         if not isinstance(active, dict) or set(active) != {"version", "sha256"}:
