@@ -15,6 +15,7 @@ dependencies = [
   "keyring>=25,<26",
   "PyYAML>=6,<7",
   "openpyxl>=3.1,<4",
+  "jsonschema>=4.23,<5",
 ]
 
 [project.optional-dependencies]

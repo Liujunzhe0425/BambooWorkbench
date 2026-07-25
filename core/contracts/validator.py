@@ -2,6 +2,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 from pydantic import ValidationError
 
 from .manifest import ModuleManifest
@@ -46,6 +48,26 @@ def validate_module(module_dir: Path) -> ValidationReport:
             manifest.management_entrypoint,
             "management-entrypoint",
             required=False,
+        )
+    if manifest.management_contract is not None:
+        if manifest.management_entrypoint is None:
+            report.issues.append(
+                ValidationIssue(
+                    "missing-management-entrypoint",
+                    "management_contract requires management_entrypoint",
+                )
+            )
+        _validate_json_schema_asset(
+            report,
+            module_root,
+            manifest.management_contract.request_schema,
+            "management-request-schema",
+        )
+        _validate_json_schema_asset(
+            report,
+            module_root,
+            manifest.management_contract.response_schema,
+            "management-response-schema",
         )
     if len(manifest.capabilities) != len(set(manifest.capabilities)):
         report.issues.append(
@@ -105,3 +127,33 @@ def _validate_entrypoint(
         )
     elif not resolved.is_file():
         report.issues.append(ValidationIssue(missing_code, f"missing file: {raw_entrypoint}"))
+
+
+def _validate_json_schema_asset(
+    report: ValidationReport,
+    module_root: Path,
+    raw_path: str,
+    code_prefix: str,
+) -> None:
+    relative = Path(raw_path)
+    resolved = (module_root / relative).resolve()
+    if relative.anchor or not resolved.is_relative_to(module_root):
+        report.issues.append(
+            ValidationIssue(
+                f"invalid-{code_prefix}",
+                f"{code_prefix} must be a relative path inside the module directory",
+            )
+        )
+        return
+    if resolved.suffix.casefold() != ".json" or not resolved.is_file() or resolved.is_symlink():
+        report.issues.append(
+            ValidationIssue(f"invalid-{code_prefix}", f"{code_prefix} must be a real JSON file")
+        )
+        return
+    try:
+        payload = json.loads(resolved.read_text(encoding="utf-8"))
+        Draft202012Validator.check_schema(payload)
+    except (OSError, UnicodeError, json.JSONDecodeError, SchemaError):
+        report.issues.append(
+            ValidationIssue(f"invalid-{code_prefix}", f"{code_prefix} is not a valid JSON Schema")
+        )

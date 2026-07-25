@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import sys
@@ -19,6 +20,7 @@ from core.platform.path_safety import (
 )
 
 from .host_runtime import add_packaged_host_environment, module_host_command
+from .management_contract import ModuleManagementContractAdapter
 from .process_control import terminate_process
 from .progress_parser import parse_progress
 from .registry import RegisteredModule
@@ -62,7 +64,8 @@ class ModuleManagementRunner(QObject):
         self.cancellation_grace_ms = cancellation_grace_ms
         self._process_factory = process_factory
         self._process: QProcess | None = None
-        self._request: ModuleManagementRequest | None = None
+        self._request: ModuleManagementRequest | dict[str, object] | None = None
+        self._module: RegisteredModule | None = None
         self._workspace: Path | None = None
         self._stdout_buffer = bytearray()
         self._pending_terminal: tuple[str, object | None] | None = None
@@ -74,7 +77,7 @@ class ModuleManagementRunner(QObject):
     def start(
         self,
         module: RegisteredModule,
-        request: ModuleManagementRequest,
+        request: ModuleManagementRequest | dict[str, object],
         workspace: Path,
     ) -> None:
         if self.is_running:
@@ -108,7 +111,12 @@ class ModuleManagementRunner(QObject):
                 "management response",
                 reject_link=True,
             )
-            _atomic_write(request_path, request.model_dump_json(indent=2))
+            if isinstance(request, ModuleManagementRequest):
+                request_text = request.model_dump_json(indent=2)
+            else:
+                request = ModuleManagementContractAdapter(module).validate_request(request)
+                request_text = json.dumps(request, ensure_ascii=False, indent=2)
+            _atomic_write(request_path, request_text)
             program, arguments = module_host_command(
                 [
                     "--launcher",
@@ -128,6 +136,7 @@ class ModuleManagementRunner(QObject):
         process = self._process_factory(self)
         self._process = process
         self._request = request
+        self._module = module
         self._workspace = workspace
         self._stdout_buffer.clear()
         self._pending_terminal = None
@@ -166,7 +175,7 @@ class ModuleManagementRunner(QObject):
 
     def _environment(
         self,
-        request: ModuleManagementRequest,
+        request: ModuleManagementRequest | dict[str, object],
         module: RegisteredModule,
     ) -> QProcessEnvironment:
         environment = QProcessEnvironment.systemEnvironment()
@@ -175,9 +184,14 @@ class ModuleManagementRunner(QObject):
         environment.insert("PATH", f"{runtime_dir};{inherited_path}")
         environment.insert("PYTHONPATH", str(Path(__file__).parents[2]))
         environment.insert("PYTHONUTF8", "1")
-        environment.insert("BAMBOO_MODULE_DATA_DIR", request.data_dir)
+        data_dir = (
+            request.data_dir
+            if isinstance(request, ModuleManagementRequest)
+            else str(request["data_dir"])
+        )
+        environment.insert("BAMBOO_MODULE_DATA_DIR", data_dir)
         module_key = module.manifest.module_id.value.upper()
-        environment.insert(f"BAMBOO_{module_key}_DATA_DIR", request.data_dir)
+        environment.insert(f"BAMBOO_{module_key}_DATA_DIR", data_dir)
         add_packaged_host_environment(environment)
         return environment
 
@@ -228,13 +242,23 @@ class ModuleManagementRunner(QObject):
             _LOG.warning("module management response rejected error=%s", error)
             self._emit_terminal(process, "failed", "模块资料操作返回无效结果")
             return
-        if response.status == "error":
-            self._emit_terminal(process, "failed", response.message or "模块资料操作失败")
+        status = (
+            response.status
+            if isinstance(response, ModuleManagementResponse)
+            else response.get("status")
+        )
+        message = (
+            response.message
+            if isinstance(response, ModuleManagementResponse)
+            else response.get("message")
+        )
+        if status == "error":
+            self._emit_terminal(process, "failed", str(message or "模块资料操作失败"))
             return
         self._emit_terminal(process, "completed", response)
 
-    def _load_response(self) -> ModuleManagementResponse:
-        if self._workspace is None or self._request is None:
+    def _load_response(self) -> ModuleManagementResponse | dict[str, object]:
+        if self._workspace is None or self._request is None or self._module is None:
             raise ValueError("management runner lost request state")
         response_path = resolve_contained_file(
             self._workspace / "response.json",
@@ -242,16 +266,21 @@ class ModuleManagementRunner(QObject):
             "management response",
             reject_link=True,
         )
-        response = ModuleManagementResponse.model_validate_json(
-            response_path.read_text(encoding="utf-8")
+        text = response_path.read_text(encoding="utf-8")
+        if isinstance(self._request, ModuleManagementRequest):
+            response = ModuleManagementResponse.model_validate_json(text)
+            if (
+                response.request_id != self._request.request_id
+                or response.module_id is not self._request.module_id
+                or response.operation is not self._request.operation
+            ):
+                raise ValueError("management response identity mismatch")
+            return response
+        payload = json.loads(text)
+        return ModuleManagementContractAdapter(self._module).validate_response(
+            payload,
+            request=self._request,
         )
-        if (
-            response.request_id != self._request.request_id
-            or response.module_id is not self._request.module_id
-            or response.operation is not self._request.operation
-        ):
-            raise ValueError("management response identity mismatch")
-        return response
 
     def _timeout(self, process: QProcess) -> None:
         if self._process is not process or self._pending_terminal is not None:
@@ -295,6 +324,7 @@ class ModuleManagementRunner(QObject):
             return
         self._process = None
         self._request = None
+        self._module = None
         self._workspace = None
         self._stdout_buffer.clear()
         self._pending_terminal = None
