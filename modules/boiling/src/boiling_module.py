@@ -31,7 +31,7 @@ except ImportError as exc:  # pragma: no cover - exercised in a clean environmen
 
 
 MODULE_ID = "boiling"
-MODULE_VERSION = "1.1.1"
+MODULE_VERSION = "1.2.0"
 MAX_AI_RECORDS = 50
 MAX_AI_PAYLOAD_BYTES = 65_536
 MAX_AI_RESPONSE_CHARS = 8_000

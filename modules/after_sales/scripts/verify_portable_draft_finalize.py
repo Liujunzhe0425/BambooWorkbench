@@ -67,8 +67,8 @@ def main() -> int:
     _write_json(draft_job_path, draft_job)
     _run(runtime, draft_job_path)
     draft = json.loads((draft_output / "result.json").read_text(encoding="utf-8"))
-    if draft.get("module_version") != "1.1.1":
-        raise AssertionError("便携运行时不是售后模块 1.1.1")
+    if draft.get("module_version") != "1.2.0":
+        raise AssertionError("便携运行时不是售后模块 1.2.0")
     if draft.get("confirmations"):
         raise AssertionError("第一次 draft 不应在框架 AI 调用前生成业务确认")
     requests = draft.get("service_requests")

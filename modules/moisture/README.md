@@ -1,6 +1,6 @@
 # 竹丝水分检测模块
 
-BambooWorkbench 竹丝水分检测模块 v1.1.1。模块提供两条相互隔离的业务路径：
+BambooWorkbench 竹丝水分检测模块 v1.2.0。模块提供两条相互隔离的业务路径：
 
 - 普通汇总：确定性 Excel 解析、统计、规则初筛和四表成果；
 - 独立 AI 报告：用户主动选择当前汇总表、可选历史资料和 approved 经验后，由主框架在逐次同意下调用 Provider。
@@ -116,7 +116,7 @@ powershell -ExecutionPolicy Bypass -File modules\moisture\build_portable_runtime
 
 ## 当前验收状态
 
-- 模块公开版本：`1.1.1`；
+- 模块公开版本：`1.2.0`；
 - 历史追加继续保持 `supports_incremental: true`；
 - 统一管理进程覆盖 27 个公开操作，并保留旧 v1.0 四操作；
 - 模块侧规则快照能够固定 `{version, sha256}`，draft/finalize 不重新选择 active；
