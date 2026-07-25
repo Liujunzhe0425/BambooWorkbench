@@ -1,5 +1,5 @@
 """BambooWorkbench moisture module."""
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 __all__ = ["__version__"]
