@@ -1,11 +1,13 @@
 {
   "schema_version": "1.0",
   "sample_file": "06_three_samples.xlsx",
-  "expected_status": "success",
+  "expected_status": "needs_confirmation",
   "expected_processed_count": 1,
   "expected_failed_count": 0,
   "expected_anomaly_fields": [],
-  "expected_confirmation_fields": [],
+  "expected_confirmation_fields": [
+    "人工开裂检查"
+  ],
   "expected_sample_count": 3,
   "expected_retest_count": 0,
   "expected_immersion_peel_result": "合格",

@@ -31,7 +31,7 @@ except ImportError as exc:  # pragma: no cover - exercised in a clean environmen
 
 
 MODULE_ID = "boiling"
-MODULE_VERSION = "1.1.0"
+MODULE_VERSION = "1.1.1"
 MAX_AI_RECORDS = 50
 MAX_AI_PAYLOAD_BYTES = 65_536
 MAX_AI_RESPONSE_CHARS = 8_000
@@ -829,7 +829,7 @@ def add_conclusion_rule_conflict(
     )
 
 
-def evaluate_record(record, rules, fingerprint):
+def evaluate_record(record, rules, fingerprint, crack_inspection_confirmed=False):
     anomalies = []
     confirmations = []
     rule_hits = []
@@ -911,6 +911,7 @@ def evaluate_record(record, rules, fingerprint):
     numeric_pass = None
     expansion_grade = ""
     human_review = False
+    crack_review_required = False
     rule_detail = ""
     if expansion_value is None:
         rule_detail = "信息不足"
@@ -924,11 +925,13 @@ def evaluate_record(record, rules, fingerprint):
             numeric_pass = True
             expansion_grade = "绿色优等候选"
             human_review = True
+            crack_review_required = True
             rule_detail = "膨胀率≤6.5%，需结合开裂观察确认绿色优等"
         elif pass_max is not None and expansion_value <= pass_max + 1e-12:
             numeric_pass = True
             expansion_grade = "蓝色合格"
             human_review = True
+            crack_review_required = True
             rule_detail = "6.5%＜膨胀率≤8%，膨胀率维度蓝色合格，仍需核对开裂观察"
         else:
             numeric_pass = False
@@ -941,6 +944,7 @@ def evaluate_record(record, rules, fingerprint):
             numeric_pass = True
             expansion_grade = "绿色优等候选"
             human_review = True
+            crack_review_required = True
             rule_detail = "膨胀率≤6.5%，需结合开裂观察确认绿色优等"
         elif blue_min is not None and expansion_value < blue_min - 1e-12:
             human_review = True
@@ -949,6 +953,7 @@ def evaluate_record(record, rules, fingerprint):
             numeric_pass = True
             expansion_grade = "蓝色合格"
             human_review = True
+            crack_review_required = True
             rule_detail = "8%≤膨胀率≤12%，膨胀率维度蓝色合格，仍需核对开裂观察"
         else:
             numeric_pass = False
@@ -958,9 +963,26 @@ def evaluate_record(record, rules, fingerprint):
         human_review = True
         rule_detail = f"产品用途“{usage}”没有自动判定规则"
 
+    if crack_review_required and crack_inspection_confirmed:
+        human_review = False
+        rule_detail = rule_detail.replace(
+            "需结合开裂观察确认绿色优等",
+            "开裂已人工检查且符合绿色优等要求",
+        ).replace(
+            "仍需核对开裂观察",
+            "开裂已人工检查且符合对应等级",
+        )
+
     record["expansion_numeric_pass"] = numeric_pass
     record["expansion_grade"] = expansion_grade
     record["expansion_human_review_required"] = human_review
+    record["expansion_crack_review_applicable"] = crack_review_required
+    record["crack_inspection_confirmed"] = bool(crack_inspection_confirmed)
+    record["crack_inspection_status"] = (
+        "已检查且符合对应等级"
+        if record["crack_inspection_confirmed"]
+        else ("待确认" if expansion_value is not None else "不适用")
+    )
     record["rule_observations"]["expansion"] = rule_detail
     rule_hits.append(
         {
@@ -970,6 +992,8 @@ def evaluate_record(record, rules, fingerprint):
             "product_usage": usage,
             "average_expansion_ratio": expansion_value,
             "human_review_required": human_review,
+            "crack_review_applicable": crack_review_required,
+            "crack_inspection_confirmed": record["crack_inspection_confirmed"],
             "source_cells": [
                 sample["expansion_source_cell"]
                 for sample in record["samples"]
@@ -1831,25 +1855,139 @@ def write_analysis_workbook(
         ai_sheet["A1"].fill = title_fill
         ai_sheet["A1"].font = Font(name="微软雅黑", size=16, bold=True, color="FFFFFF")
         ai_sheet["A1"].alignment = Alignment(horizontal="center", vertical="center")
-        ai_sheet["A4"] = "状态"
-        ai_sheet["B4"] = ai_review.get("status", "")
-        ai_sheet["A5"] = "责任边界"
-        ai_sheet["B5"] = (
-            "AI 仅解释已脱敏的规则结果并提供复核建议；不得改变公式、阈值、自动等级、"
-            "业务状态或人工确认结论。"
+        ai_sheet.merge_cells("A3:H3")
+        ai_sheet["A3"] = (
+            "本页只整理已脱敏规则候选的辅助复核建议；原因均为待验证假设，"
+            "最终判断以原始记录、确定性规则和有权限人员复核为准。"
         )
-        ai_sheet["A6"] = "辅助内容"
-        ai_sheet.merge_cells("B6:H18")
-        ai_sheet["B6"] = ai_review.get("text", "")
-        style_header([ai_sheet["A4"], ai_sheet["A5"], ai_sheet["A6"]])
+        ai_sheet["A3"].fill = note_fill
+        ai_sheet["A3"].font = Font(name="微软雅黑", italic=True, color="7F6000")
+        ai_sheet["A3"].alignment = Alignment(
+            horizontal="center", vertical="center", wrap_text=True
+        )
+        ai_sheet["A4"] = "AI 状态"
+        ai_sheet["B4"] = ai_review.get("status", "")
+        ai_sheet["C4"] = "建议项数量"
+        ai_sheet["D4"] = len(ai_review.get("items", []))
+        ai_sheet["E4"] = "输出性质"
+        ai_sheet.merge_cells("F4:H4")
+        ai_sheet["F4"] = "辅助复核，不作为业务结论"
+        ai_sheet["A6"] = "总体说明"
+        ai_sheet.merge_cells("B6:H8")
+        ai_sheet["B6"] = ai_review.get("overall_summary") or ai_review.get("text", "")
+        style_header([ai_sheet["A4"], ai_sheet["C4"], ai_sheet["E4"], ai_sheet["A6"]])
         ai_sheet["B4"].fill = note_fill
-        ai_sheet["B5"].fill = note_fill
+        ai_sheet["D4"].fill = note_fill
+        ai_sheet["F4"].fill = note_fill
         ai_sheet["B6"].alignment = Alignment(vertical="top", wrap_text=True)
-        ai_sheet.column_dimensions["A"].width = 18
-        for column in ("B", "C", "D", "E", "F", "G", "H"):
-            ai_sheet.column_dimensions[column].width = 16
-        for row in range(6, 19):
-            ai_sheet.row_dimensions[row].height = 24
+        ai_sheet.row_dimensions[3].height = 32
+        for row in range(6, 9):
+            ai_sheet.row_dimensions[row].height = 26
+
+        structured_items = ai_review.get("items", [])
+        table_headers = [
+            "序号",
+            "优先级",
+            "候选标识",
+            "风险说明",
+            "待验证原因",
+            "核对清单",
+            "复测建议",
+            "证据引用",
+        ]
+        for column, value in enumerate(table_headers, 1):
+            ai_sheet.cell(10, column, value)
+        style_header(ai_sheet[10])
+        if structured_items:
+            priority_fills = {
+                "高": PatternFill("solid", fgColor="F4CCCC"),
+                "中": PatternFill("solid", fgColor="FFF2CC"),
+                "低": PatternFill("solid", fgColor="D9EAD3"),
+            }
+            for index, item in enumerate(structured_items, 1):
+                ai_sheet.append(
+                    [
+                        index,
+                        item["priority"],
+                        item["candidate_id"],
+                        item["risk_summary"],
+                        "\n".join(f"• {value}" for value in item["possible_causes"]),
+                        "\n".join(f"□ {value}" for value in item["check_items"]),
+                        (
+                            "\n".join(
+                                f"□ {value}" for value in item["retest_recommendations"]
+                            )
+                            or "无新增复测建议"
+                        ),
+                        "\n".join(item["evidence_refs"]),
+                    ]
+                )
+                current_row = ai_sheet.max_row
+                ai_sheet[f"B{current_row}"].fill = priority_fills[item["priority"]]
+                ai_sheet[f"B{current_row}"].font = Font(
+                    name="微软雅黑", bold=True, color="7F6000"
+                )
+                max_lines = max(
+                    1,
+                    len(item["possible_causes"]),
+                    len(item["check_items"]),
+                    len(item["retest_recommendations"]),
+                    len(item["evidence_refs"]),
+                )
+                ai_sheet.row_dimensions[current_row].height = min(150, 36 + max_lines * 18)
+            ai_sheet.auto_filter.ref = f"A10:H{ai_sheet.max_row}"
+        else:
+            ai_sheet.merge_cells("A11:H13")
+            ai_sheet["A11"] = (
+                "当前没有可展示的结构化 AI 建议。"
+                "如状态不是 ok，请按总体说明继续使用完整离线规则报告。"
+            )
+            ai_sheet["A11"].fill = section_fill
+            ai_sheet["A11"].alignment = Alignment(
+                horizontal="center", vertical="center", wrap_text=True
+            )
+
+        limitations = ai_review.get("limitations", [])
+        if limitations:
+            limitation_row = ai_sheet.max_row + 2
+            ai_sheet.merge_cells(
+                start_row=limitation_row,
+                start_column=1,
+                end_row=limitation_row,
+                end_column=8,
+            )
+            ai_sheet.cell(limitation_row, 1, "使用限制")
+            ai_sheet.cell(limitation_row, 1).fill = section_fill
+            ai_sheet.cell(limitation_row, 1).font = Font(name="微软雅黑", bold=True)
+            content_row = limitation_row + 1
+            ai_sheet.merge_cells(
+                start_row=content_row,
+                start_column=1,
+                end_row=content_row + 1,
+                end_column=8,
+            )
+            ai_sheet.cell(
+                content_row,
+                1,
+                "\n".join(f"• {value}" for value in limitations),
+            )
+            ai_sheet.cell(content_row, 1).alignment = Alignment(
+                vertical="top", wrap_text=True
+            )
+            ai_sheet.row_dimensions[content_row].height = max(36, len(limitations) * 20)
+
+        for column, width in {
+            "A": 9,
+            "B": 11,
+            "C": 25,
+            "D": 32,
+            "E": 34,
+            "F": 38,
+            "G": 34,
+            "H": 28,
+        }.items():
+            ai_sheet.column_dimensions[column].width = width
+        ai_sheet.freeze_panes = "A11"
 
     for sheet in workbook.worksheets:
         for row in sheet.iter_rows():
@@ -2306,6 +2444,32 @@ def product_usage_confirmation(record, scope_id):
     }
 
 
+def crack_inspection_confirmation(record, scope_id):
+    return {
+        "confirmation_id": f"C-CRACK-INSPECTION-BATCH-{scope_id}",
+        "field": "人工开裂检查",
+        "reason": (
+            "本批次存在需要结合开裂观察确认膨胀率等级的记录。"
+            "“是”表示已经人工检查，并确认表面、侧面和端头开裂情况符合对应等级；"
+            "选择后只消除开裂观察提示，不改变密度、膨胀率数值、自动等级或其他复核项。"
+        ),
+        "suggested_value": "否（尚未完成或不符合对应等级）",
+        "options": [
+            "是（已检查且符合对应等级）",
+            "否（尚未完成或不符合对应等级）",
+        ],
+        "confidence": 1.0,
+        "blocking": True,
+        "batch_applicable": True,
+        "rememberable": False,
+        "source": source_ref(record["source_file"], record["source_sheet"]),
+    }
+
+
+def crack_inspection_is_confirmed(value):
+    return as_text(value).startswith("是")
+
+
 def unresolved_finalize_anomaly(record, fingerprint, confirmation):
     confirmation_id = confirmation["confirmation_id"]
     stable_suffix = hashlib.sha256(confirmation_id.encode("utf-8")).hexdigest()[:12]
@@ -2383,7 +2547,7 @@ def ai_record_summary(record, anomalies):
         )
     has_candidate = bool(related_anomalies) or bool(record.get("conflicts")) or bool(
         record.get("conclusion_rule_conflicts")
-    ) or bool(record.get("expansion_human_review_required"))
+    )
     if not has_candidate:
         return None
     evidence_refs = sorted(
@@ -2448,8 +2612,10 @@ def build_ai_service_request(job, records, anomalies, rules):
             "module_id": MODULE_ID,
             "rule_version": rules.get("rule_version", ""),
             "instruction": (
-                "仅基于脱敏候选生成中文辅助说明。不得修改或否定模块规则结论，"
-                "不得推断缺失数据，不得给出最终质量签字结论；evidence_refs 只能引用"
+                "仅基于脱敏候选生成中文辅助说明。逐项给出风险说明、待验证原因、"
+                "可执行核对清单、复测建议和优先级；possible_causes 中的内容必须明确"
+                "作为待验证假设，不得写成事实。不得修改或否定模块规则结论，不得"
+                "推断缺失数据，不得给出最终质量签字结论；evidence_refs 只能引用"
                 "对应候选已提供的证据标识。"
             ),
             "candidates": proposed,
@@ -2466,8 +2632,10 @@ def build_ai_service_request(job, records, anomalies, rules):
         "module_id": MODULE_ID,
         "rule_version": rules.get("rule_version", ""),
         "instruction": (
-            "仅基于脱敏候选生成中文辅助说明。不得修改或否定模块规则结论，"
-            "不得推断缺失数据，不得给出最终质量签字结论；evidence_refs 只能引用"
+            "仅基于脱敏候选生成中文辅助说明。逐项给出风险说明、待验证原因、"
+            "可执行核对清单、复测建议和优先级；possible_causes 中的内容必须明确"
+            "作为待验证假设，不得写成事实。不得修改或否定模块规则结论，不得"
+            "推断缺失数据，不得给出最终质量签字结论；evidence_refs 只能引用"
             "对应候选已提供的证据标识。"
         ),
         "candidates": summaries,
@@ -2502,16 +2670,34 @@ def ai_response_schema():
                     "additionalProperties": False,
                     "required": [
                         "candidate_id",
-                        "summary",
-                        "risk_level",
-                        "review_recommendation",
+                        "risk_summary",
+                        "possible_causes",
+                        "check_items",
+                        "retest_recommendations",
+                        "priority",
                         "evidence_refs",
                     ],
                     "properties": {
                         "candidate_id": {"type": "string"},
-                        "summary": {"type": "string", "maxLength": 800},
-                        "risk_level": {"enum": ["high", "medium", "low"]},
-                        "review_recommendation": {"type": "string", "maxLength": 800},
+                        "risk_summary": {"type": "string", "maxLength": 800},
+                        "possible_causes": {
+                            "type": "array",
+                            "items": {"type": "string", "maxLength": 300},
+                            "minItems": 1,
+                            "maxItems": 5,
+                        },
+                        "check_items": {
+                            "type": "array",
+                            "items": {"type": "string", "maxLength": 300},
+                            "minItems": 1,
+                            "maxItems": 8,
+                        },
+                        "retest_recommendations": {
+                            "type": "array",
+                            "items": {"type": "string", "maxLength": 300},
+                            "maxItems": 5,
+                        },
+                        "priority": {"enum": ["high", "medium", "low"]},
                         "evidence_refs": {
                             "type": "array",
                             "items": {"type": "string"},
@@ -2522,7 +2708,8 @@ def ai_response_schema():
             },
             "limitations": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": {"type": "string", "maxLength": 500},
+                "maxItems": 8,
             },
         },
     }
@@ -2532,6 +2719,17 @@ def sanitize_ai_text(value):
     text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", as_text(value)).strip()
     text = re.sub(r"(?i)[a-z]:[\\/][^\s，。；;]+", "[已脱敏路径]", text)
     return text[:MAX_AI_RESPONSE_CHARS]
+
+
+def valid_ai_string_list(value, *, min_items, max_items, max_length):
+    return (
+        isinstance(value, list)
+        and min_items <= len(value) <= max_items
+        and all(
+            isinstance(item, str) and bool(item.strip()) and len(item) <= max_length
+            for item in value
+        )
+    )
 
 
 def validate_and_render_ai_response(response_text, request):
@@ -2548,13 +2746,18 @@ def validate_and_render_ai_response(response_text, request):
         return None
     if payload.get("schema_version") != "1.0":
         return None
-    if not isinstance(payload.get("overall_summary"), str):
+    if (
+        not isinstance(payload.get("overall_summary"), str)
+        or len(payload["overall_summary"]) > 1200
+    ):
         return None
     if not isinstance(payload.get("items"), list) or not isinstance(
         payload.get("limitations"), list
     ):
         return None
-    if not all(isinstance(item, str) for item in payload["limitations"]):
+    if not valid_ai_string_list(
+        payload["limitations"], min_items=0, max_items=8, max_length=500
+    ):
         return None
     candidates = request.get("payload", {}).get("candidates", [])
     allowed = {
@@ -2564,13 +2767,17 @@ def validate_and_render_ai_response(response_text, request):
     }
     seen = set()
     rendered_items = []
+    structured_items = []
     required_keys = {
         "candidate_id",
-        "summary",
-        "risk_level",
-        "review_recommendation",
+        "risk_summary",
+        "possible_causes",
+        "check_items",
+        "retest_recommendations",
+        "priority",
         "evidence_refs",
     }
+    priority_labels = {"high": "高", "medium": "中", "low": "低"}
     for item in payload["items"]:
         if not isinstance(item, dict) or set(item) != required_keys:
             return None
@@ -2580,9 +2787,28 @@ def validate_and_render_ai_response(response_text, request):
             not isinstance(candidate_id, str)
             or candidate_id not in allowed
             or candidate_id in seen
-            or not isinstance(item.get("summary"), str)
-            or item.get("risk_level") not in {"high", "medium", "low"}
-            or not isinstance(item.get("review_recommendation"), str)
+            or not isinstance(item.get("risk_summary"), str)
+            or not item["risk_summary"].strip()
+            or len(item["risk_summary"]) > 800
+            or not valid_ai_string_list(
+                item.get("possible_causes"),
+                min_items=1,
+                max_items=5,
+                max_length=300,
+            )
+            or not valid_ai_string_list(
+                item.get("check_items"),
+                min_items=1,
+                max_items=8,
+                max_length=300,
+            )
+            or not valid_ai_string_list(
+                item.get("retest_recommendations"),
+                min_items=0,
+                max_items=5,
+                max_length=300,
+            )
+            or item.get("priority") not in priority_labels
             or not isinstance(evidence_refs, list)
             or not evidence_refs
             or not all(isinstance(reference, str) for reference in evidence_refs)
@@ -2590,16 +2816,45 @@ def validate_and_render_ai_response(response_text, request):
         ):
             return None
         seen.add(candidate_id)
+        possible_causes = [
+            f"  - {sanitize_ai_text(value)}" for value in item["possible_causes"]
+        ]
+        check_items = [f"  - {sanitize_ai_text(value)}" for value in item["check_items"]]
+        retest_recommendations = [
+            f"  - {sanitize_ai_text(value)}" for value in item["retest_recommendations"]
+        ] or ["  - 无新增复测建议"]
         rendered_items.append(
             "\n".join(
                 [
                     f"### {candidate_id}",
-                    f"- 风险等级：{item['risk_level']}",
-                    f"- 辅助摘要：{sanitize_ai_text(item['summary'])}",
-                    f"- 复核建议：{sanitize_ai_text(item['review_recommendation'])}",
+                    f"- 优先级：{priority_labels[item['priority']]}",
+                    f"- 风险说明：{sanitize_ai_text(item['risk_summary'])}",
+                    "- 待验证原因（以下均为假设，需人工核实）：",
+                    *possible_causes,
+                    "- 核对清单：",
+                    *check_items,
+                    "- 复测建议：",
+                    *retest_recommendations,
                     f"- 证据引用：{', '.join(evidence_refs)}",
                 ]
             )
+        )
+        structured_items.append(
+            {
+                "candidate_id": candidate_id,
+                "priority": priority_labels[item["priority"]],
+                "risk_summary": sanitize_ai_text(item["risk_summary"]),
+                "possible_causes": [
+                    sanitize_ai_text(value) for value in item["possible_causes"]
+                ],
+                "check_items": [
+                    sanitize_ai_text(value) for value in item["check_items"]
+                ],
+                "retest_recommendations": [
+                    sanitize_ai_text(value) for value in item["retest_recommendations"]
+                ],
+                "evidence_refs": list(evidence_refs),
+            }
         )
     if seen != set(allowed):
         return None
@@ -2607,7 +2862,12 @@ def validate_and_render_ai_response(response_text, request):
     limitations = [sanitize_ai_text(item) for item in payload["limitations"] if item.strip()]
     if limitations:
         lines.extend(["", "### 使用限制", *[f"- {item}" for item in limitations]])
-    return sanitize_ai_text("\n".join(lines))
+    return {
+        "text": sanitize_ai_text("\n".join(lines)),
+        "overall_summary": sanitize_ai_text(payload["overall_summary"]),
+        "items": structured_items,
+        "limitations": limitations,
+    }
 
 
 def read_ai_service_response(job, request):
@@ -2645,9 +2905,9 @@ def read_ai_service_response(job, request):
     response = matches[0]
     status = response.get("status")
     if status == "ok":
-        text = validate_and_render_ai_response(response.get("text"), request)
-        if text:
-            return {"status": "ok", "text": text}
+        validated = validate_and_render_ai_response(response.get("text"), request)
+        if validated:
+            return {"status": "ok", **validated}
         return {
             "status": "invalid",
             "text": "AI 返回内容为空、不是严格 JSON 或证据引用不匹配，已使用离线规则报告。",
@@ -2693,10 +2953,15 @@ def run_job(job_path):
     excluded_records = []
     seen = set()
     usage_prompt_added = False
+    crack_prompt_added = False
     is_finalize = job["phase"] == "finalize"
     scope_id = stable_input_scope(job["input_files"])
     answer_map = answers["by_id"]
     batch_usage = answers["batch_usage"]
+    crack_confirmation_id = f"C-CRACK-INSPECTION-BATCH-{scope_id}"
+    crack_answer = as_text(answer_map.get(crack_confirmation_id))
+    crack_answered = bool(crack_answer)
+    crack_inspection_confirmed = crack_inspection_is_confirmed(crack_answer)
     emit("任务开始", 0)
     for index, raw_path in enumerate(job["input_files"], 1):
         source = Path(raw_path).resolve()
@@ -2770,7 +3035,40 @@ def run_job(job_path):
                             )
                         else:
                             usage_confirmation_pending = True
-                    anomalies, confirmations = evaluate_record(record, rules, fingerprint)
+                    anomalies, confirmations = evaluate_record(
+                        record,
+                        rules,
+                        fingerprint,
+                        crack_inspection_confirmed=crack_inspection_confirmed,
+                    )
+                    crack_confirmation_relevant = bool(
+                        record.get("expansion_crack_review_applicable")
+                        or (
+                            not as_text(record.get("product_usage"))
+                            and record.get("average_expansion_ratio") is not None
+                        )
+                    )
+                    crack_confirmation_pending = bool(
+                        crack_confirmation_relevant and not crack_answered
+                    )
+                    if crack_confirmation_relevant:
+                        if crack_answered and not crack_inspection_confirmed:
+                            record["crack_inspection_status"] = (
+                                "已确认尚未完成或不符合对应等级"
+                            )
+                        elif not is_finalize and not crack_prompt_added:
+                            result["confirmations"].append(
+                                crack_inspection_confirmation(record, scope_id)
+                            )
+                            crack_prompt_added = True
+                        elif is_finalize and not crack_answered:
+                            finalize_anomalies.append(
+                                unresolved_finalize_anomaly(
+                                    record,
+                                    fingerprint,
+                                    crack_inspection_confirmation(record, scope_id),
+                                )
+                            )
                     pending_confirmations = [
                         item for item in confirmations if item["confirmation_id"] not in answer_map
                     ]
@@ -2785,7 +3083,11 @@ def run_job(job_path):
                     anomalies.extend(finalize_anomalies)
                     result["anomalies"].extend(anomalies)
                     anomaly_count += len(anomalies)
-                    if usage_confirmation_pending or pending_confirmations:
+                    if (
+                        usage_confirmation_pending
+                        or crack_confirmation_pending
+                        or pending_confirmations
+                    ):
                         record["business_status"] = "待确认"
                     elif anomalies:
                         record["business_status"] = "异常"
