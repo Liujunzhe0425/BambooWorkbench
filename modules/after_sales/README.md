@@ -1,144 +1,95 @@
-# 售后统计模块（1.1.0）
+# 售后统计模块（1.2.0）
 
-本模块是售后 Excel 智能汇总网站的业务处理核心，已整理为 BambooWorkbench 的 `after_sales` 模块包。它从售后申请 Excel 中抽取客户、地点、销售、产品、订单、报修日期、反馈、调查、方案、三类金额和处理状态，并按参考模板生成品牌/月度汇总、逐年售后明细、图表与分析报告。1.1.0 使用竹简工作台统一 `service_requests` AI 授权协议和逐文件人工复核，并提供排版后的 Word 报告及年度图表总览。
+`after_sales` 是 BambooWorkbench 的售后 Excel 分析模块。模块解析每份输入，生成品牌、月份、问题原因、三类金额、处理状态、图表和 Word 报告，并要求逐文件人工确认售后费用、责任工厂和投诉类型。
 
-本目录只包含处理引擎、规则、模板、脱敏样本、测试和交接文档；不包含独立网页、运行日志、客户原表、API Key 或用户产物中的本机绝对路径。2026-07-18 整改在保留既有解析能力的基础上，补齐了离线无冗余确认、三类金额、多标签汇总、图表、分析报告、路径脱敏和损坏文件中文错误。
+标准工作流强制使用框架托管 AI。模块只生成脱敏 `service_requests` 并消费任务目录中的 `service-response.json`；API Key、Provider HTTP 调用、授权和审计均由主框架负责。模块进程自身不读取凭据、不联网，因此 `module.json` 保持 `requires_network: false`。
 
 ## 运行环境
 
 - Windows 10/11
 - Python 3.10 或更高版本
 - 依赖见 `requirements.txt`
-- 离线规则模式不需要网络，也不会因为未配置 AI 而阻断结果生成
-
-安装依赖：
 
 ```bat
 pip install -r requirements.txt
-```
-
-## 命令
-
-```bat
 run_module.bat version
 run_module.bat self-check
 run_module.bat run --job D:\data\job.json
 ```
 
-如果 Python 没有加入 PATH，可以指定：
-
-```bat
-set PYTHON_EXE=C:\path\to\python.exe
-run_module.bat self-check
-```
-
-Windows 便携包会在模块目录的 `runtime` 中携带独立运行时；`run_module.bat`
-会优先使用该运行时，不依赖使用者电脑上的 Python 或第三方库。框架便携版构建完成后，
-在仓库根目录执行以下命令把售后运行时装入便携目录：
+便携版由仓库根目录执行下列命令安装模块冻结运行时：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File modules/after_sales/build_portable_runtime.ps1
 ```
 
-进度协议使用 ASCII 安全的 JSON 转义输出。这样即使 Windows 冻结程序所在控制台仍为
-GBK，工作台也能按严格 UTF-8 逐行读取，JSON 解码后中文消息保持不变。构建脚本会运行
-冻结程序协议验收，非 UTF-8 或非逐行 JSON 的便携运行时不会通过打包。
+## 框架 AI 合同
 
-## 统一任务合同
+模块清单声明：
 
 ```json
 {
-  "schema_version": "1.0",
-  "job_id": "sample-after-sales",
-  "module_id": "after_sales",
-  "phase": "draft",
-  "run_mode": "batch",
-  "input_files": [
-    "D:/BambooWorkbench/tasks/sample/input/sample_after_sales.xlsx"
-  ],
-  "output_dir": "D:/BambooWorkbench/tasks/sample/output",
-  "module_config_file": null,
-  "ai_enabled": false,
-  "allowed_knowledge_scopes": [],
-  "parent_job_id": null,
-  "confirmation_file": null,
-  "service_response_file": null
+  "requires_network": false,
+  "framework_ai": {
+    "required": true,
+    "setup_page": "module",
+    "service_before_confirmation": true
+  }
 }
 ```
 
-框架会在 `input_files` 中传入只读 Excel 副本的绝对路径。模块不会修改、删除或重命名输入文件，只向 `output_dir` 写入结果。每个成功解析的案件在 `draft` 后固定进入人工复核，必须逐条核对“售后费用、责任工厂、投诉类型”；`finalize` 阶段读取 `confirmation_file`，把确认值写入最终结果。费用与责任工厂因文件间通常不同，不支持直接套用到整批。
+任务顺序固定为：
+
+1. 用户在框架售后 AI 接入页完成 Provider、模型、连接测试和本批次授权。
+2. 第一次 `draft` 解析所有 Excel，为每个成功案件生成限长、脱敏的 AI 请求，不生成业务确认。
+3. 框架 Provider 执行请求并写入任务本地 `protocol/service-response.json`。
+4. 框架使用同一 `job_id` 和 `service_response_file` 运行第二次 `draft`。
+5. 模块校验并绑定 AI 建议，然后生成逐文件“售后费用、责任工厂、投诉类型”三项阻断确认。
+6. `finalize` 复用同一响应文件并应用人工答案，不再生成 AI 请求。
+
+AI 可提供品牌、问题类型、原因、费用、责任工厂、方案和处理状态候选。费用、责任工厂、责任认定、赔偿及结案状态不能由 AI 绕过确定性证据和人工确认写成最终结论。
+
+Provider 超时、拒绝、错误、响应缺失或 JSON 非法时，模块保留每份输入的离线结果和失败对账，继续人工复核及完整导出。用户在任务开始前拒绝强制 AI 授权时，由框架阻止创建任务。
+
+## 数据边界
+
+- 请求不包含客户、联系人、销售、电话、邮箱、地址、订单号、本机路径、原文件名或 Excel 二进制。
+- 请求按稳定案件 ID 分批，并设置 `response_format: json_object`。
+- 响应必须匹配任务、模块、请求和案件 ID；缺失、重复、越界或非法字段均按对应批次降级。
+- API Key 不进入任务、SQLite、输出、日志、异常、模块配置、安装包或 Git。
+- 模块不会修改、删除或重命名任何输入文件。
 
 ## 输出
 
-输出目录中会生成：
+- `after_sales_master_summary.xlsx`：全量售后台账及复核状态。
+- `after_sales_records.json`：逐输入结构化明细和分析来源。
+- `after_sales_analysis_report.docx`：与结构化记录使用同一数据源的分析报告。
+- `after_sales_brand_share.xlsx`：品牌案件数量与占比图表。
+- `after_sales_reason_share.xlsx`：问题原因数量与占比图表。
+- `after_sales_monthly_fee.xlsx`：年度月度费用和案件数量图表。
+- `after_sales_yearly_dashboard.xlsx`：按年份汇总的品牌、原因和月份图表。
+- `result.json`：BambooWorkbench 模块运行合同结果。
 
-- `after_sales_annual_rollup.xlsx`：全局工作台结果中心首先展示的“售后全量汇总表”，版式匹配年度汇总参考模板，包含“汇总表”、逐年“售后统计表”和“输入文件对账”；每份输入文件固定保留一行，并按提出质量问题/报修日期排序及分年份统计。
-- `after_sales_summary.xlsx`：保留既有分析、人工复核、按年份/月份/品牌统计和图表格式，不因独立年度汇总功能发生变化。
-- `after_sales_records.json`：每个售后申请表抽取后的结构化明细。
-- `after_sales_analysis.md`：与 Excel、JSON 使用同一结构化统计结果生成的售后分析报告和复核建议。
-- `after_sales_analysis_report.docx`：排版后的 Word 售后分析报告，数字与 Excel、JSON 使用同一复核后数据源。
-- `after_sales_brand_share.xlsx`：品牌方案件数量、占比明细和带分类/数量/百分比标签的饼图。
-- `after_sales_reason_share.xlsx`：主要售后原因数量、占比明细和带分类/数量/百分比标签的饼图。
-- `after_sales_monthly_fee.xlsx`：按年份逐月列示费用及案件数量；费用图保留 10,000 元红色预警线。
-- `after_sales_yearly_dashboard.xlsx`：每个年份独立一页，上方并排显示品牌与售后原因占比，下方完整显示 1—12 月案件柱状图及月份、数量、图例。
-- `result.json`：符合 BambooWorkbench 1.0 合同的运行结果、异常、待确认项和逐文件处理结果。
+## 业务规则
 
-Excel 还包含“分析图表”工作表，展示月度案件趋势、多标签问题类型分布和企业售后成本趋势。没有有效数据时会显示中文说明，不生成空白图表。
+- 品牌与客户字段严格分离；无明确证据时品牌为 `未知`。
+- 问题类型为 `性能`、`外观`、`加工`、`其他`，一个案件可保留多个候选，人工确认最终主类型。
+- 企业售后成本、内部责任扣款和外部承担金额分别提取和统计，未知金额保持空值。
+- 重复文件仍逐份保留；损坏文件写入稳定错误码，不影响其他文件。
+- 日期只使用质量问题、报修或投诉日期，不用订单、交货、文件名或文件时间补齐。
+- 所有正式输出以人工复核值为最终口径。
 
-## 统计规则
-
-- 品牌：品牌与客户/项目严格分开；仅依据明确品牌证据识别，无法识别统一写 `未知`。未知品牌不会阻断原因、费用、已解决数量和汇总表生成。
-- 售后原因：优先从客户反馈、售后调查、方案申请、责任落实和解决方案中提取具体原因；原表未写明根因时保留具体故障现象，不编造原因。
-- 动态输入：只处理本次选择的文件；选择多少个 Excel，明细就保留多少条文件记录。重复内容也逐份处理，不会因哈希相同被跳过。
-- 文件对账：无法读取或分析失败的文件仍写入明细并显示失败原因，但不会把未知数据计入业务汇总。
-- 类型：按关键词识别 `性能`、`外观`、`加工`，一条售后可同时计入多个类型；分类标签分别统计，分类数量允许相加后大于案件总数。
-- 人工复核：系统为售后费用、责任工厂和主投诉类型给出建议值，三项均为必审；人工确认的投诉类型会成为最终主分类，人工费用和责任工厂优先进入年度汇总与明细。
-- 案件总数：每个成功解析且纳入汇总的文件/案件只计 1 次，不使用分类标签合计代替案件数。
-- 企业售后成本：企业实际承担的补发、返工、赔偿、运费、人工和差旅等成本，兼容字段 `fee_amount` 与其完全等义。
-- 内部责任扣款：内部人员或部门责任扣款，单独统计，不计入企业售后成本。
-- 外部承担金额：供应商、合作方或其他外部主体承担的金额，单独统计，不计入企业售后成本。
-- 金额识别：优先识别“总计/合计/共计”等最终金额，没有汇总金额时识别公式结果或明确分项；无法确定时保持空值，不以 0 元代替未知。
-- 关闭数：根据解决方案、责任落实中是否出现“结案、完成、更换、返工、处理、达成一致”等闭环关键词判断。
-- 输出脱敏：Excel、Markdown 和可外发明细 JSON 只写输入文件名，不写盘符、用户名、客户原始目录或临时目录。
-- 文件隔离：损坏工作簿返回 `WORKBOOK_INVALID_OR_CORRUPTED` 和中文说明，其他正常文件继续处理。
-
-业务关键词和同义字段在 `rules/default_rules.yaml` 中维护。
-
-## 已知限制
-
-- 自然语言费用抽取是规则法，遇到多个方案并列、金额没有写“元”、或只写数量未写单价时，需要人工复核。
-- 日期只读取“提出质量问题日期、报修日期、投诉日期”等字段；只有月日时保留月日和空年份，并写入待确认项，不使用订单、交货或文件时间补齐。
-- 图片、PDF 暂不作为正式输入，只处理 Excel 表。
-
-## DeepSeek 与其他 AI 服务
-
-桌面端不读取 API Key，也不直接访问 DeepSeek 或其他模型接口。模块先完成离线规则抽取，只对分类含糊、根因不清或多标签等确有语义辅助需要的案件生成统一 `service_requests`。竹简工作台负责选择提供商、展示脱敏预览、取得本次授权、调用模型并通过 `service_response_file` 返回结果。
-
-对外载荷不包含客户字段、联系人、电话、邮箱、本机路径、原文件名或完整工作簿，只发送限长且再次脱敏的投诉摘要、规则候选类型、证据编号、费用候选和必要产品上下文。请求使用稳定候选编号和严格 JSON 合同；响应中的证据引用必须来自请求内给定的证据编号。
-
-AI 只允许辅助 `性能/外观/加工/其他` 问题类型、具体原因摘要、证据引用和人工复核建议。品牌、售后费用、责任工厂、赔偿/责任认定、处理状态和结案状态不由 AI 决定。每份成功解析的 Excel 仍强制人工复核售后费用、责任工厂和投诉类型，人工值最终写入 Excel、JSON、图表和报告。
-
-用户不授权、没有可用密钥、网络超时、限流、服务错误、响应缺失或 JSON 无效时，模块保留离线规则结果并继续人工复核和全批次导出，不漏掉任何已成功解析的文件。最终文件明确标注“AI辅助”“离线规则”或“AI降级”，不写入模型原始响应。
-
-DeepSeek 和 OpenAI 兼容配置属于竹简工作台公共能力，应在系统设置中由框架安全保存；模块代码不会读取凭据或使用直连设计。
+业务关键词和字段同义词位于 `rules/default_rules.yaml`。
 
 ## 验证
 
-模块自带的虚构 Excel 样例位于 `modules/after_sales/tests/fixtures/`，不包含真实企业数据。
-
-PR #16 的人工构造脱敏输入位于
-`tests/fixtures/acceptance/pr16_acceptance_sample.xlsx`；`samples/acceptance/` 只保留
-Markdown、结构化 JSON、脱敏 `result.json` 和“分析图表”截图等非电子表格证据。
-运行生成的 Excel 只在本地或 CI 临时目录验证，不提交进 Git。该样例在 `draft`
-阶段预期返回 `needs_confirmation`，固定包含售后费用、责任工厂、投诉类型 3 项必审字段；
-三类责任金额仍分别为 1000、200、300 元，完成 `finalize` 后返回 `success`。
-
-在仓库根目录运行：
+测试只使用仓库内完全虚构的脱敏样例，默认不读取凭据、不发起网络请求：
 
 ```powershell
-python -m app.tools.module_contract_cli validate modules/after_sales
 python -m pytest modules/after_sales/tests -q
 python -m ruff check modules/after_sales
+python -m app.tools.module_contract_cli validate modules/after_sales
 modules\after_sales\run_module.bat version
 modules\after_sales\run_module.bat self-check
+git diff --check
 ```

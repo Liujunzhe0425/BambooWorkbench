@@ -1,5 +1,5 @@
 #define MyAppName "竹简工作台"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "湖南大学智创未来团队"
 
 [Setup]
@@ -18,6 +18,8 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 WizardStyle=modern
 ChangesAssociations=yes
+CloseApplications=yes
+RestartApplications=no
 SetupIconFile=..\logo\BambooWorkbench.ico
 UninstallDisplayIcon={app}\logo\BambooWorkbench.ico
 

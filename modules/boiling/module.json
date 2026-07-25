@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "module_id": "boiling",
   "module_name": "水煮实验",
-  "module_version": "1.1.0",
+  "module_version": "1.2.0",
   "entrypoint": "run_module.bat",
   "supported_extensions": [".xlsx"],
   "supports_single_file": true,

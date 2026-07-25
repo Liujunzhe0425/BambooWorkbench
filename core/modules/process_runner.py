@@ -110,6 +110,8 @@ class ModuleProcessRunner(QObject):
         environment.insert("PATH", f"{runtime_dir};{environment.value('PATH')}")
         environment.insert("PYTHONPATH", str(Path(__file__).parents[2]))
         environment.insert("PYTHONUTF8", "1")
+        if not getattr(sys, "frozen", False):
+            environment.insert("BAMBOO_MODULE_PYTHON", str(Path(sys.executable).resolve()))
         for name, value in self._environment_overrides.items():
             environment.insert(name, value)
         add_packaged_host_environment(environment)

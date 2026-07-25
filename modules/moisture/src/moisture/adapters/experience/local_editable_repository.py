@@ -17,7 +17,10 @@ from moisture.adapters.experience.local_approved_repository import (
     _is_reparse_point,
     _semver_key,
 )
-from moisture.ports.experience_admin_repository import AdminExperience
+from moisture.ports.experience_admin_repository import (
+    AdminExperience,
+    AdminExperienceSummary,
+)
 from moisture.ports.experience_repository import (
     EXPERIENCE_ID_PATTERN,
     SEMVER_PATTERN,
@@ -166,6 +169,95 @@ class LocalEditableExperienceRepository:
         self._transition(source, target, content, entries)
         return retired
 
+    # -- E-S1 three-pane queries --
+
+    def list_drafts(self) -> list[AdminExperienceSummary]:
+        return self._list_state_summary("draft")
+
+    def list_approved(self) -> list[AdminExperienceSummary]:
+        return self._list_state_summary("approved")
+
+    def list_history(self) -> list[AdminExperienceSummary]:
+        return self._list_state_summary("retired")
+
+    def _list_state_summary(self, state: str) -> list[AdminExperienceSummary]:
+        result: list[AdminExperienceSummary] = []
+        directory = self._root / state
+        if state == "approved":
+            entries = self._load_manifest()
+            manifest_paths = {item["path"] for item in entries}
+            stored_paths = {
+                path.relative_to(self._root).as_posix()
+                for path in directory.rglob("*.md")
+            }
+            if stored_paths != manifest_paths:
+                raise ExperienceAdminValidationError(
+                    "approved storage does not match runtime manifest"
+                )
+            paths = [self._root / item["path"] for item in entries]
+        else:
+            paths = sorted(directory.glob("*.md"))
+        for path in paths:
+            if state == "approved":
+                self._guard_manifest_entry(path)
+            else:
+                self._guard_regular(path, directory)
+            admin = self._decode(path.read_bytes(), path.relative_to(self._root))
+            text = path.read_text(encoding="utf-8")
+            payload, _body = LocalApprovedExperienceRepository._parse_front_matter(text)
+            result.append(
+                AdminExperienceSummary(
+                    experience_id=admin.experience_id,
+                    version=admin.version,
+                    status=admin.status,
+                    title=str(payload.get("title", "")),
+                    source=str(payload.get("source", "")),
+                    sha256=admin.sha256,
+                    effective_at=str(payload.get("effective_at", "")),
+                    applicable_suppliers=", ".join(payload.get("applicable_suppliers", [])),
+                    applicable_materials=", ".join(payload.get("applicable_materials", [])),
+                    applicable_seasons=", ".join(payload.get("applicable_seasons", [])),
+                    applicable_metrics=", ".join(payload.get("applicable_metrics", [])),
+                    supersedes=str(payload.get("supersedes", "")),
+                )
+            )
+        result.sort(key=lambda item: _semver_key(item.version), reverse=True)
+        result.sort(key=lambda item: item.experience_id)
+        return result
+
+    # -- E-S1 history-copy --
+
+    def copy_retired_to_draft(
+        self,
+        experience_id: str,
+        source_version: str,
+        source_expected_hash: str,
+        new_version: str,
+    ) -> AdminExperience:
+        source_path = self._find(experience_id, source_version)
+        source_bytes = source_path.read_bytes()
+        current = self._decode(source_bytes, source_path.relative_to(self._root))
+        self._check_hash(current, source_expected_hash)
+        if current.status != "retired":
+            raise ExperienceAdminConflictError(
+                "only retired experience can be copied to draft"
+            )
+        new_path = self._path("draft", experience_id, new_version)
+        if new_path.exists():
+            raise ExperienceAdminConflictError(
+                f"draft {experience_id} v{new_version} already exists"
+            )
+        source_text = source_bytes.decode("utf-8")
+        payload, body = LocalApprovedExperienceRepository._parse_front_matter(source_text)
+        payload["version"] = new_version
+        payload["status"] = "draft"
+        payload["supersedes"] = source_version
+        payload.pop("published_at", None)
+        payload.pop("retired_at", None)
+        lines = [f"{key}: {value}" for key, value in payload.items()]
+        new_doc = "---\n" + "\n".join(lines) + "\n---\n" + body
+        return self.create(new_doc)
+
     def _transition(
         self, source: Path, target: Path, content: bytes, entries: list[dict[str, str]]
     ) -> None:
@@ -247,6 +339,7 @@ class LocalEditableExperienceRepository:
             hashlib.sha256(content).hexdigest(),
             body,
             relative.as_posix(),
+            text,
         )
 
     @staticmethod

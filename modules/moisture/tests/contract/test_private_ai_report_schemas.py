@@ -73,6 +73,23 @@ def test_ai_analysis_request_is_consent_gated_and_path_free() -> None:
     assert "provider" not in serialized
 
 
+def test_append_summary_private_config_uses_only_input_roles() -> None:
+    payload = {
+        "schema_version": "1.0",
+        "operation": "append_summary",
+        "inputs": [
+            {"role": "base_summary", "input_index": 0},
+            {"role": "new_raw", "input_index": 1},
+        ],
+        "default_year": 2026,
+    }
+    validate_private_payload("module-config.schema.json", payload, MODULE_ROOT)
+    serialized = str(payload).lower()
+    assert ":\\" not in serialized
+    assert "api_key" not in serialized
+    assert "provider" not in serialized
+
+
 @pytest.mark.parametrize("field", ("api_key", "provider", "absolute_path"))
 def test_ai_analysis_request_rejects_host_secrets_and_paths(field: str) -> None:
     request = _request()

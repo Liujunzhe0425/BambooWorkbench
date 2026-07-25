@@ -14,9 +14,16 @@ from moisture.application.confirmation_builder import build_confirmations
 from moisture.application.deterministic_pipeline import DeterministicPipeline
 from moisture.application.draft_orchestrator import (
     _confirmation_issues,
+    _confirmation_prompts,
     _global_failure_file_results,
     _knowledge_requests,
     _status,
+)
+from moisture.application.history_append import (
+    HistoryAppendError,
+    HistoryConflictBinding,
+    apply_history_append_confirmations,
+    build_history_append_outcome,
 )
 from moisture.application.knowledge_response import (
     KnowledgeResponseValidationError,
@@ -66,21 +73,39 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
     """Rebuild the draft from inputs and apply confirmation answers without hidden state."""
 
     started_at = datetime.now(UTC)
+    append_mode = False
+    original_history_conflicts: tuple[HistoryConflictBinding, ...] = ()
     try:
         module_config = load_module_config(job.module_config_file, input_count=len(job.input_files))
         if module_config.operation is ModuleOperation.AI_REPORT:
             from moisture.application.ai_report import run_ai_report_finalize
 
             return run_ai_report_finalize(job, module_config)
-        outcome = (pipeline or DeterministicPipeline()).run(
-            job.input_files, default_year=module_config.default_year
+        selection = module_config.rule_selection
+        active_pipeline = pipeline or DeterministicPipeline(
+            rule_version=selection.version if selection else None,
+            rules_sha256=selection.sha256 if selection else None,
         )
+        if module_config.operation is ModuleOperation.APPEND_SUMMARY:
+            append_mode = True
+            outcome = build_history_append_outcome(
+                job,
+                module_config,
+                pipeline=active_pipeline,
+            )
+            original_history_conflicts = outcome.conflicts
+        else:
+            outcome = active_pipeline.run(
+                job.input_files, default_year=module_config.default_year
+            )
     except ModuleConfigError:
         return _write_failed(job, started_at, "MODULE_CONFIG_INVALID")
-    except Exception:
+    except Exception as error:
+        if isinstance(error, HistoryAppendError):
+            return _write_failed(job, started_at, error.code)
         return _write_failed(job, started_at, "PIPELINE_INITIALIZATION_FAILED")
 
-    prompts = build_confirmations(job.root_job_id, _confirmation_issues(outcome))
+    prompts = _confirmation_prompts(job, outcome)
     expected_ids = {str(prompt["confirmation_id"]) for prompt in prompts}
     if prompts:
         read_result = read_confirmation_bundle(
@@ -97,19 +122,63 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
                 prompts, read_result.bundle
             )
             if confirmed_year is not None:
-                outcome = (pipeline or DeterministicPipeline()).run(
-                    job.input_files, default_year=confirmed_year
+                if append_mode:
+                    outcome = build_history_append_outcome(
+                        job,
+                        module_config,
+                        pipeline=active_pipeline,
+                        default_year=confirmed_year,
+                    )
+                else:
+                    outcome = active_pipeline.run(
+                        job.input_files, default_year=confirmed_year
+                    )
+                rebuilt_standard = build_confirmations(
+                    job.root_job_id,
+                    _confirmation_issues(getattr(outcome, "new_outcome", outcome)),
                 )
-                rebuilt = build_confirmations(job.root_job_id, _confirmation_issues(outcome))
-                if {str(prompt["confirmation_id"]) for prompt in rebuilt} != {
-                    str(prompt["confirmation_id"]) for prompt in remaining_prompts
+                previous_standard = tuple(
+                    prompt
+                    for prompt in remaining_prompts
+                    if prompt.get("field") != "history_record_conflict"
+                )
+                if {str(prompt["confirmation_id"]) for prompt in rebuilt_standard} != {
+                    str(prompt["confirmation_id"]) for prompt in previous_standard
                 }:
                     raise ConfirmationApplicationError(
                         "confirmation set changed after resolving the default year"
                     )
-                remaining_prompts = rebuilt
+                history_prompts = tuple(
+                    prompt
+                    for prompt in remaining_prompts
+                    if prompt.get("field") == "history_record_conflict"
+                )
+                remaining_prompts = tuple(
+                    sorted(
+                        (*rebuilt_standard, *history_prompts),
+                        key=lambda prompt: str(prompt["confirmation_id"]),
+                    )
+                )
             if remaining_prompts:
-                applied = apply_confirmations(outcome, remaining_prompts, remaining_bundle)
+                if append_mode:
+                    standard_prompts = tuple(
+                        prompt
+                        for prompt in remaining_prompts
+                        if prompt.get("field") != "history_record_conflict"
+                    )
+                    applied = apply_history_append_confirmations(
+                        outcome,
+                        root_job_id=job.root_job_id,
+                        original_conflicts=original_history_conflicts,
+                        standard_prompts=standard_prompts,
+                        bundle=remaining_bundle,
+                    )
+                else:
+                    applied = apply_confirmations(
+                        outcome,
+                        remaining_prompts,
+                        remaining_bundle,
+                    )
                 batches = applied.batches
                 anomalies = applied.anomalies
             elif remaining_bundle.answers:

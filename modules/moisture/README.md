@@ -1,11 +1,15 @@
 # 竹丝水分检测模块
 
-BambooWorkbench 竹丝水分检测模块 v1.1.0。模块提供两条相互隔离的业务路径：
+BambooWorkbench 竹丝水分检测模块 v1.2.0。模块提供两条相互隔离的业务路径：
 
 - 普通汇总：确定性 Excel 解析、统计、规则初筛和四表成果；
 - 独立 AI 报告：用户主动选择当前汇总表、可选历史资料和 approved 经验后，由主框架在逐次同意下调用 Provider。
 
 模块不直接访问网络、Provider、数据库或凭据，AI 结果不修改汇总表、规则颜色或确定性结论。
+
+> `module/moisture-test` 已将历史追加、轻量经验管理、轻量规则管理和规则身份查询接入
+> 模块公开进程入口。经验/规则 GUI 和 TaskService 自动写入规则快照仍需框架按统一 FCR
+> 复验；模块侧不得把尚未接入的框架页面描述为客户已交付功能。
 
 ## 快速使用
 
@@ -47,7 +51,7 @@ BambooWorkbench 竹丝水分检测模块 v1.1.0。模块提供两条相互隔离
 - `analysis_report.md`：面向客户的确定性业务摘要；正常批次聚合展示，异常、失败和待复核批次详细展开，
   规则哈希、内部来源及完整引用集中在文末技术附录。
 
-v1.1.0 不再生成“模型分析记录”，普通汇总也不再声明 AI 辅助复判请求。橙色表示确定性偏高疑似，绿色表示确定性偏低疑似；区间值大于 13% 时按当前规则染橙色。`0.55/0.47` 均值阈值仍待业务批准，不得称为正式生产标准。
+v1.1.1 不再生成“模型分析记录”，普通汇总也不再声明 AI 辅助复判请求。橙色表示确定性偏高疑似，绿色表示确定性偏低疑似；区间值大于 13% 时按当前规则染橙色。`0.55/0.47` 均值阈值仍待业务批准，不得称为正式生产标准。
 
 独立 AI 报告输出：
 
@@ -55,7 +59,7 @@ v1.1.0 不再生成“模型分析记录”，普通汇总也不再声明 AI 辅
 - denied、error、timeout 或非法响应：仅生成结构化降级结果，不伪造 AI 报告；
 - 原汇总表 SHA-256 始终不变。
 
-历史资料兼容模块生成的 v1.1.0/1.0.1 四表和 v1.0.0 五表文件；旧五表中的“模型分析记录”只读忽略，不参与新分析。
+历史资料兼容模块生成的 v1.1.1/1.1.0/1.0.1 四表和 v1.0.0 五表文件；旧五表中的“模型分析记录”只读忽略，不参与新分析。
 
 ## 运行与管理命令
 
@@ -67,11 +71,22 @@ modules\moisture\run_module.bat self-check
 modules\moisture\run_module.bat run --job C:\absolute\path\to\job.json
 ```
 
-历史资料和 approved 经验目录由主框架通过独立管理入口调用：
+历史资料、经验治理和规则治理统一通过独立管理入口调用：
 
 ```powershell
 modules\moisture\run_management.bat manage --request C:\absolute\request.json --response C:\absolute\response.json
 ```
+
+公开管理合同支持：
+
+- 历史资料：导入、列出和停用；
+- 经验三栏：列出、查看、校验、创建/更新草稿、发布、停用和历史复制；
+- 规则三栏：列出、查看、校验、预览、创建/更新草稿、发布、停用、恢复和历史复制；
+- 当前规则只读查询：返回严格的 `{version, sha256}`。
+
+新操作使用统一 v1.1 request/response Schema；旧 v1.0 四操作保留迁移兼容。完整操作名和
+字段见[统一公开管理合同](docs/framework-change-requests/FCR-moisture-20260724-public-management-contract.md)。
+AI 候选规则只能进入草稿，不能自动发布。
 
 不要把管理命令加入普通 draft/finalize。`run_module.bat` 和 `run_management.bat` 均优先使用显式冻结程序、已激活环境或仓库 `.venv`，不会从 PATH 盲选系统 Python。
 
@@ -101,15 +116,13 @@ powershell -ExecutionPolicy Bypass -File modules\moisture\build_portable_runtime
 
 ## 当前验收状态
 
-- 模块全量测试：418 passed；
-- Ruff、合同 CLI、Schema 同步、`version=1.0.1`、`self-check=ok`：通过；
-- 完整便携构建及 portable verification：通过；
-- 冻结 EXE 经真实 Registry/TaskService/Runner 的普通汇总、AI 报告和管理入口闭环：5 passed；
-- 当前 PR #41 指向 `integration`，已进入负责人评审，尚未合并。
-
-GitHub Actions 当前红叉不是代码失败：`quality` job 因仓库账户付款失败或 Actions
-spending limit 不足，在 Runner 分配前即被 GitHub 拒绝启动（无任何测试步骤）。
-仓库负责人处理 Billing 后重新运行即可；不得通过修改模块或工作流掩盖该外部阻塞。
+- 模块公开版本：`1.2.0`；
+- 历史追加继续保持 `supports_incremental: true`；
+- 统一管理进程覆盖 27 个公开操作，并保留旧 v1.0 四操作；
+- 模块侧规则快照能够固定 `{version, sha256}`，draft/finalize 不重新选择 active；
+- 当前 Draft PR #52 指向 `integration`，尚未合并；
+- 中央 ManagementService/Runner 对 v1.1 通用请求及 TaskService 自动快照仍由框架负责人
+  按统一 FCR 复验，模块不得越界修改框架。
 
 ## 当前指导文档
 
@@ -126,6 +139,10 @@ spending limit 不足，在 Runner 分配前即被 GitHub 拒绝启动（无任�
 | [三功能简化架构](docs/architecture/moisture-next-stage-architecture.md) | 汇总生产、独立 AI 报告和后续规则治理方向 |
 | [v1.0.1 独立 AI 报告计划](docs/architecture/moisture-v1.0.1-independent-ai-report-plan.md) | 本版本模块实施边界 |
 | [框架适配请求](docs/framework-change-requests/FCR-moisture-20260723-ai-report-context-selection.md) | 已由框架 PR #43 实施的最小适配 |
+| [历史追加FCR](docs/framework-change-requests/FCR-moisture-20260724-history-summary-append.md) | 已实现的历史追加入口边界 |
+| [统一管理合同FCR](docs/framework-change-requests/FCR-moisture-20260724-public-management-contract.md) | 经验、规则和规则快照的唯一公开合同及框架复验点 |
+| [经验管理FCR](docs/framework-change-requests/FCR-moisture-20260724-experience-management.md) | 已收敛到统一合同的经验三栏业务目标 |
+| [规则管理FCR](docs/framework-change-requests/FCR-moisture-20260724-rule-management-snapshot.md) | 已收敛到统一合同的规则治理业务目标 |
 | [框架事项状态](docs/framework-issues.md) | 尚待业务/发布负责人处理的事项 |
 | [CHANGELOG](CHANGELOG.md) | 版本变更 |
 | [验收证据](docs/evidence/) | 测试和人工验收记录 |

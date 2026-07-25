@@ -11,11 +11,16 @@ from moisture.adapters.excel.source_parser import (
     ExcelSourceParser,
     record_requires_default_year,
 )
+from moisture.adapters.experience.data_root import resolve_runtime_experience_root
 from moisture.adapters.experience.local_approved_repository import (
     ExperienceRepositoryError,
     LocalApprovedExperienceRepository,
 )
 from moisture.adapters.rules.builtin_evaluators import evaluate_rules
+from moisture.adapters.rules.data_root import (
+    ManagedRuleError,
+    load_runtime_rule_snapshot,
+)
 from moisture.adapters.rules.package_loader import RulePackageLoader
 from moisture.application.decision_aggregation import ordered_decisions, primary_decision
 from moisture.application.run_result import InternalAnomaly, ReviewState
@@ -94,24 +99,44 @@ class DeterministicPipeline:
         self,
         module_root: Path | None = None,
         experience_repository: ExperienceRepository | None = None,
+        *,
+        rule_version: str | None = None,
+        rules_sha256: str | None = None,
     ) -> None:
         self.module_root = (module_root or _module_root()).resolve()
+        self._use_managed_rules = module_root is None
+        self._rule_version = rule_version
+        self._rules_sha256 = rules_sha256
         self._parser = ExcelSourceParser()
         self._integrity = FileIntegrityGuard()
         self._experience_repository = experience_repository
-        experience_root = self.module_root / "experience"
-        if self._experience_repository is None and experience_root.is_dir():
+        self._experience_unavailable = False
+        if self._experience_repository is None:
             try:
+                experience_root = (
+                    self.module_root / "experience"
+                    if module_root is not None
+                    else resolve_runtime_experience_root()
+                )
+                if not experience_root.is_dir():
+                    return
                 self._experience_repository = LocalApprovedExperienceRepository(experience_root)
-            except ExperienceRepositoryError:
+                self._experience_repository.list_approved()
+            except (ExperienceRepositoryError, OSError, ValueError):
                 self._experience_repository = None
+                self._experience_unavailable = True
 
     def _experience_citations(
         self,
         record,
     ) -> tuple[tuple[ExperienceCitation, ...], str | None]:
         if self._experience_repository is None:
-            return (), None
+            return (
+                (),
+                "EXPERIENCE_GUIDANCE_DEGRADED"
+                if self._experience_unavailable
+                else None,
+            )
         observed = record.arrival_date or record.test_date
         if observed is None:
             return (), None
@@ -146,7 +171,23 @@ class DeterministicPipeline:
     def run(
         self, input_files: tuple[Path, ...], *, default_year: int | None = None
     ) -> DeterministicPipelineResult:
-        snapshot = RulePackageLoader().load(self.module_root / "rules" / "active")
+        if self._use_managed_rules:
+            snapshot = load_runtime_rule_snapshot(
+                rule_version=self._rule_version,
+                rules_sha256=self._rules_sha256,
+            )
+        else:
+            snapshot = RulePackageLoader().load(self.module_root / "rules" / "active")
+            if (
+                self._rule_version is not None
+                and (
+                    snapshot.rule_version != self._rule_version
+                    or snapshot.rules_sha256 != self._rules_sha256
+                )
+            ):
+                raise ManagedRuleError(
+                    "injected rule package does not match the selected snapshot"
+                )
         batches: list[WorkbookBatch] = []
         file_results: list[dict[str, object]] = []
         pending_matches: list[PendingRuleMatch] = []

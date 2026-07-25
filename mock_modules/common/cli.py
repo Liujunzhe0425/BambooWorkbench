@@ -55,8 +55,12 @@ def _validate_finalize_confirmation(job: JobRequest, scenario: str) -> None:
     )
     if bundle.job_id != job.parent_job_id:
         raise ValueError("confirmation parent does not match finalize parent")
-    if scenario == "confirm" and not any(
-        answer.confirmation_id == "mock-confirm-1" for answer in bundle.answers
+    accepted_ids = {
+        "confirm": {"mock-confirm-1"},
+        "ai": {"mock-ai-review", "service-consent:ai-1"},
+    }.get(scenario, set())
+    if accepted_ids and not any(
+        answer.confirmation_id in accepted_ids for answer in bundle.answers
     ):
         raise ValueError("required mock confirmation answer is missing")
 
@@ -103,17 +107,38 @@ def _run_validated_job(module_id: str, job: JobRequest, scenario: str) -> int:
     elif scenario == "invalid":
         (output_dir / "result.json").write_text("{invalid", encoding="utf-8")
         return 0
-    elif scenario == "ai":
-        service_requests = [
-            {
-                "request_id": "ai-1",
-                "service": "ai",
-                "scope": None,
-                "purpose": "生成模拟分析",
-                "payload": {"metrics": [1, 2, 3]},
-                "requires_user_consent": True,
-            }
-        ]
+    elif scenario == "ai" and job.phase.value == "draft":
+        if job.service_response_file:
+            status = "needs_confirmation"
+            confirmations = [
+                {
+                    "confirmation_id": "mock-ai-review",
+                    "field": "售后业务复核",
+                    "reason": "框架 AI 已返回候选，仍须人工确认",
+                    "suggested_value": "人工值",
+                    "options": ["人工值", "调整后值"],
+                    "confidence": 0.5,
+                    "blocking": True,
+                    "batch_applicable": False,
+                    "rememberable": False,
+                    "source": {
+                        "source_file": job.input_files[0],
+                        "sheet": None,
+                        "cell_or_range": None,
+                    },
+                }
+            ]
+        else:
+            service_requests = [
+                {
+                    "request_id": "ai-1",
+                    "service": "ai",
+                    "scope": None,
+                    "purpose": "生成模拟分析",
+                    "payload": {"metrics": [1, 2, 3]},
+                    "requires_user_consent": True,
+                }
+            ]
     elif scenario == "knowledge":
         service_requests = [
             {

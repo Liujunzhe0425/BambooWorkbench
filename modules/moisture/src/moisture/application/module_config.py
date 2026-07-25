@@ -19,6 +19,7 @@ class ModuleConfigError(ValueError):
 
 class ModuleOperation(StrEnum):
     SUMMARY = "summary"
+    APPEND_SUMMARY = "append_summary"
     AI_REPORT = "ai_report"
 
 
@@ -30,14 +31,23 @@ class ExperienceSelection:
 
 
 @dataclass(frozen=True, slots=True)
+class RuleSelection:
+    version: str
+    sha256: str
+
+
+@dataclass(frozen=True, slots=True)
 class ModuleConfig:
     schema_version: str
     operation: ModuleOperation
     default_year: int | None = None
+    base_summary_input_index: int | None = None
+    new_raw_input_indexes: tuple[int, ...] = ()
     current_summary_input_index: int | None = None
     history_ids: tuple[str, ...] = ()
     experience_selections: tuple[ExperienceSelection, ...] = ()
     question: str | None = None
+    rule_selection: RuleSelection | None = None
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -110,6 +120,58 @@ def _experience_selections(value: object) -> tuple[ExperienceSelection, ...]:
     return tuple(selections)
 
 
+def _rule_selection(value: object) -> RuleSelection | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"version", "sha256"}:
+        raise ModuleConfigError("rule_selection has an invalid structure")
+    version = value["version"]
+    sha256 = value["sha256"]
+    if (
+        not isinstance(version, str)
+        or not _STABLE_ID.fullmatch(version)
+        or not isinstance(sha256, str)
+        or not _HASH.fullmatch(sha256)
+    ):
+        raise ModuleConfigError("rule_selection contains an invalid value")
+    return RuleSelection(version, sha256)
+
+
+def _append_input_indexes(
+    value: object,
+    *,
+    input_count: int,
+) -> tuple[int, tuple[int, ...]]:
+    if not isinstance(value, list) or not 2 <= len(value) <= 100:
+        raise ModuleConfigError("append_summary inputs must contain 2 to 100 roles")
+    base_indexes: list[int] = []
+    raw_indexes: list[int] = []
+    seen_indexes: set[int] = set()
+    for item in value:
+        if not isinstance(item, dict) or set(item) != {"role", "input_index"}:
+            raise ModuleConfigError("append_summary input role has an invalid structure")
+        role = item["role"]
+        input_index = item["input_index"]
+        if role not in {"base_summary", "new_raw"}:
+            raise ModuleConfigError("append_summary input role is not supported")
+        if type(input_index) is not int or not 0 <= input_index < input_count:
+            raise ModuleConfigError("append_summary input_index is out of range")
+        if input_index in seen_indexes:
+            raise ModuleConfigError("append_summary input_index is duplicated")
+        seen_indexes.add(input_index)
+        if role == "base_summary":
+            base_indexes.append(input_index)
+        else:
+            raw_indexes.append(input_index)
+    if len(base_indexes) != 1 or not raw_indexes:
+        raise ModuleConfigError(
+            "append_summary requires exactly one base_summary and at least one new_raw"
+        )
+    if seen_indexes != set(range(input_count)):
+        raise ModuleConfigError("append_summary must assign every job input exactly once")
+    return base_indexes[0], tuple(raw_indexes)
+
+
 def load_module_config(path: Path | None, *, input_count: int) -> ModuleConfig:
     """Load legacy summary config or the strict v1.0 operation config."""
 
@@ -127,15 +189,46 @@ def load_module_config(path: Path | None, *, input_count: int) -> ModuleConfig:
     try:
         parsed_operation = ModuleOperation(operation)
     except (TypeError, ValueError):
-        raise ModuleConfigError("operation must be summary or ai_report") from None
+        raise ModuleConfigError("operation must be summary, append_summary, or ai_report") from None
 
     if parsed_operation is ModuleOperation.SUMMARY:
-        if set(payload) - {"schema_version", "operation", "default_year"}:
+        if set(payload) - {
+            "schema_version",
+            "operation",
+            "default_year",
+            "rule_selection",
+        }:
             raise ModuleConfigError("summary configuration contains unknown fields")
         return ModuleConfig(
             schema_version="1.0",
             operation=parsed_operation,
             default_year=_default_year(payload.get("default_year")),
+            rule_selection=_rule_selection(payload.get("rule_selection")),
+        )
+
+    if parsed_operation is ModuleOperation.APPEND_SUMMARY:
+        allowed = {
+            "schema_version",
+            "operation",
+            "inputs",
+            "default_year",
+            "rule_selection",
+        }
+        if set(payload) - allowed:
+            raise ModuleConfigError("append_summary configuration contains unknown fields")
+        if not {"schema_version", "operation", "inputs"} <= set(payload):
+            raise ModuleConfigError("append_summary configuration is incomplete")
+        base_index, raw_indexes = _append_input_indexes(
+            payload["inputs"],
+            input_count=input_count,
+        )
+        return ModuleConfig(
+            schema_version="1.0",
+            operation=parsed_operation,
+            default_year=_default_year(payload.get("default_year")),
+            base_summary_input_index=base_index,
+            new_raw_input_indexes=raw_indexes,
+            rule_selection=_rule_selection(payload.get("rule_selection")),
         )
 
     allowed = {
@@ -145,10 +238,11 @@ def load_module_config(path: Path | None, *, input_count: int) -> ModuleConfig:
         "history_ids",
         "experience_selections",
         "question",
+        "rule_selection",
     }
     if set(payload) - allowed:
         raise ModuleConfigError("ai_report configuration contains unknown fields")
-    if set(payload) != allowed:
+    if not (allowed - {"rule_selection"}) <= set(payload):
         raise ModuleConfigError("ai_report configuration is incomplete")
 
     inputs = payload["inputs"]
@@ -177,4 +271,5 @@ def load_module_config(path: Path | None, *, input_count: int) -> ModuleConfig:
         history_ids=_stable_ids(payload["history_ids"], "history_ids"),
         experience_selections=_experience_selections(payload["experience_selections"]),
         question=question.strip(),
+        rule_selection=_rule_selection(payload.get("rule_selection")),
     )

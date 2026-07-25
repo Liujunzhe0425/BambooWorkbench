@@ -1,6 +1,6 @@
 # 水煮实验模块
 
-`module_id: boiling`，版本 `1.1.0`，负责人 `anyuyu1`。
+`module_id: boiling`，版本 `1.2.0`，负责人 `anyuyu1`。
 
 本模块读取 BambooWorkbench 任务 JSON 明确列出的 `.xlsx` 输入副本，抽取水煮实验字段，复算厚度、体积、密度、密度差与膨胀率，保留原表浸渍剥离结论，并生成结构化 `result.json`、汇总 Excel 和 Markdown 分析报告。
 

@@ -23,41 +23,15 @@ def write_summary_workbook(
     records: list[dict[str, Any]], output_path: Path, rules: dict[str, Any]
 ) -> None:
     wb = Workbook()
-    wb.remove(wb.active)
     wb.calculation.fullCalcOnLoad = True
     wb.calculation.forceFullCalc = True
     wb.calculation.calcMode = "auto"
-    summary_records = [record for record in records if record.get("included_in_summary", True)]
-    years = sorted({record.get("year") for record in summary_records if record.get("year")})
-    if not years:
-        years = [None]
-    chronological_records = sorted(records, key=_chronological_record_sort_key)
-    chronological_summary_records = [
-        record for record in chronological_records if record.get("included_in_summary", True)
-    ]
-    # 第一张表按“年份 -> 月份”连续排列，年份不明的数据单独列示，绝不把不同年份的同月混算。
-    all_ws = wb.create_sheet("全部统计")
-    _write_chronological_summary(all_ws, chronological_summary_records, rules)
-    for year in years:
-        if year is None:
-            continue
-        year_records = (
-            [r for r in summary_records if r.get("year") == year] if year else summary_records
-        )
-        ws = wb.create_sheet(f"{year}统计" if year else "售后统计")
-        _write_year_summary(ws, year, year_records, rules)
-    unknown_year_records = [r for r in summary_records if r.get("year") is None]
-    if unknown_year_records:
-        ws = wb.create_sheet("年份未注明")
-        _write_year_summary(ws, None, unknown_year_records, rules, title="未注明年份售后统计表")
-    audit = wb.create_sheet("输入文件对账")
-    _write_input_audit(audit, chronological_records)
-    detail = wb.create_sheet("售后明细")
-    _write_detail(detail, chronological_records)
-    review = wb.create_sheet("待人工确认")
-    _write_review(review, chronological_records)
-    charts = wb.create_sheet("分析图表", 1)
-    _write_analysis_charts(charts, chronological_summary_records)
+    # 每个输入文件必须在总表中保留一行。无法解析的文件排在末尾，并在
+    # “分析状态/失败原因/纳入业务汇总”列中明确说明，不允许静默漏掉。
+    summary_records = sorted(records, key=_chronological_record_sort_key)
+    worksheet = wb.active
+    worksheet.title = "售后全量总表"
+    _write_master_detail(worksheet, summary_records)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     wb.save(output_path)
 

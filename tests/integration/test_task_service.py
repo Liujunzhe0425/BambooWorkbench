@@ -96,6 +96,56 @@ def test_supported_ai_report_config_is_task_local_and_contains_no_secret(
     assert "api_key" not in config_path.read_text(encoding="utf-8").casefold()
 
 
+def test_incremental_config_requires_manifest_declaration_and_exact_roles(
+    app_services: dict[str, object],
+) -> None:
+    registry = app_services["registry"]
+    module = registry.get(ModuleId.MOISTURE)
+    config = {
+        "schema_version": "1.0",
+        "operation": "append_summary",
+        "inputs": [
+            {"role": "base_summary", "input_index": 0},
+            {"role": "new_raw", "input_index": 1},
+        ],
+    }
+    undeclared = replace(
+        module,
+        manifest=module.manifest.model_copy(update={"supports_incremental": False}),
+    )
+    with pytest.raises(ValueError, match="尚未声明"):
+        TaskService._validate_module_config_support(
+            ModuleId.MOISTURE,
+            undeclared,
+            config,
+            input_count=2,
+        )
+
+    incremental = replace(
+        module,
+        manifest=module.manifest.model_copy(update={"supports_incremental": True}),
+    )
+    TaskService._validate_module_config_support(
+        ModuleId.MOISTURE,
+        incremental,
+        config,
+        input_count=2,
+    )
+    with pytest.raises(ValueError, match="完整且不重复"):
+        TaskService._validate_module_config_support(
+            ModuleId.MOISTURE,
+            incremental,
+            {
+                **config,
+                "inputs": [
+                    {"role": "base_summary", "input_index": 0},
+                    {"role": "new_raw", "input_index": 0},
+                ],
+            },
+            input_count=2,
+        )
+
+
 def test_task_service_publishes_outputs_after_module_finishes(
     qtbot, app_services: dict[str, object], tmp_path: Path
 ) -> None:

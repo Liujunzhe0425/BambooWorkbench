@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.1",
+  "request_id": "req-demo-005",
+  "module_id": "moisture",
+  "operation": "retire_experience",
+  "data_dir": "C:\\BambooData\\moisture",
+  "parameters": {
+    "experience_id": "EXP-DEMO-001",
+    "version": "1.0.0",
+    "expected_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

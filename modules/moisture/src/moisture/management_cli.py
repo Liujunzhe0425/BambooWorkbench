@@ -6,14 +6,10 @@ import json
 import sys
 from pathlib import Path
 
-from moisture.adapters.experience.local_approved_repository import (
-    ExperienceRepositoryError,
-)
-from moisture.adapters.history.repository import HistoryRepositoryError
 from moisture.application.management import (
-    ManagementOperationError,
     error_response,
     execute_management,
+    public_management_error,
     publish_management_response,
 )
 from moisture.contract.management import (
@@ -21,6 +17,15 @@ from moisture.contract.management import (
     validate_management_request,
 )
 from moisture.contract.progress import emit_progress
+
+
+def _configure_utf8_streams() -> None:
+    """Keep the frozen Windows process protocol decodable by the Runner."""
+
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            reconfigure(encoding="utf-8", errors="backslashreplace")
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -36,6 +41,11 @@ def _load_request(path: Path) -> dict[str, object]:
     if not path.is_absolute() or path.is_symlink() or not path.is_file():
         raise ManagementContractError("管理请求文件无效")
     try:
+        if path.stat().st_size > 1_048_576:
+            raise ManagementContractError("管理请求文件超过大小限制")
+    except OSError as error:
+        raise ManagementContractError("管理请求文件无法读取") from error
+    try:
         payload = json.loads(
             path.read_text(encoding="utf-8"),
             object_pairs_hook=_reject_duplicate_keys,
@@ -48,6 +58,7 @@ def _load_request(path: Path) -> dict[str, object]:
 def run_management(request_path: Path, response_path: Path) -> int:
     """Run one request and always isolate expected business failures."""
 
+    _configure_utf8_streams()
     try:
         request = _load_request(request_path)
     except ManagementContractError as error:
@@ -60,17 +71,15 @@ def run_management(request_path: Path, response_path: Path) -> int:
     emit_progress(0, "水分资料管理开始")
     try:
         response = execute_management(request)
-    except (
-        ExperienceRepositoryError,
-        HistoryRepositoryError,
-        ManagementContractError,
-        ManagementOperationError,
-        KeyError,
-        OSError,
-        ValueError,
-    ):
+    except Exception as error:
+        public_error = public_management_error(request, error)
+        if public_error is None:
+            sys.stderr.write("moisture manage: 管理操作发生内部错误\n")
+            return 4
         response = error_response(
-            request, "MANAGEMENT_OPERATION_FAILED", "资料操作失败，请检查输入"
+            request,
+            public_error.code,
+            public_error.public_message,
         )
     try:
         publish_management_response(response_path, response)

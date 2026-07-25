@@ -130,6 +130,7 @@ $Arguments = @(
     '--name', 'BambooMoistureModule',
     '--contents-directory', '_internal',
     '--paths', (Join-Path $ModuleRoot 'src'),
+    '--hidden-import', 'moisture.management_cli',
     '--workpath', $WorkPath,
     '--specpath', $SpecPath,
     '--distpath', $StagingDist,

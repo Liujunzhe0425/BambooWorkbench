@@ -8,65 +8,41 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from after_sales_agent.analysis_normalizer import normalize_analysis
+
 AI_RESPONSE_SCHEMA_VERSION = "1.0"
 ISSUE_CATEGORIES = ("性能", "外观", "加工", "其他")
 MAX_PAYLOAD_BYTES = 65_536
 MAX_CASES_PER_REQUEST = 10
-MAX_SUMMARY_CHARS = 1_200
+MAX_SECTION_CHARS = 2_000
+MAX_WORKBOOK_CHARS = 8_000
+_BATCH_ID_SIZE_PLACEHOLDER = "0" * 24
 
 _CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*|\s*```$", re.IGNORECASE)
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _PHONE_RE = re.compile(r"(?<!\d)(?:\+?86[- ]?)?1\d{10}(?!\d)")
 _LOCAL_PATH_RE = re.compile(r"(?i)(?:[A-Z]:[\\/]|\\\\[^\\\s]+\\)[^\r\n；。]*")
-_COMPANY_RE = re.compile(r"[\u4e00-\u9fffA-Za-z0-9（）()·]{2,50}(?:有限责任公司|有限公司)")
-_IDENTITY_LABEL_RE = re.compile(
-    r"(?:客户(?:姓名)?|联系人|联系电话|手机|地址|项目名称)\s*[:：]\s*"
-    r"[^，,；;。\r\n]{1,80}"
+_NATIONAL_ID_RE = re.compile(r"(?<!\d)\d{17}[0-9Xx](?!\d)")
+_ORDER_CODE_RE = re.compile(
+    r"(?<![A-Za-z0-9_-])(?=[A-Za-z0-9_-]{8,}(?![A-Za-z0-9_-]))"
+    r"(?=[A-Za-z0-9_-]*[A-Za-z])(?=[A-Za-z0-9_-]*\d)[A-Za-z0-9_-]+"
 )
-_ALLOWED_ANALYSIS_FIELDS = {
-    "candidate_id",
-    "issue_types",
-    "primary_issue_type",
-    "reason_summary",
-    "evidence_refs",
-    "review_suggestion",
-    "confidence",
-}
+_SENSITIVE_WORKBOOK_ROW_RE = re.compile(
+    r"(?im)^.*(?:客户(?:/项目)?|联系人|姓名|销售(?:/代表)?|电话|手机|邮箱|"
+    r"地点|地址|订单(?:号)?|单号)\s*(?:[:：]|\|).*$"
+)
+_IDENTITY_FIELDS = ("customer", "location", "salesperson", "order_no", "source_file")
 
 
 class AIServiceResponseError(ValueError):
-    """The shared AI response cannot be safely bound to an after-sales case."""
+    """The shared AI service response cannot be safely applied to a case."""
 
 
 @dataclass(frozen=True, slots=True)
 class AIServiceOutcome:
     analyses: dict[str, dict[str, Any]]
-    warnings: tuple[str, ...]
-    candidate_status: dict[str, str]
-
-
-def needs_ai_assistance(record: dict[str, Any]) -> bool:
-    """Return whether a deterministic result has a real semantic-review need."""
-
-    if not record.get("included_in_summary"):
-        return False
-    issue_types = _normalized_issue_types(record.get("issue_types"))
-    primary = str(record.get("primary_issue_type") or "").strip()
-    reason = str(record.get("issue_reason_summary") or "").strip()
-    try:
-        confidence = float(record.get("issue_confidence") or 0.0)
-    except (TypeError, ValueError):
-        confidence = 0.0
-    return bool(
-        not issue_types
-        or primary not in ISSUE_CATEGORIES
-        or "其他" in issue_types
-        or len(issue_types) > 1
-        or confidence < 0.9
-        or not reason
-        or "根因未写明" in reason
-        or "无法确认" in reason
-    )
+    errors: tuple[str, ...]
+    case_status: dict[str, str]
 
 
 def build_ai_service_requests(
@@ -76,51 +52,41 @@ def build_ai_service_requests(
     max_payload_bytes: int = MAX_PAYLOAD_BYTES,
     max_cases_per_request: int = MAX_CASES_PER_REQUEST,
 ) -> list[dict[str, Any]]:
-    """Build bounded shared-service requests without reading credentials or networking."""
+    """Build bounded, deterministic framework AI requests without reading an API key."""
 
-    candidates: list[dict[str, Any]] = []
-    for record in records:
-        if not needs_ai_assistance(record):
-            record["ai_service_status"] = "无需AI辅助"
-            continue
-        candidate = _candidate_payload(record)
-        record["ai_candidate_id"] = candidate["candidate_id"]
-        record["ai_service_status"] = "等待用户授权"
-        candidates.append(candidate)
-    if not candidates:
+    cases = [_case_payload(record) for record in records if record.get("included_in_summary")]
+    if not cases:
         return []
 
     chunks: list[list[dict[str, Any]]] = []
     current: list[dict[str, Any]] = []
-    for candidate in candidates:
-        proposed = [*current, candidate]
-        pending_payload = _request_payload("pending", proposed)
+    for case in cases:
+        proposed = [*current, case]
         if current and (
             len(proposed) > max_cases_per_request
-            or _payload_size(pending_payload) > max_payload_bytes
+            or _payload_size(_request_payload(_BATCH_ID_SIZE_PLACEHOLDER, proposed))
+            > max_payload_bytes
         ):
             chunks.append(current)
-            current = [candidate]
+            current = [case]
         else:
             current = proposed
     if current:
         chunks.append(current)
 
     requests: list[dict[str, Any]] = []
+    total = len(cases)
     first = 1
-    total = len(candidates)
     for chunk_index, chunk in enumerate(chunks, start=1):
         last = first + len(chunk) - 1
         batch_id = _batch_id(root_job_id, chunk_index, chunk)
         payload = _request_payload(batch_id, chunk)
-        if _payload_size(payload) > max_payload_bytes:
-            raise ValueError("单个脱敏售后候选超过统一AI服务的载荷上限")
         requests.append(
             {
                 "request_id": f"after-sales-ai-{batch_id}",
                 "service": "ai",
                 "scope": None,
-                "purpose": f"辅助复核第 {first}-{last}/{total} 份售后案件的问题类型与原因",
+                "purpose": f"智能分析第 {first}-{last}/{total} 份售后Excel",
                 "payload": payload,
                 "requires_user_consent": True,
                 "response_format": "json_object",
@@ -136,21 +102,19 @@ def read_ai_service_responses(
     root_job_id: str,
     requests: list[dict[str, Any]],
 ) -> AIServiceOutcome:
-    """Read and validate task-local responses; every failure degrades to offline rules."""
+    """Read, bind and validate all task-local AI responses without dropping a case."""
 
     expected = {str(item["request_id"]): item for item in requests}
-    expected_candidates = {
-        str(candidate["candidate_id"])
-        for request in requests
-        for candidate in request["payload"].get("candidates", [])
+    expected_case_ids = {
+        str(case["case_id"]) for request in requests for case in request["payload"].get("cases", [])
     }
-    statuses = {candidate_id: "未返回，已降级" for candidate_id in expected_candidates}
+    statuses = {case_id: "未返回" for case_id in expected_case_ids}
     if not expected:
         return AIServiceOutcome({}, (), statuses)
     if path is None or not path.is_file():
         return AIServiceOutcome(
             {},
-            ("未收到统一AI服务响应，相关案件已降级为离线规则分析。",),
+            ("AI_SERVICE_RESPONSE_MISSING：未收到统一工作台的AI响应，已使用离线结果。",),
             statuses,
         )
 
@@ -159,178 +123,193 @@ def read_ai_service_responses(
     except (OSError, UnicodeError, json.JSONDecodeError, AIServiceResponseError):
         return AIServiceOutcome(
             {},
-            ("统一AI服务响应文件无效，相关案件已降级为离线规则分析。",),
+            ("AI_SERVICE_RESPONSE_INVALID：AI响应文件不是有效JSON，已使用离线结果。",),
+            statuses,
+        )
+    if not isinstance(envelope, dict):
+        return AIServiceOutcome(
+            {},
+            ("AI_SERVICE_RESPONSE_INVALID：AI响应文件结构无效，已使用离线结果。",),
             statuses,
         )
     if (
-        not isinstance(envelope, dict)
-        or envelope.get("schema_version") != "1.0"
+        envelope.get("schema_version") != "1.0"
         or envelope.get("task_id") != root_job_id
         or envelope.get("module_id") != "after_sales"
         or not isinstance(envelope.get("responses"), list)
     ):
         return AIServiceOutcome(
             {},
-            ("统一AI服务响应与当前售后任务不匹配，相关案件已降级。",),
+            ("AI_SERVICE_RESPONSE_MISMATCH：AI响应与当前售后任务不匹配，已使用离线结果。",),
             statuses,
         )
 
     analyses: dict[str, dict[str, Any]] = {}
-    warnings: list[str] = []
+    errors: list[str] = []
     seen_requests: set[str] = set()
     for raw_response in envelope["responses"]:
         if not isinstance(raw_response, dict):
-            warnings.append("存在无效的AI响应项，已忽略并降级。")
+            errors.append("AI_SERVICE_RESPONSE_INVALID：存在无效的AI响应项。")
             continue
         request_id = str(raw_response.get("request_id") or "")
         request = expected.get(request_id)
-        if (
-            request is None
-            or request_id in seen_requests
-            or raw_response.get("service") != "ai"
-        ):
-            warnings.append("存在重复或不属于当前任务的AI响应，已忽略。")
+        if request is None or raw_response.get("service") != "ai":
+            errors.append("AI_SERVICE_RESPONSE_MISMATCH：AI响应编号重复或不属于当前任务。")
+            continue
+        if request_id in seen_requests:
+            errors.append(f"{request_id}：AI响应编号重复，对应批次已整体降级。")
+            for case in request["payload"]["cases"]:
+                case_id = str(case["case_id"])
+                analyses.pop(case_id, None)
+                statuses[case_id] = "返回无效"
             continue
         seen_requests.add(request_id)
-        candidate_ids = {
-            str(item["candidate_id"]) for item in request["payload"]["candidates"]
-        }
+        case_ids = {str(item["case_id"]) for item in request["payload"]["cases"]}
         status = str(raw_response.get("status") or "error")
         if status != "ok":
-            label = {
-                "denied": "用户未授权",
-                "timeout": "服务超时",
-                "rate_limited": "服务限流",
-                "unavailable": "服务不可用",
-            }.get(status, "服务错误")
-            warnings.append(f"{request_id}：{label}，已降级为离线规则分析。")
-            for candidate_id in candidate_ids:
-                statuses[candidate_id] = f"{label}，已降级"
+            label = {"denied": "用户未授权", "timeout": "请求超时"}.get(status, "服务错误")
+            errors.append(f"{request_id}：{label}，对应文件已使用离线结果并保留人工复核。")
+            for case_id in case_ids:
+                statuses[case_id] = label
             continue
         try:
             parsed = _parse_response_text(raw_response.get("text"), request)
         except AIServiceResponseError as exc:
-            warnings.append(f"{request_id}：结构化响应无效（{exc}），已降级。")
-            for candidate_id in candidate_ids:
-                statuses[candidate_id] = "响应无效，已降级"
+            errors.append(f"{request_id}：AI结构化结果无效（{exc}），已使用离线结果。")
+            for case_id in case_ids:
+                statuses[case_id] = "返回无效"
             continue
-        for candidate_id, analysis in parsed.items():
-            if candidate_id in analyses:
-                warnings.append(f"{request_id}：候选编号重复，已拒绝重复结果。")
-                analyses.pop(candidate_id, None)
-                statuses[candidate_id] = "响应重复，已降级"
+        for case_id, analysis in parsed.items():
+            if case_id in analyses:
+                errors.append(f"{request_id}：案件 {case_id} 重复返回，已拒绝重复结果。")
+                statuses[case_id] = "返回无效"
+                analyses.pop(case_id, None)
                 continue
-            analyses[candidate_id] = analysis
-            statuses[candidate_id] = "AI辅助分析完成"
+            analyses[case_id] = analysis
+            statuses[case_id] = "智能分析完成"
 
-    for request_id in sorted(set(expected) - seen_requests):
-        warnings.append(f"{request_id}：响应缺失，已降级为离线规则分析。")
-    return AIServiceOutcome(analyses, tuple(warnings), statuses)
+    for missing_request in sorted(set(expected) - seen_requests):
+        errors.append(f"{missing_request}：AI响应缺失，对应文件已使用离线结果。")
+        for case in expected[missing_request]["payload"]["cases"]:
+            statuses[str(case["case_id"])] = "未返回"
+    return AIServiceOutcome(analyses, tuple(errors), statuses)
 
 
 def apply_ai_service_outcome(records: list[dict[str, Any]], outcome: AIServiceOutcome) -> None:
-    """Apply only low-risk suggestions; never change fees, responsibility or closure."""
+    """Apply validated AI suggestions; deterministic amounts and human answers remain final."""
 
     for record in records:
-        candidate_id = str(record.get("ai_candidate_id") or "")
-        if not candidate_id:
-            if record.get("included_in_summary"):
-                record["analysis_status"] = "离线规则分析完成（无需AI辅助）"
-                record["analysis_note"] = "规则证据充分，本案未发送到AI服务"
+        case_id = str(record.get("case_id") or "")
+        status = outcome.case_status.get(case_id)
+        if not status:
             continue
-        status = outcome.candidate_status.get(candidate_id, "未返回，已降级")
         record["ai_service_status"] = status
-        analysis = outcome.analyses.get(candidate_id)
+        analysis = outcome.analyses.get(case_id)
         if analysis is None:
-            record["issue_analysis_source"] = "rules"
-            record["analysis_status"] = "AI不可用，已降级为离线规则"
-            record["analysis_note"] = f"{status}；保留规则结果和三项人工复核"
+            record["analysis_status"] = "AI不可用，离线降级"
+            record["analysis_note"] = f"AI辅助未完成（{status}），已保留离线结果并等待人工复核"
             record["needs_review"] = True
             continue
 
         record["api_analysis"] = analysis
-        record["issue_types"] = list(analysis["issue_types"])
+        brand = analysis["brand_name"]
+        if brand != "未知":
+            record["brand"] = brand
+            record["brand_confidence"] = analysis["confidence"]
+            record["brand_reason"] = analysis["brand_reason"]
+            record["brand_evidence"] = analysis["brand_reason"]
+        record["issue_types"] = analysis["issue_types"]
         record["primary_issue_type"] = analysis["primary_issue_type"]
         record["issue_reason_summary"] = analysis["reason_summary"]
         record["issue_confidence"] = analysis["confidence"]
-        record["issue_evidence"] = {"ai_evidence_refs": list(analysis["evidence_refs"])}
+        record["issue_evidence"] = {"api": analysis["evidence"]}
         record["issue_analysis_source"] = "api"
-        record["ai_review_suggestion"] = analysis["review_suggestion"]
-        record["analysis_status"] = "AI辅助分析完成（待人工复核）"
-        record["analysis_note"] = "AI仅辅助问题类型与原因，费用、责任工厂和结案状态未由AI修改"
+        record["selected_solution_ai_candidate"] = analysis["selected_solution"]
+        record["responsible_factory_ai_candidate"] = analysis["responsible_factory"]
+        record["responsible_factory_ai_reason"] = analysis["responsible_factory_reason"]
+        record["api_cost_candidate"] = analysis["cost_amount"]
+        record["api_cost_evidence"] = analysis["cost_reason"]
+        record["api_cost_items"] = analysis["cost_items"]
+        record["resolution_status_ai_candidate"] = analysis["resolution_status"]
+        record["resolution_status_ai_reason"] = analysis["resolution_reason"]
+        record["analysis_status"] = "AI智能分析完成"
+        record["analysis_note"] = "已使用统一工作台授权的AI服务辅助分析，最终以人工复核为准"
         record["needs_review"] = True
 
 
-def _candidate_payload(record: dict[str, Any]) -> dict[str, Any]:
-    candidate_id = _candidate_id(record)
-    evidence_items: list[dict[str, str]] = []
-    sections = (
-        ("feedback", "客户反馈摘要"),
-        ("investigation", "售后调查摘要"),
-        ("application", "方案申请摘要"),
-        ("solution", "解决方案摘要"),
-    )
-    for key, label in sections:
-        text = _clean_text(record.get(key), 350)
-        if not text:
-            continue
-        evidence_items.append(
-            {
-                "evidence_id": f"{candidate_id}-E{len(evidence_items) + 1}",
-                "label": label,
-                "text": text,
-            }
-        )
-    combined = "；".join(item["text"] for item in evidence_items)
-    if len(combined) > MAX_SUMMARY_CHARS:
-        combined = combined[:MAX_SUMMARY_CHARS]
+def _case_payload(record: dict[str, Any]) -> dict[str, Any]:
+    identity_values = _identity_values(record)
     return {
-        "candidate_id": candidate_id,
-        "complaint_summary": combined,
-        "candidate_issue_types": _normalized_issue_types(record.get("issue_types")) or ["其他"],
-        "primary_issue_type": (
-            str(record.get("primary_issue_type"))
-            if str(record.get("primary_issue_type")) in ISSUE_CATEGORIES
-            else "其他"
+        "case_id": str(record.get("case_id") or ""),
+        "current_brand_candidate": _clean_text(record.get("brand"), 100, identity_values),
+        "product": _clean_text(record.get("product"), 500, identity_values),
+        "feedback": _clean_text(record.get("feedback"), MAX_SECTION_CHARS, identity_values),
+        "application_detail": _clean_text(
+            record.get("application"), MAX_SECTION_CHARS, identity_values
         ),
-        "rule_evidence": evidence_items,
-        "fee_candidate": {
-            "amount": _safe_amount(record.get("enterprise_cost_amount")),
-            "status": _clean_text(record.get("enterprise_cost_status"), 40),
-        },
-        "necessary_context": {
-            "product": _clean_text(record.get("product"), 160),
-            "rule_reason": _clean_text(record.get("issue_reason_summary"), 500),
-        },
+        "investigation": _clean_text(
+            record.get("investigation"), MAX_SECTION_CHARS, identity_values
+        ),
+        "solution": _clean_text(record.get("solution"), MAX_SECTION_CHARS, identity_values),
+        "responsibility": _clean_text(
+            record.get("responsibility"), MAX_SECTION_CHARS, identity_values
+        ),
+        "workbook_excerpt": _clean_text(
+            record.get("_ai_workbook_text"), MAX_WORKBOOK_CHARS, identity_values
+        ),
+        "deterministic_fee_candidate": record.get("enterprise_cost_amount"),
+        "deterministic_fee_evidence": _clean_text(
+            record.get("enterprise_cost_evidence"), 1_000, identity_values
+        ),
     }
 
 
-def _request_payload(batch_id: str, candidates: list[dict[str, Any]]) -> dict[str, Any]:
+def _request_payload(batch_id: str, cases: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "schema_version": AI_RESPONSE_SCHEMA_VERSION,
         "batch_id": batch_id,
         "instruction": (
-            "你只负责辅助判断投诉类型、概括产生售后的具体原因、引用给定证据编号并给出"
-            "人工复核建议。不得判断或修改品牌、售后费用、责任工厂、赔偿审批、责任认定、"
-            "解决状态或结案状态。不得补充输入中不存在的事实。只返回符合response_schema"
-            "的JSON对象，不要Markdown或额外说明；analyses须逐一覆盖全部candidate_id。"
+            "逐个分析cases中的售后Excel案件。只依据反馈内容、方案申请明细、售后负责人调查情况、"
+            "售后解决方案和责任落实，不得编造。品牌不能用客户代替；未知写未知。"
+            "主投诉类型只能是性能、外观、加工、其他。费用只能提取最终采用方案的明确金额，"
+            "没有明确金额必须为null，不能写0。责任工厂不明确写未知。"
+            "根因优先采用调查情况；只有明确完成处理才判为已解决。"
+            "返回一个JSON对象，不要Markdown，analyses必须逐一覆盖全部case_id且不得增加案件。"
         ),
-        "response_schema": {
+        "output_contract": {
             "schema_version": "1.0",
             "batch_id": batch_id,
             "analyses": [
                 {
-                    "candidate_id": "原样返回",
+                    "case_id": "原样返回",
+                    "brand_name": "产品品牌或未知",
+                    "brand_reason": "短证据",
                     "issue_types": ["性能|外观|加工|其他"],
                     "primary_issue_type": "性能|外观|加工|其他",
-                    "reason_summary": "基于给定证据的具体原因或故障现象",
-                    "evidence_refs": ["只能引用该候选rule_evidence中的evidence_id"],
-                    "review_suggestion": "给人工复核人员的简短建议",
+                    "reason_summary": "具体售后根因或现象并注明根因未写明",
+                    "evidence": ["短证据"],
+                    "responsible_factory": "责任工厂/部门或未知",
+                    "responsible_factory_reason": "短证据",
+                    "selected_solution": "最终采用方案",
+                    "cost_items": [
+                        {
+                            "name": "费用名称",
+                            "amount": "非负数字或null",
+                            "included": True,
+                            "evidence": "短证据",
+                        }
+                    ],
+                    "cost_amount": "最终方案明确总费用；非负数字或null",
+                    "cost_included": True,
+                    "cost_reason": "短证据",
+                    "resolution_status": "已解决|处理中|未解决",
+                    "resolution_reason": "短证据",
                     "confidence": "0到1数字",
+                    "needs_manual_review": True,
                 }
             ],
         },
-        "candidates": candidates,
+        "cases": cases,
     }
 
 
@@ -341,169 +320,116 @@ def _parse_response_text(text: Any, request: dict[str, Any]) -> dict[str, dict[s
     try:
         payload = json.loads(cleaned, object_pairs_hook=_unique_object)
     except (json.JSONDecodeError, AIServiceResponseError) as exc:
-        raise AIServiceResponseError("不是有效JSON对象") from exc
-    if not isinstance(payload, dict) or set(payload) != {
-        "schema_version",
-        "batch_id",
-        "analyses",
-    }:
-        raise AIServiceResponseError("顶层字段不符合严格合同")
-    if payload["schema_version"] != AI_RESPONSE_SCHEMA_VERSION:
+        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+        if match is None:
+            raise AIServiceResponseError("不是JSON对象") from exc
+        try:
+            payload = json.loads(match.group(0), object_pairs_hook=_unique_object)
+        except (json.JSONDecodeError, AIServiceResponseError) as nested:
+            raise AIServiceResponseError("不是有效JSON") from nested
+    if not isinstance(payload, dict):
+        raise AIServiceResponseError("顶层不是对象")
+    batch_id = str(request["payload"]["batch_id"])
+    if payload.get("schema_version") != AI_RESPONSE_SCHEMA_VERSION:
         raise AIServiceResponseError("schema_version不匹配")
-    if payload["batch_id"] != request["payload"]["batch_id"]:
+    if payload.get("batch_id") != batch_id:
         raise AIServiceResponseError("batch_id不匹配")
-    if not isinstance(payload["analyses"], list):
-        raise AIServiceResponseError("analyses不是数组")
+    raw_analyses = payload.get("analyses")
+    if not isinstance(raw_analyses, list):
+        raise AIServiceResponseError("缺少analyses数组")
 
-    candidates = {
-        str(item["candidate_id"]): item for item in request["payload"]["candidates"]
-    }
+    expected = {str(item["case_id"]) for item in request["payload"]["cases"]}
     parsed: dict[str, dict[str, Any]] = {}
-    for raw in payload["analyses"]:
-        analysis = _validate_analysis(raw, candidates)
-        candidate_id = str(analysis.pop("candidate_id"))
-        if candidate_id in parsed:
-            raise AIServiceResponseError("candidate_id重复")
-        parsed[candidate_id] = analysis
-    if set(parsed) != set(candidates):
-        raise AIServiceResponseError("没有逐一覆盖全部候选")
+    for raw in raw_analyses:
+        analysis = _validate_analysis(raw)
+        case_id = analysis.pop("case_id")
+        if case_id not in expected or case_id in parsed:
+            raise AIServiceResponseError("case_id未知或重复")
+        parsed[case_id] = analysis
+    if set(parsed) != expected:
+        raise AIServiceResponseError("没有逐一覆盖全部输入文件")
     return parsed
 
 
-def _validate_analysis(
-    raw: Any, candidates: dict[str, dict[str, Any]]
-) -> dict[str, Any]:
-    if not isinstance(raw, dict) or set(raw) != _ALLOWED_ANALYSIS_FIELDS:
-        raise AIServiceResponseError("案件字段不符合严格合同")
-    candidate_id = str(raw.get("candidate_id") or "").strip()
-    candidate = candidates.get(candidate_id)
-    if candidate is None:
-        raise AIServiceResponseError("candidate_id未知")
-    raw_issue_types = raw.get("issue_types")
-    if (
-        not isinstance(raw_issue_types, list)
-        or not raw_issue_types
-        or len(raw_issue_types) != len(set(map(str, raw_issue_types)))
-        or any(str(item).strip() not in ISSUE_CATEGORIES for item in raw_issue_types)
-    ):
-        raise AIServiceResponseError("issue_types含未知、重复或空类型")
-    issue_types = _normalized_issue_types(raw.get("issue_types"))
-    primary = str(raw.get("primary_issue_type") or "").strip()
-    if primary not in issue_types:
-        raise AIServiceResponseError("primary_issue_type不在issue_types中")
-    reason_summary = _required_short(raw.get("reason_summary"), "reason_summary", 1_000)
-    review_suggestion = _required_short(
-        raw.get("review_suggestion"), "review_suggestion", 500
-    )
-    evidence_refs = raw.get("evidence_refs")
-    if not isinstance(evidence_refs, list) or not evidence_refs or len(evidence_refs) > 20:
-        raise AIServiceResponseError("evidence_refs无效")
-    allowed_refs = {
-        str(item["evidence_id"]) for item in candidate.get("rule_evidence", [])
-    }
-    normalized_refs = [str(item) for item in evidence_refs]
-    if (
-        len(normalized_refs) != len(set(normalized_refs))
-        or not set(normalized_refs) <= allowed_refs
-    ):
-        raise AIServiceResponseError("evidence_refs含未知或重复证据编号")
-    confidence = _number(raw.get("confidence"), "confidence")
-    if not 0 <= confidence <= 1:
+def _validate_analysis(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise AIServiceResponseError("案件分析不是对象")
+    case_id = str(raw.get("case_id") or "").strip()
+    if not case_id:
+        raise AIServiceResponseError("case_id为空")
+    normalized = normalize_analysis(raw, list(ISSUE_CATEGORIES))
+    raw_types = raw.get("issue_types")
+    if not isinstance(raw_types, list) or not raw_types:
+        raise AIServiceResponseError("issue_types无效")
+    if any(str(item) not in ISSUE_CATEGORIES for item in raw_types):
+        raise AIServiceResponseError("issue_types超出允许范围")
+    if str(raw.get("primary_issue_type")) not in ISSUE_CATEGORIES:
+        raise AIServiceResponseError("primary_issue_type无效")
+    if normalized["primary_issue_type"] not in normalized["issue_types"]:
+        raise AIServiceResponseError("主投诉类型不在投诉类型列表中")
+    confidence = _number(raw.get("confidence"), "confidence", allow_none=False)
+    if confidence is None or not 0 <= confidence <= 1:
         raise AIServiceResponseError("confidence必须在0到1之间")
-    return {
-        "candidate_id": candidate_id,
-        "issue_types": issue_types,
-        "primary_issue_type": primary,
-        "reason_summary": reason_summary,
-        "evidence_refs": normalized_refs,
-        "review_suggestion": review_suggestion,
-        "confidence": confidence,
-    }
-
-
-def _candidate_id(record: dict[str, Any]) -> str:
-    digest = str(record.get("file_sha256") or "")
-    if not re.fullmatch(r"[0-9a-fA-F]{64}", digest):
-        digest = hashlib.sha256(
-            str(record.get("source_file") or "").encode("utf-8")
-        ).hexdigest()
-    try:
-        input_index = max(0, int(record.get("input_index") or 0))
-    except (TypeError, ValueError):
-        input_index = 0
-    return f"after-sales-{digest[:16].lower()}-{input_index:04d}"
-
-
-def _batch_id(root_job_id: str, index: int, candidates: list[dict[str, Any]]) -> str:
-    encoded = json.dumps(
-        {"root_job_id": root_job_id, "index": index, "candidates": candidates},
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()[:24]
-
-
-def _payload_size(payload: dict[str, Any]) -> int:
-    return len(
-        json.dumps(
-            payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
-        ).encode("utf-8")
+    cost_amount = _number(raw.get("cost_amount"), "cost_amount", allow_none=True)
+    cost_items = _validate_cost_items(raw.get("cost_items"))
+    resolution_status = str(raw.get("resolution_status") or "").strip()
+    if resolution_status not in {"已解决", "处理中", "未解决"}:
+        raise AIServiceResponseError("resolution_status无效")
+    evidence = normalized["evidence"]
+    if not normalized["reason_summary"] or not evidence:
+        raise AIServiceResponseError("原因或证据为空")
+    normalized.update(
+        {
+            "case_id": case_id,
+            "responsible_factory": _short(raw.get("responsible_factory"), 100) or "未知",
+            "responsible_factory_reason": _short(raw.get("responsible_factory_reason"), 500),
+            "cost_items": cost_items,
+            "cost_amount": cost_amount,
+            "cost_reason": _short(raw.get("cost_reason"), 1_000),
+            "confidence": confidence,
+            "resolution_status": resolution_status,
+            "resolution_reason": _short(raw.get("resolution_reason"), 1_000),
+        }
     )
+    return normalized
 
 
-def _normalized_issue_types(value: Any) -> list[str]:
-    if not isinstance(value, list):
+def _validate_cost_items(value: Any) -> list[dict[str, Any]]:
+    if value is None:
         return []
-    result: list[str] = []
-    for item in value:
-        label = str(item).strip()
-        if label not in ISSUE_CATEGORIES or label in result:
-            continue
-        result.append(label)
-    return result
+    if not isinstance(value, list) or len(value) > 30:
+        raise AIServiceResponseError("cost_items无效")
+    items: list[dict[str, Any]] = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            raise AIServiceResponseError("费用项不是对象")
+        amount = _number(raw.get("amount"), "cost_items.amount", allow_none=True)
+        included = raw.get("included")
+        if not isinstance(included, bool):
+            raise AIServiceResponseError("cost_items.included必须是布尔值")
+        items.append(
+            {
+                "name": _short(raw.get("name"), 100) or "售后费用",
+                "amount": amount,
+                "included": included,
+                "evidence": _short(raw.get("evidence"), 500),
+            }
+        )
+    return items
 
 
-def _clean_text(value: Any, limit: int) -> str:
-    text = str(value or "").strip()
-    text = _EMAIL_RE.sub("[邮箱已脱敏]", text)
-    text = _PHONE_RE.sub("[手机号已脱敏]", text)
-    text = _LOCAL_PATH_RE.sub("[本地路径已脱敏]", text)
-    text = _COMPANY_RE.sub("[企业名称已脱敏]", text)
-    text = _IDENTITY_LABEL_RE.sub("[身份信息已脱敏]", text)
-    text = re.sub(r"\s+", " ", text)
-    return text[:limit]
-
-
-def _required_short(value: Any, field: str, limit: int) -> str:
-    text = _clean_text(value, limit)
-    if not text:
-        raise AIServiceResponseError(f"{field}为空")
-    return text
-
-
-def _safe_amount(value: Any) -> float | None:
-    if value in {None, ""} or isinstance(value, bool):
+def _number(value: Any, field: str, *, allow_none: bool) -> float | None:
+    if value is None and allow_none:
         return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(number) or number < 0:
-        return None
-    return round(number, 2)
-
-
-def _number(value: Any, field: str) -> float:
     if isinstance(value, bool):
         raise AIServiceResponseError(f"{field}不是数字")
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:
         raise AIServiceResponseError(f"{field}不是数字") from exc
-    if not math.isfinite(number):
-        raise AIServiceResponseError(f"{field}不是有限数字")
-    return number
+    if not math.isfinite(number) or number < 0:
+        raise AIServiceResponseError(f"{field}必须是非负有限数字")
+    return round(number, 2)
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -513,3 +439,52 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
             raise AIServiceResponseError(f"JSON字段重复：{key}")
         result[key] = value
     return result
+
+
+def _batch_id(root_job_id: str, index: int, cases: list[dict[str, Any]]) -> str:
+    encoded = json.dumps(
+        {"root_job_id": root_job_id, "index": index, "cases": cases},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:24]
+
+
+def _payload_size(payload: dict[str, Any]) -> int:
+    return len(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode(
+            "utf-8"
+        )
+    )
+
+
+def _identity_values(record: dict[str, Any]) -> tuple[str, ...]:
+    values: set[str] = set()
+    for field in _IDENTITY_FIELDS:
+        text = str(record.get(field) or "").strip()
+        if len(text) >= 2:
+            values.add(text)
+        if field == "source_file" and text:
+            stem = Path(text).stem.strip()
+            if len(stem) >= 2:
+                values.add(stem)
+    return tuple(sorted(values, key=len, reverse=True))
+
+
+def _clean_text(value: Any, limit: int, identity_values: tuple[str, ...] = ()) -> str:
+    text = str(value or "").strip()
+    text = _SENSITIVE_WORKBOOK_ROW_RE.sub("[身份字段行已脱敏]", text)
+    for identity in identity_values:
+        text = text.replace(identity, "[身份信息已脱敏]")
+    text = _EMAIL_RE.sub("[邮箱已脱敏]", text)
+    text = _PHONE_RE.sub("[手机号已脱敏]", text)
+    text = _LOCAL_PATH_RE.sub("[本地路径已脱敏]", text)
+    text = _NATIONAL_ID_RE.sub("[证件号已脱敏]", text)
+    text = _ORDER_CODE_RE.sub("[业务编号已脱敏]", text)
+    text = re.sub(r"\s+", " ", text)
+    return text[:limit]
+
+
+def _short(value: Any, limit: int) -> str:
+    return _clean_text(value, limit)

@@ -209,6 +209,9 @@ def effective_after_sales_fee(record: dict[str, Any]) -> float | None:
     explicit_results = re.findall(r"=\s*(\d+(?:\.\d+)?)\s*元", solution)
     if explicit_results:
         return round(float(explicit_results[-1]), 2)
+    api_candidate = _amount(record, "api_cost_candidate")
+    if api_candidate is not None:
+        return api_candidate
     return None
 
 
@@ -218,6 +221,9 @@ def effective_responsible_factory(record: dict[str, Any]) -> str:
     reviewed_candidate = _text(record.get("responsible_factory"))
     if reviewed_candidate:
         return reviewed_candidate
+    ai_candidate = _text(record.get("responsible_factory_ai_candidate"))
+    if ai_candidate and ai_candidate != "未知":
+        return ai_candidate
     explicit = _text(record.get("responsibility"))
     text = "；".join(
         (explicit, _text(record.get("investigation")), _text(record.get("solution")))
