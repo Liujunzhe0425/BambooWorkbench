@@ -33,6 +33,7 @@ def test_real_registry_discovers_and_health_checks_formal_module() -> None:
 
     assert module.path == MODULE_ROOT.resolve()
     assert module.is_mock is False
+    assert module.manifest.supports_incremental is True
     assert registry.get(ModuleId.MOISTURE).health == "healthy"
     healthy, detail = registry.check_health(ModuleId.MOISTURE)
     assert healthy is True

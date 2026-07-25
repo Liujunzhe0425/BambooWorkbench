@@ -90,3 +90,20 @@ def test_experience_failure_does_not_break_deterministic_result(
     assert outcome.processed_count == 1
     assert outcome.batches[0].experience_references == ()
     assert "EXPERIENCE_GUIDANCE_DEGRADED" in outcome.errors
+
+
+def test_corrupt_managed_experience_degrades_without_bundled_fallback(
+    tmp_path: Path, workbook_factory, monkeypatch
+) -> None:
+    source = workbook_factory(tmp_path / "source.xlsx", departments={"品质": 2})
+    data_root = tmp_path / "module-data"
+    experience_root = data_root / "experience"
+    experience_root.mkdir(parents=True)
+    (experience_root / "manifest.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setenv("BAMBOO_MOISTURE_DATA_DIR", str(data_root))
+
+    outcome = DeterministicPipeline().run((source,))
+
+    assert outcome.processed_count == 1
+    assert outcome.batches[0].experience_references == ()
+    assert "EXPERIENCE_GUIDANCE_DEGRADED" in outcome.errors

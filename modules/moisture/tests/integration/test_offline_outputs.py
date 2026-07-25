@@ -172,6 +172,54 @@ def test_invalid_module_config_writes_explicit_legal_failed_result(
     assert payload["file_results"][0]["error"] == "MODULE_CONFIG_INVALID"
 
 
+def test_append_summary_rejects_invalid_base_without_entering_raw_pipeline(
+    tmp_path: Path,
+) -> None:
+    base_summary = tmp_path / "base-summary.xlsx"
+    new_raw = tmp_path / "new-raw.xlsx"
+    base_summary.write_bytes(b"contract-only base")
+    new_raw.write_bytes(b"contract-only raw")
+    config = tmp_path / "module-config.json"
+    config.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "operation": "append_summary",
+                "inputs": [
+                    {"role": "base_summary", "input_index": 0},
+                    {"role": "new_raw", "input_index": 1},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "output"
+    job = JobRequest.from_payload(
+        {
+            "schema_version": "1.0",
+            "job_id": "job-history-contract-only",
+            "module_id": "moisture",
+            "phase": "draft",
+            "run_mode": "batch",
+            "input_files": [
+                str(base_summary.resolve()),
+                str(new_raw.resolve()),
+            ],
+            "output_dir": str(output_dir.resolve()),
+            "module_config_file": str(config.resolve()),
+            "ai_enabled": False,
+        }
+    )
+
+    assert run_draft(job) == 0
+
+    payload = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
+    assert payload["status"] == "failed"
+    assert payload["outputs"] == []
+    assert payload["errors"] == ["HISTORY_SUMMARY_INVALID"]
+    assert not (output_dir / "moisture_summary.xlsx").exists()
+
+
 def test_ai_report_rejects_a_raw_workbook_without_routing_to_summary(
     tmp_path: Path, workbook_factory
 ) -> None:

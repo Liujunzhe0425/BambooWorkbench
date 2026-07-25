@@ -61,6 +61,17 @@ _CONTEXT_YEAR_PATTERN = re.compile(
 _LEGACY_TITLE_PATTERN = re.compile(
     r"^(?P<supplier>.+?)(?P<material_type>原竹丝|竹丝)水分检测$"
 )
+_TASK_SNAPSHOT_STEM_PATTERN = re.compile(r"^\d{3}-(?P<source_stem>.+)$")
+
+
+def _record_id_from_path(path: Path) -> str:
+    """Recover the original stem from one TaskService input snapshot layer."""
+
+    stem = path.stem
+    if path.parent.name != "inputs":
+        return stem
+    match = _TASK_SNAPSHOT_STEM_PATTERN.fullmatch(stem)
+    return match.group("source_stem") if match is not None else stem
 
 
 def _as_decimal(value: object) -> Decimal:
@@ -286,7 +297,7 @@ class ExcelSourceParser:
         date_year = inferred_year if inferred_year is not None else context_year
 
         return BatchRecord(
-            record_id=path.stem,
+            record_id=_record_id_from_path(path),
             samples=samples,
             source_file=path,
             source_file_hash=source_hash,

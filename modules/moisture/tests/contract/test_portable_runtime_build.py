@@ -64,6 +64,7 @@ def test_build_hook_references_repository_venv() -> None:
     assert "Scripts\\python.exe" in text or "Scripts/python.exe" in text
     # Must import PyInstaller from the repository venv
     assert "import PyInstaller" in text
+    assert "'--hidden-import', 'moisture.management_cli'" in text
     assert "sys.version_info" in text
     assert "3.11" in text
 

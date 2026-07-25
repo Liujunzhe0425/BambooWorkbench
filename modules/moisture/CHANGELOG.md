@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.1.1 - 2026-07-24
+
+### 统一公开管理进程合同
+
+- 保留已验收的标准四/五表历史追加、SHA 去重、同批冲突确认和确定性 finalize 重放；
+- 通过统一 v1.1 request/response Schema 和 `run_management.bat manage` 公开 27 个操作；
+- 接入经验草稿、approved、历史三栏的列出、查看、校验、创建、更新、发布、停用和历史复制；
+- 接入规则草稿、当前、历史三栏的列出、查看、校验、预览、创建、更新、发布、停用、恢复和历史复制；
+- 新增当前有效规则 `{version, sha256}` 只读查询，保留模块私有固定快照加载；
+- 管理失败使用稳定、脱敏错误码；禁止返回绝对路径、traceback 或内部原文；
+- manifest 声明 `experience_management`、`rule_management` 和 `rule_snapshot`，继续保留
+  `ai_report` 与 `supports_incremental: true`；
+- 旧 v1.0 四个管理操作保留一个迁移版本；中央通用 v1.1 Runner 和 TaskService 自动快照
+  仍按统一 FCR 由框架负责人复验；
+- 模块全量回归 `555 passed`；源码和冻结 EXE 均完成 v1.1 管理入口验证，冻结 EXE
+  通过真实 TaskService 历史追加 draft→finalize；
+- 不改变公式、统计、规则阈值、颜色、Excel 输出、独立 AI 报告或历史追加语义。
+
 ## 1.1.0 - 2026-07-23
 
 ### BambooWorkbench v1.1.0 正式发布

@@ -54,6 +54,26 @@ def test_reads_dynamic_departments_and_source_rows(tmp_path: Path, workbook_fact
     assert [sample.source_row for sample in record.samples] == [6, 7, 8, 9, 10, 11]
 
 
+@pytest.mark.parametrize(
+    ("snapshot_name", "expected_record_id"),
+    [
+        ("002-same-batch.xlsx", "same-batch"),
+        ("002-001-customer-batch.xlsx", "001-customer-batch"),
+    ],
+)
+def test_task_snapshot_prefix_does_not_change_original_record_id(
+    tmp_path: Path,
+    workbook_factory,
+    snapshot_name: str,
+    expected_record_id: str,
+) -> None:
+    path = workbook_factory(tmp_path / "task" / "inputs" / snapshot_name)
+
+    record = ExcelSourceParser().parse(path, default_year=2026)
+
+    assert record.record_id == expected_record_id
+
+
 def test_eleven_samples_fails_without_truncation(tmp_path: Path, workbook_factory) -> None:
     path = workbook_factory(tmp_path / "eleven.xlsx", departments={"品质": 11})
 

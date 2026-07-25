@@ -139,8 +139,11 @@ def test_real_task_service_ai_report_allow_and_deny(
     qtbot, tmp_path: Path, workbook_factory
 ) -> None:
     provider = _ValidReportProvider()
-    paths, database, tasks, confirmations, _, service = _context(tmp_path, provider)
+    paths, database, tasks, confirmations, registry, service = _context(tmp_path, provider)
     try:
+        contract = registry.get(ModuleId.MOISTURE).manifest.management_contract
+        assert contract is not None
+        assert contract.schema_version == "1.1"
         summary = _make_summary(qtbot, tmp_path, workbook_factory, tasks, service)
         before = summary.read_bytes()
         config = {
@@ -161,6 +164,11 @@ def test_real_task_service_ai_report_allow_and_deny(
         )
         _wait(qtbot, waiting, failed)
         task_dir = paths.tasks / allowed_job
+        draft_config = json.loads(
+            (task_dir / "module-config.json").read_text(encoding="utf-8")
+        )
+        rule_snapshot = draft_config["rule_selection"]
+        assert set(rule_snapshot) == {"version", "sha256"}
         draft = json.loads((task_dir / "output-draft" / "result.json").read_text(encoding="utf-8"))
         request_id = draft["service_requests"][0]["request_id"]
         records = confirmations.list_for_job(allowed_job)
@@ -174,6 +182,10 @@ def test_real_task_service_ai_report_allow_and_deny(
         service.finalize(allowed_job, bundle)
         _wait(qtbot, finished, failed)
 
+        final_config = json.loads(
+            (task_dir / "module-config.json").read_text(encoding="utf-8")
+        )
+        assert final_config["rule_selection"] == rule_snapshot
         final = json.loads((task_dir / "output-final" / "result.json").read_text(encoding="utf-8"))
         assert final["job_id"] == allowed_job
         assert final["confirmations"] == []

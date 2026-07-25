@@ -171,12 +171,17 @@ class LocalApprovedExperienceRepository:
         matched.sort(key=lambda item: item.exact_match_count, reverse=True)
         return matched
 
+    def list_approved(self) -> list[ExperienceReference]:
+        """Return the current immutable, effective approved projection."""
+
+        return self._load_approved(self._as_of)
+
     def get(self, experience_id: str, version: str) -> ExperienceReference | None:
         if _SAFE_ID.fullmatch(experience_id) is None:
             raise ValueError("invalid experience_id")
         if _SEMVER.fullmatch(version) is None:
             raise ValueError("invalid semantic version")
-        for reference in self._load_approved(self._as_of):
+        for reference in self.list_approved():
             if reference.experience_id == experience_id and reference.version == version:
                 return reference
         return None

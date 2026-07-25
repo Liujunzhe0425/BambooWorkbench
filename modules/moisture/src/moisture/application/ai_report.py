@@ -12,10 +12,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from moisture.adapters.experience.data_root import resolve_runtime_experience_root
 from moisture.adapters.experience.local_approved_repository import (
+    ExperienceRepositoryError,
     LocalApprovedExperienceRepository,
 )
 from moisture.adapters.history.repository import HistoryRepository
+from moisture.adapters.rules.data_root import load_runtime_rule_snapshot
 from moisture.adapters.rules.package_loader import RulePackageLoader
 from moisture.application.module_config import ModuleConfig
 from moisture.application.run_result import InternalMoistureRunResult, InternalOutput
@@ -210,11 +213,18 @@ def _experience_contexts(
 ) -> tuple[list[dict[str, object]], tuple[dict[str, str], ...]]:
     if not selections:
         return [], ()
-    repository = LocalApprovedExperienceRepository(experience_root)
+    try:
+        repository = LocalApprovedExperienceRepository(experience_root)
+        repository.list_approved()
+    except (ExperienceRepositoryError, OSError, ValueError) as error:
+        raise AIReportError("approved experience repository is unavailable") from error
     contexts: list[dict[str, object]] = []
     metadata: list[dict[str, str]] = []
     for selection in selections:
-        reference = repository.get(selection.entry_id, selection.version)
+        try:
+            reference = repository.get(selection.entry_id, selection.version)
+        except (ExperienceRepositoryError, OSError, ValueError) as error:
+            raise AIReportError("selected approved experience is unavailable") from error
         if reference is None or reference.content_hash != selection.sha256:
             raise AIReportError("selected approved experience does not match its hash")
         excerpt = reference.quoted_reference[:2000]
@@ -242,8 +252,21 @@ def _experience_contexts(
     return contexts, tuple(metadata)
 
 
-def _rule_context(root: Path) -> dict[str, str]:
-    snapshot = RulePackageLoader().load(root / "rules" / "active")
+def _rule_context(
+    root: Path,
+    *,
+    rule_version: str | None = None,
+    rules_sha256: str | None = None,
+    use_managed_root: bool = True,
+) -> dict[str, str]:
+    snapshot = (
+        load_runtime_rule_snapshot(
+            rule_version=rule_version,
+            rules_sha256=rules_sha256,
+        )
+        if use_managed_root
+        else RulePackageLoader().load(root / "rules" / "active")
+    )
     descriptions = []
     for definition in snapshot.definitions:
         threshold = definition.threshold or definition.upper or definition.lower
@@ -279,10 +302,23 @@ def build_ai_report_draft(
     current_path = job.input_files[config.current_summary_input_index or 0]
     current = _summary_context(current_path)
     history = _history_contexts(config.history_ids, history_root)
+    selected_experience_root = experience_root
+    if selected_experience_root is None:
+        selected_experience_root = (
+            resolve_runtime_experience_root()
+            if config.experience_selections
+            else root / "experience"
+        )
     experiences, experience_metadata = _experience_contexts(
-        config.experience_selections, experience_root or root / "experience"
+        config.experience_selections, selected_experience_root
     )
-    rule = _rule_context(root)
+    selection = config.rule_selection
+    rule = _rule_context(
+        root,
+        rule_version=selection.version if selection else None,
+        rules_sha256=selection.sha256 if selection else None,
+        use_managed_root=asset_root is None,
+    )
     base_context = {
         "question": config.question,
         "current_summary": current,
