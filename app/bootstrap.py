@@ -133,6 +133,7 @@ def build_context(data_root: Path | None = None, use_mocks: bool = False) -> App
         )
         scan_results = registry.scan()
         logger.info("module scan completed count=%d", len(scan_results))
+        module_management_service = ModuleManagementService(paths, registry)
         task_service = TaskService(
             paths,
             registry,
@@ -140,8 +141,8 @@ def build_context(data_root: Path | None = None, use_mocks: bool = False) -> App
             confirmation_repository,
             service_orchestrator=service_orchestrator,
             settings=settings,
+            module_management_service=module_management_service,
         )
-        module_management_service = ModuleManagementService(paths, registry)
         confirmation_service = ConfirmationService(
             paths,
             confirmation_repository,
