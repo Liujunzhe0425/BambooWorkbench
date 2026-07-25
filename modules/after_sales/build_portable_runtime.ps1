@@ -27,11 +27,6 @@ if (Test-Path -LiteralPath $BuildRoot) {
     Remove-Item -LiteralPath $BuildRoot -Recurse -Force
 }
 New-Item -ItemType Directory -Path (Join-Path $BuildRoot 'spec') -Force | Out-Null
-$env:PYINSTALLER_CONFIG_DIR = Join-Path $BuildRoot 'pyinstaller-cache'
-$env:TEMP = Join-Path $BuildRoot 'temp'
-$env:TMP = $env:TEMP
-New-Item -ItemType Directory -Path $env:PYINSTALLER_CONFIG_DIR -Force | Out-Null
-New-Item -ItemType Directory -Path $env:TEMP -Force | Out-Null
 
 $Python = Join-Path $RepoRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {

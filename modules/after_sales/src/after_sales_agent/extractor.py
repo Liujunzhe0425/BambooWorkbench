@@ -63,9 +63,6 @@ def process_workbook(
     issue_confidence = 0.85 if issue_types else 0.0
     issue_analysis_source = "rules"
     analysis_note = "离线规则分析完成"
-    # 桌面模块只执行确定性抽取；AI 辅助由 cli.py 通过统一 service_requests
-    # 协议完成。本文件不读取密钥，也不导入或调用任何模型网关。
-    api_analysis: dict[str, Any] | None = None
 
     if not issue_types:
         issue_types = ["其他"]
@@ -213,7 +210,7 @@ def process_workbook(
         "issue_analysis_source": issue_analysis_source,
         "analysis_note": analysis_note,
         "issue_evidence": issue_evidence,
-        "api_analysis": api_analysis,
+        "api_analysis": None,
         "cost": round(cost, 2) if cost is not None else None,
         "fee_amount": round(cost, 2) if cost is not None else None,
         "enterprise_cost_amount": round(cost, 2) if cost is not None else None,
@@ -266,6 +263,7 @@ def process_workbook(
         "investigation": fields.get("investigation", ""),
         "solution": fields.get("solution", ""),
         "responsibility": fields.get("responsibility", ""),
+        "_ai_workbook_text": raw_workbook_text,
     }
     return record, anomalies, confirmations
 

@@ -20,13 +20,14 @@
     "brand_evidence": "桃花江",
     "brand_reason": "",
     "issue_types": [
-      "性能"
+      "性能",
+      "加工"
     ],
     "primary_issue_type": "性能",
     "issue_reason_summary": "现场复核确认含水率变化导致收缩开裂，部分加工尺寸偏差",
-    "issue_confidence": 1.0,
-    "issue_analysis_source": "api",
-    "analysis_note": "AI仅辅助问题类型与原因，费用、责任工厂和结案状态未由AI修改",
+    "issue_confidence": 0.85,
+    "issue_analysis_source": "rules",
+    "analysis_note": "离线规则分析完成",
     "issue_evidence": {
       "性能": [
         "开裂",
@@ -38,26 +39,13 @@
         "加工"
       ]
     },
-    "api_analysis": {
-      "issue_types": [
-        "性能",
-        "加工"
-      ],
-      "primary_issue_type": "性能",
-      "reason_summary": "现场复核确认含水率变化导致收缩开裂，部分加工尺寸偏差",
-      "evidence_refs": [
-        "after-sales-f76db5b3f931751f-0001-E1",
-        "after-sales-f76db5b3f931751f-0001-E2"
-      ],
-      "review_suggestion": "请结合售后调查原文复核性能与加工多标签",
-      "confidence": 0.93
-    },
+    "api_analysis": null,
     "cost": 1000.0,
     "fee_amount": 1000.0,
     "enterprise_cost_amount": 1000.0,
     "enterprise_cost_status": "exact",
-    "enterprise_cost_evidence": "竹简工作台人工复核值",
-    "enterprise_cost_reviewed": true,
+    "enterprise_cost_evidence": "售后解决方案·企业售后成本：识别到明确费用 1000 元",
+    "enterprise_cost_reviewed": false,
     "internal_accountability_amount": 200.0,
     "internal_accountability_status": "exact",
     "internal_accountability_evidence": "售后解决方案·内部责任扣款：识别到明确费用 200 元",
@@ -69,7 +57,7 @@
     "fee_currency": "CNY",
     "fee_status": "exact",
     "cost_included": true,
-    "cost_status": "人工复核确认",
+    "cost_status": "exact",
     "cost_items": [
       {
         "name": "售后费用",
@@ -95,7 +83,7 @@
     "cost_rule_evidence": "售后解决方案·企业售后成本：识别到明确费用 1000 元",
     "api_cost_candidate": null,
     "api_cost_evidence": "",
-    "cost_evidence": "竹简工作台人工复核值",
+    "cost_evidence": "售后解决方案·企业售后成本：识别到明确费用 1000 元",
     "cost_analysis_source": "deterministic",
     "selected_solution": "已完成更换并结案。企业实际承担材料及运费，合计1000元；内部责任扣款200元；供应商承担300元。",
     "resolution_status": "已解决",
@@ -105,20 +93,9 @@
     "closed_reason": "原文明确记录问题已经解决或处理完成",
     "closed_analysis_source": "rules",
     "case_status": "已关闭",
-    "after_sales_fee_amount": 1000.0,
-    "after_sales_fee_status": "已复核",
-    "after_sales_fee_evidence": "竹简工作台人工复核值",
-    "after_sales_fee_reviewed": true,
-    "responsible_factory": "未知",
-    "responsibility_reviewed": true,
-    "responsibility_review_evidence": "竹简工作台人工复核值",
-    "complaint_type_reviewed": true,
-    "complaint_type_review_evidence": "竹简工作台人工复核值",
-    "mandatory_review_pending": false,
-    "manual_review_completed": true,
     "warnings": [],
     "needs_review": false,
-    "reviewed": true,
+    "reviewed": false,
     "reviewed_by": null,
     "reviewed_at": null,
     "source_cells": {
@@ -142,10 +119,7 @@
     "responsibility": "补发、更换和客户确认均已完成，案件正式结案。\n本文件为人工构造的脱敏验收数据，不含真实客户信息。",
     "input_index": 1,
     "case_id": "pr16-artifact-tool-sanitized-1",
-    "ai_candidate_id": "after-sales-f76db5b3f931751f-0001",
-    "ai_service_status": "AI辅助分析完成",
-    "ai_review_suggestion": "请结合售后调查原文复核性能与加工多标签",
-    "analysis_status": "AI辅助分析完成（已人工复核）",
+    "analysis_status": "离线规则分析完成",
     "analysis_error": "",
     "included_in_summary": true
   }

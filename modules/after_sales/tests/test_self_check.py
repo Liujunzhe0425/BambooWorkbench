@@ -71,7 +71,7 @@ def test_module_launcher_reports_version():
         timeout=10,
     )
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip() == "after_sales 1.1.0"
+    assert completed.stdout.strip() == "after_sales 1.1.1"
 
 
 def test_frozen_module_root_resolves_to_portable_module(monkeypatch):
@@ -82,9 +82,24 @@ def test_frozen_module_root_resolves_to_portable_module(monkeypatch):
     assert module_cli._module_root() == MODULE_DIR
 
 
-def test_launcher_prefers_bundled_runtime_before_external_python():
+def test_launcher_allows_explicit_python_override_before_bundled_runtime():
     launcher = (MODULE_DIR / "run_module.bat").read_text(encoding="utf-8")
 
     runtime_position = launcher.index("runtime\\after_sales_agent.exe")
     python_position = launcher.index("if defined PYTHON_EXE")
-    assert runtime_position < python_position
+    assert python_position < runtime_position
+
+
+def test_module_source_has_no_credential_or_direct_network_channel():
+    source_root = MODULE_DIR / "src"
+    source = "\n".join(
+        path.read_text(encoding="utf-8") for path in sorted(source_root.rglob("*.py"))
+    ).casefold()
+    requirements = (MODULE_DIR / "requirements.txt").read_text(encoding="utf-8").casefold()
+
+    assert "import keyring" not in source
+    assert "urllib.request" not in source
+    assert "import httpx" not in source
+    assert "deepseek_gateway" not in source
+    assert "module_ai_config" not in source
+    assert "keyring" not in requirements

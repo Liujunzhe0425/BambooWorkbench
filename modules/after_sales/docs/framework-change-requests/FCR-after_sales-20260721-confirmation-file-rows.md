@@ -8,7 +8,7 @@ framework_areas:
   - ui
   - workflow
 breaking_change: false
-required_before_module_merge: true
+required_before_module_merge: false
 ---
 
 # 框架适配请求：每份 Excel 的人工复核项集中显示在独立行
