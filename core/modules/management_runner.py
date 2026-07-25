@@ -184,6 +184,8 @@ class ModuleManagementRunner(QObject):
         environment.insert("PATH", f"{runtime_dir};{inherited_path}")
         environment.insert("PYTHONPATH", str(Path(__file__).parents[2]))
         environment.insert("PYTHONUTF8", "1")
+        if not getattr(sys, "frozen", False):
+            environment.insert("BAMBOO_MODULE_PYTHON", str(Path(sys.executable).resolve()))
         data_dir = (
             request.data_dir
             if isinstance(request, ModuleManagementRequest)

@@ -2,6 +2,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
@@ -225,6 +226,8 @@ class ModuleManagementService(QObject):
             environment["PYTHONPATH"] = str(Path(__file__).parents[2])
             environment["BAMBOO_MODULE_DATA_DIR"] = str(data_dir)
             environment[f"BAMBOO_{module_id.value.upper()}_DATA_DIR"] = str(data_dir)
+            if not getattr(sys, "frozen", False):
+                environment["BAMBOO_MODULE_PYTHON"] = str(Path(sys.executable).resolve())
             completed = subprocess.run(
                 [program, *arguments],
                 cwd=module.path,
