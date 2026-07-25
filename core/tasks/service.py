@@ -37,6 +37,7 @@ from core.tasks.result_status import normalized_result
 from core.tasks.snapshots import remove_snapshots, snapshot_inputs
 
 if TYPE_CHECKING:
+    from core.modules.management_service import ModuleManagementService
     from core.services.orchestrator import ServiceOrchestrator
 
 _JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{6,64}$")
@@ -104,6 +105,7 @@ class TaskService(QObject):
         job_id_factory: Callable[[], str] = _new_job_id,
         service_orchestrator: "ServiceOrchestrator | None" = None,
         settings: SettingsStore | None = None,
+        module_management_service: "ModuleManagementService | None" = None,
     ) -> None:
         super().__init__()
         self.paths = paths
@@ -114,6 +116,7 @@ class TaskService(QObject):
         self.job_id_factory = job_id_factory
         self.service_orchestrator = service_orchestrator
         self.settings = settings
+        self.module_management_service = module_management_service
         self.runners: dict[str, ModuleProcessRunner] = {}
         self._states: dict[str, TaskStateMachine] = {}
         self._jobs: dict[str, JobRequest] = {}
@@ -123,6 +126,7 @@ class TaskService(QObject):
         self._shutdown = False
         self._shutdown_result = True
         self._blocked_callbacks: set[str] = set()
+        self._preauthorized_ai: set[str] = set()
         self._reconcile_startup()
 
     def pending_confirmations(self) -> list[tuple[str, ModuleResult]]:
@@ -228,8 +232,13 @@ class TaskService(QObject):
         inputs: list[Path],
         *,
         module_config: dict[str, object] | None = None,
+        ai_consent_granted: bool = False,
     ) -> str:
         module = self.registry.get(module_id)
+        framework_ai = module.manifest.framework_ai
+        if framework_ai is not None and framework_ai.required and not ai_consent_granted:
+            raise ValueError("当前模块必须先完成框架 AI 配置、连接测试和本批次授权")
+        module_config = self._with_rule_snapshot(module_id, module, module_config)
         if module_config is not None:
             self._validate_module_config_support(
                 module_id,
@@ -256,6 +265,8 @@ class TaskService(QObject):
             raise
 
         self._states[job_id] = TaskStateMachine()
+        if ai_consent_granted:
+            self._preauthorized_ai.add(job_id)
         runner: ModuleProcessRunner | None = None
         try:
             snapshots = snapshot_inputs(
@@ -393,7 +404,7 @@ class TaskService(QObject):
         if final_output_dir.exists() and not final_output_dir.is_dir():
             raise ValueError("final output must be a directory when it already exists")
         draft_result = self._load_draft_result(job_id, task_dir, trusted_draft)
-        service_response_file: str | None = None
+        service_response_file: str | None = trusted_draft.service_response_file
         ai_consent: dict[str, bool] = {}
         if draft_result.service_requests:
             if self.service_orchestrator is None:
@@ -415,7 +426,7 @@ class TaskService(QObject):
             confirmation_file=str(frozen_bundle_path),
             output_dir=str(final_output_dir),
             service_response_file=service_response_file,
-            ai_enabled=any(ai_consent.values()),
+            ai_enabled=trusted_draft.ai_enabled or any(ai_consent.values()),
         )
         final_job = JobRequest.model_validate(final_payload)
         final_path = task_dir / "job-finalize.json"
@@ -485,8 +496,9 @@ class TaskService(QObject):
         expected_mode = RunMode.SINGLE if len(draft_inputs) == 1 else RunMode.BATCH
         if draft.run_mode is not expected_mode:
             raise ValueError("job-draft run_mode does not match persisted snapshot count")
-        if draft.ai_enabled:
-            raise ValueError("job-draft ai_enabled must remain false")
+        service_bound = draft.service_response_file is not None
+        if draft.ai_enabled != service_bound:
+            raise ValueError("job-draft AI state does not match its service response")
         if draft.allowed_knowledge_scopes != ["shared", draft.module_id.value]:
             raise ValueError("job-draft knowledge scopes are not canonical")
         if draft.module_config_file is not None:
@@ -508,15 +520,23 @@ class TaskService(QObject):
             if not isinstance(payload, dict):
                 raise ValueError("module configuration must be a JSON object")
             self._module_config_text(payload)
-        if any(
-            value is not None
-            for value in (
-                draft.service_response_file,
-                draft.parent_job_id,
-                draft.confirmation_file,
+        if service_bound:
+            response = resolve_contained_file(
+                Path(str(draft.service_response_file)),
+                task_dir,
+                "draft service response",
+                reject_link=True,
             )
-        ):
-            raise ValueError("job-draft finalize-only or config fields must be empty")
+            expected_protocol = resolve_contained_directory(
+                task_dir / "protocol",
+                task_dir,
+                "service protocol directory",
+                reject_link=True,
+            )
+            if response.parent != expected_protocol:
+                raise ValueError("draft service response is outside the protocol directory")
+        if draft.parent_job_id is not None or draft.confirmation_file is not None:
+            raise ValueError("job-draft finalize-only fields must be empty")
 
     def _start_runner(
         self,
@@ -593,6 +613,15 @@ class TaskService(QObject):
         if module_id is not ModuleId.MOISTURE or payload.get("schema_version") != "1.0":
             raise ValueError("当前模块不支持该任务配置")
         operation = payload.get("operation")
+        if operation is None and set(payload) <= {"schema_version", "rule_selection"}:
+            return
+        if operation == "summary" and set(payload) <= {
+            "schema_version",
+            "operation",
+            "default_year",
+            "rule_selection",
+        }:
+            return
         if operation == "ai_report":
             if "ai_report" not in capabilities:
                 raise ValueError("当前模块版本不支持独立 AI 汇总报告")
@@ -623,6 +652,57 @@ class TaskService(QObject):
             base_count += int(role == "base_summary")
         if base_count != 1 or actual_indexes != expected_indexes:
             raise ValueError("历史追加必须完整且不重复地分配一份基表和全部新数据")
+
+    def _with_rule_snapshot(
+        self,
+        module_id: ModuleId,
+        module: object,
+        module_config: dict[str, object] | None,
+    ) -> dict[str, object] | None:
+        manifest = getattr(module, "manifest", None)
+        capabilities = getattr(manifest, "capabilities", [])
+        if module_id is not ModuleId.MOISTURE or "rule_snapshot" not in capabilities:
+            return module_config
+        management = self.module_management_service
+        temporary_management = False
+        if management is None:
+            from core.modules.management_service import ModuleManagementService
+
+            management = ModuleManagementService(self.paths, self.registry)
+            temporary_management = True
+        try:
+            response = management.execute_sync(
+                module_id,
+                "get_active_rule_identity",
+                {},
+            )
+        finally:
+            if temporary_management:
+                management.shutdown()
+        result = response.get("result")
+        active = result.get("active_rule") if isinstance(result, dict) else None
+        if not isinstance(active, dict) or set(active) != {"version", "sha256"}:
+            raise RuntimeError("水分模块没有返回有效的当前规则身份")
+        version = active.get("version")
+        sha256 = active.get("sha256")
+        if not isinstance(version, str) or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", version):
+            raise RuntimeError("当前规则版本无效")
+        if not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256):
+            raise RuntimeError("当前规则哈希无效")
+        configured = dict(
+            module_config
+            or {
+                "schema_version": "1.0",
+                "operation": "summary",
+            }
+        )
+        configured.setdefault("schema_version", "1.0")
+        existing = configured.get("rule_selection")
+        selection = {"version": version, "sha256": sha256}
+        if existing is not None and existing != selection:
+            raise ValueError("任务配置中的规则快照与当前有效规则不一致")
+        configured["rule_selection"] = selection
+        return configured
 
     @staticmethod
     def _sha256(path: Path) -> str:
@@ -692,6 +772,17 @@ class TaskService(QObject):
         try:
             job = self._jobs[job_id]
             result_path = str((Path(job.output_dir) / "result.json").resolve())
+            if job.phase is JobPhase.DRAFT and self._service_first_required(job):
+                if job.service_response_file is None and result.service_requests:
+                    self._cleanup_runner(job_id, runner, task_terminal=False)
+                    self._start_service_bound_draft(job_id, job, result)
+                    return
+                if (
+                    job.service_response_file is None
+                    and result.summary.processed_count > 0
+                    and not result.service_requests
+                ):
+                    raise RuntimeError("售后模块未为成功解析的文件生成 AI 服务请求")
             pending = (
                 self._prepare_pending_result(job_id, job, result)
                 if job.phase is JobPhase.DRAFT
@@ -738,6 +829,64 @@ class TaskService(QObject):
                 self._auto_finalize_services(job_id)
             except Exception as exc:
                 self._record_failure(job_id, self._error_message(exc))
+
+    def _service_first_required(self, job: JobRequest) -> bool:
+        module = self.registry.get(job.module_id)
+        policy = module.manifest.framework_ai
+        return bool(policy and policy.required and policy.service_before_confirmation)
+
+    def _start_service_bound_draft(
+        self,
+        job_id: str,
+        draft: JobRequest,
+        result: ModuleResult,
+    ) -> None:
+        if job_id not in self._preauthorized_ai:
+            raise RuntimeError("售后任务缺少本批次 AI 授权")
+        if self.service_orchestrator is None:
+            raise RuntimeError("框架 AI 服务尚未配置")
+        task_dir = resolve_contained_directory(
+            self.paths.tasks / job_id,
+            self.paths.tasks,
+            "service-first task directory",
+            reject_link=True,
+        )
+        decisions = {
+            request.request_id: True
+            for request in result.service_requests
+            if request.service == "ai"
+        }
+        response_path = self.service_orchestrator.resolve(
+            task_id=job_id,
+            module_id=draft.module_id.value,
+            allowed_namespaces=set(draft.allowed_knowledge_scopes),
+            requests=result.service_requests,
+            ai_consent=decisions,
+            task_dir=task_dir,
+        )
+        rebound_payload = draft.model_dump(mode="python")
+        rebound_payload.update(
+            service_response_file=str(response_path),
+            ai_enabled=bool(decisions),
+        )
+        rebound = JobRequest.model_validate(rebound_payload)
+        draft_path = resolve_contained_target(
+            task_dir / "job-draft.json",
+            task_dir,
+            "service-bound draft job",
+            reject_link=True,
+        )
+        _atomic_write_text(draft_path, rebound.model_dump_json(indent=2))
+        self._jobs[job_id] = rebound
+        next_runner = self.runner_factory()
+        self.runners[job_id] = next_runner
+        self._connect_runner(job_id, next_runner)
+        self._start_runner(
+            next_runner,
+            self.registry.get(draft.module_id),
+            draft_path,
+            rebound,
+        )
 
     def _publish_result(
         self,
@@ -862,6 +1011,7 @@ class TaskService(QObject):
             self._jobs.pop(job_id, None)
             self._pending_confirmation_results.pop(job_id, None)
             self._failed_signals.discard(job_id)
+            self._preauthorized_ai.discard(job_id)
 
     def _write_terminal_marker(
         self,
