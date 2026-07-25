@@ -615,6 +615,13 @@ class TaskService(QObject):
         operation = payload.get("operation")
         if operation is None and set(payload) <= {"schema_version", "rule_selection"}:
             return
+        if operation == "summary" and set(payload) <= {
+            "schema_version",
+            "operation",
+            "default_year",
+            "rule_selection",
+        }:
+            return
         if operation == "ai_report":
             if "ai_report" not in capabilities:
                 raise ValueError("当前模块版本不支持独立 AI 汇总报告")
