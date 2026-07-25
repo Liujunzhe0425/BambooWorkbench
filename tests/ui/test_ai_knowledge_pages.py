@@ -55,6 +55,39 @@ def test_settings_supports_deepseek_defaults_and_provider_scoped_key(
     assert settings.get("ai_provider") == "deepseek"
 
 
+def test_settings_small_window_scrolls_without_squashing_ai_fields(
+    qtbot, database, tmp_path: Path
+) -> None:
+    page = SettingsPage(
+        SettingsStore(database),
+        AppPaths.for_root(tmp_path / "small-settings"),
+        InMemoryCredentialStore(),
+    )
+    qtbot.addWidget(page)
+    page.resize(760, 480)
+    page.show()
+    qtbot.wait(20)
+
+    assert page.scroll_area.verticalScrollBar().maximum() > 0
+    assert page.scroll_area.horizontalScrollBar().maximum() == 0
+    for widget in (
+        page.output_dir_edit,
+        page.provider_combo,
+        page.base_url_edit,
+        page.model_edit,
+        page.api_key_edit,
+        page.save_button,
+    ):
+        assert widget.height() >= 24
+
+    page.scroll_area.verticalScrollBar().setValue(
+        page.scroll_area.verticalScrollBar().maximum()
+    )
+    qtbot.wait(20)
+    assert page.update_token_edit.height() >= 24
+    assert page.check_update_button.height() >= 24
+
+
 def test_knowledge_page_searches_selected_namespace(qtbot, database, tmp_path: Path) -> None:
     repository = KnowledgeRepository(database)
     repository.add(
