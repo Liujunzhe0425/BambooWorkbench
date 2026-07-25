@@ -1,7 +1,7 @@
 # 售后分析模块 v1.1.1 框架 AI 适配验收
 
 日期：2026-07-25
-分支：`module/after-sales`  
+分支：`module/after-sales`
 目标：`module/after-sales -> integration` Draft PR #57
 框架基线：`integration@a7b66f95ec3fa535501c43bc1f4548135a5baa45`
 
