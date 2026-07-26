@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0",
-  "scenario": "2026年已有1月、缺少2月、以3月候选生成截至3月累计成果",
+  "scenario": "2026年框架已完成候选替换，提供1月和3月快照生成截至3月累计成果",
   "expected_status": "success",
   "expected_year": 2026,
   "expected_target_month": 3,
@@ -13,14 +13,15 @@
     "business_records"
   ],
   "expected_record_count": 2,
-  "expected_replacement_behavior": "候选月份与已有月份相同时，以候选快照替换旧月后按月份升序重算",
+  "expected_replacement_behavior": "框架在调用模块前以候选快照替换旧月，模块按最终升序快照清单重算",
   "expected_rejections": [
     "其他模块",
     "跨年",
-    "已有快照乱序",
-    "已有快照重复月份",
+    "快照乱序",
+    "快照重复月份",
     "晚于目标月份",
     "路径超出授权根",
+    "大小不一致",
     "SHA-256不一致"
   ]
 }

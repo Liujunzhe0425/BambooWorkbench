@@ -21,6 +21,7 @@ from core.contracts.confirmation import ConfirmationAnswer
 from core.contracts.enums import ModuleId
 from core.contracts.manifest import ModuleManifest
 from core.contracts.result import ModuleResult
+from core.knowledge.learning import LearningEvidenceRepository
 from core.knowledge.repository import KnowledgeRepository
 from core.modules.registry import ModuleRegistry, RegisteredModule
 from core.platform.paths import AppPaths
@@ -28,7 +29,11 @@ from core.security.redaction import RedactionService
 from core.services.orchestrator import ServiceOrchestrator
 from core.storage.database import Database
 from core.storage.repositories.confirmations import ConfirmationRepository
+from core.storage.repositories.monthly import MonthlyRepository
+from core.storage.repositories.output_roots import OutputRootRepository
 from core.storage.repositories.tasks import TaskRepository
+from core.storage.settings import SettingsStore
+from core.tasks.monthly_service import MonthlyRollupService
 from core.tasks.service import TaskService
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
@@ -1825,8 +1830,12 @@ class StrictBoilingTestProvider:
         )
 
 
-def make_real_boiling_task_services(root):
-    paths = AppPaths.for_root(root / "app-data")
+def make_real_boiling_task_services(root, *, ai_allowed=False):
+    short_id = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:16]
+    root = MODULE_ROOT.parents[1] / ".r" / short_id[:8]
+    if root.exists():
+        shutil.rmtree(root)
+    paths = AppPaths.for_root(root)
     database = Database.open(paths)
     database.migrate()
     task_repository = TaskRepository(database)
@@ -1852,12 +1861,27 @@ def make_real_boiling_task_services(root):
         provider_id=StrictBoilingTestProvider.provider_id,
         model="boiling-test-model",
     )
+    settings = SettingsStore(database)
+    settings.set("ai_network_enabled", "true" if ai_allowed else "false")
+    output_roots = OutputRootRepository(database, paths)
+    output_roots.initialize_default()
+    monthly_service = MonthlyRollupService(
+        paths,
+        registry,
+        task_repository,
+        confirmation_repository,
+        MonthlyRepository(database),
+        LearningEvidenceRepository(database),
+        output_roots,
+    )
     service = TaskService(
         paths=paths,
         registry=registry,
         task_repository=task_repository,
         confirmation_repository=confirmation_repository,
         service_orchestrator=orchestrator,
+        settings=settings,
+        monthly_rollup_service=monthly_service,
     )
     confirmation_service = ConfirmationService(
         paths,
@@ -1898,7 +1922,7 @@ def task_confirmation_answers(pending_result, ai_decision):
 
 
 def run_real_density_candidate_flow(qtbot, root, ai_decision):
-    services = make_real_boiling_task_services(root)
+    services = make_real_boiling_task_services(root, ai_allowed=ai_decision == "允许")
     service = services["service"]
     sample = (
         MODULE_ROOT
@@ -1910,17 +1934,22 @@ def run_real_density_candidate_flow(qtbot, root, ai_decision):
     )
     try:
         with qtbot.waitSignal(service.needs_confirmation, timeout=30_000) as waiting:
-            job_id = service.create_and_start(ModuleId.BOILING, [sample])
+            job_id = service.create_and_start(
+                ModuleId.BOILING,
+                [sample],
+                task_name="水煮月度测试-2026年07月",
+                period_year=2026,
+                period_month=7,
+            )
         draft_result = waiting.args[1]
         assert draft_result.service_requests
-        request = draft_result.service_requests[0]
-        assert any(
-            prompt.confirmation_id == f"service-consent:{request.request_id}"
+        assert all(
+            not prompt.confirmation_id.startswith("service-consent:")
             for prompt in draft_result.confirmations
         )
         task_dir = services["paths"].tasks / job_id
         draft_job = json.loads((task_dir / "job-draft.json").read_text(encoding="utf-8"))
-        assert draft_job["ai_enabled"] is False
+        assert draft_job["ai_enabled"] is (ai_decision == "允许")
         bundle_path = services["confirmation_service"].submit(
             job_id,
             task_confirmation_answers(draft_result, ai_decision),
@@ -1936,8 +1965,8 @@ def run_real_density_candidate_flow(qtbot, root, ai_decision):
             "analysis_report",
             "analysis_report_markdown",
             "business_records",
-            "monthly_snapshot",
         }
+        assert final_result.monthly_snapshot is not None
         service_response = json.loads(
             (task_dir / "protocol" / "service-response.json").read_text(encoding="utf-8")
         )

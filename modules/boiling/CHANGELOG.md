@@ -14,6 +14,9 @@
 - 趋势仅用于发现变化线索，明确提示月份间规格构成可能不同；不修改现有公式、阈值、等级、人工确认边界或原始实验数据。
 - 单次 AI 请求只发送最高优先级的 1 个候选，负载上限为 12 KiB，并收紧返回结构；未发送候选仍完整保留在离线成果中。
 - 修复人工确认改变候选优先级后，Finalize 将原 Draft AI 建议误判为无效的问题；只有候选仍属于本次确定性候选且全部证据引用仍可验证时才保留建议，未知候选或伪造证据继续离线降级。
+- 按中央 v1.3 合同补齐 manifest `monthly_rollup` 对象，接受 `task_name / period_year / period_month / learning_enabled`，并将内部快照移至顶层 `ModuleResult.monthly_snapshot`。
+- 累计入口改用中央 `transaction_id`、完整快照引用、`configuration_identity` 和 `offline_required`，响应增加模块版本、快照 ID、记录数、成果哈希及稳定错误对象。
+- 可学习的墙板/栏杆规则缺口确认直接携带公共 `ConfirmationPrompt.learning`；不再把学习描述或月度快照作为普通用户成果发布。
 
 ## 1.2.1 - 2026-07-25 移除人工开裂确认
 

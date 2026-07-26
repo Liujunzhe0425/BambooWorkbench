@@ -14,6 +14,7 @@ import openpyxl
 import pytest
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = MODULE_ROOT.parents[1]
 SPEC = importlib.util.spec_from_file_location(
     "boiling_module_rollup_tests",
     MODULE_ROOT / "src" / "boiling_module.py",
@@ -87,6 +88,10 @@ def make_job(sample, output, *, phase="draft", **extra):
         "parent_job_id": None,
         "confirmation_file": None,
         "service_response_file": None,
+        "task_name": "水煮月度测试",
+        "period_year": 2026,
+        "period_month": 1,
+        "learning_enabled": True,
     }
     job.update(extra)
     return job
@@ -190,11 +195,9 @@ def finalized_snapshot(tmp_path):
         ),
         tmp_path / "final-job.json",
     )
-    snapshot_path = next(
-        Path(item["path"])
-        for item in final["outputs"]
-        if item["type"] == "monthly_snapshot"
-    )
+    assert final["monthly_snapshot"] is not None
+    assert all(item["type"] != "monthly_snapshot" for item in final["outputs"])
+    snapshot_path = Path(final["monthly_snapshot"]["path"])
     return final, snapshot_path
 
 
@@ -210,28 +213,33 @@ def snapshot_variant(snapshot_path, target, *, month, batch_no, year=2026):
     )
     write_json(target, snapshot)
     return {
+        "snapshot_id": f"SNAPSHOT-{year:04d}-{month:02d}-{batch_no[-3:]}",
+        "job_id": f"ROLLUP-JOB-{year:04d}-{month:02d}",
+        "module_id": "boiling",
+        "year": year,
         "month": month,
         "path": str(Path(target).resolve()),
+        "size": Path(target).stat().st_size,
         "sha256": digest(target),
     }
 
 
-def rollup_request(root, output, *, snapshots, candidate, year=2026, target_month=3):
+def rollup_request(root, output, *, snapshots, year=2026, target_month=3):
     return {
         "schema_version": "1.0",
-        "request_id": "ROLLUP-REQUEST-001",
+        "transaction_id": "ROLLUP-TRANSACTION-001",
         "module_id": "boiling",
+        "module_version": "1.3.0",
         "year": year,
         "target_month": target_month,
         "snapshot_root": str(Path(root).resolve()),
         "output_dir": str(Path(output).resolve()),
         "snapshots": snapshots,
-        "candidate_snapshot": candidate,
-        "config_identity": {
-            "rule_version": boiling_module.load_rules()["rule_version"],
+        "configuration_identity": {
+            "version": boiling_module.load_rules()["rule_version"],
             "sha256": digest(boiling_module.DEFAULT_RULES_FILE),
         },
-        "forbid_network": True,
+        "offline_required": True,
     }
 
 
@@ -301,11 +309,8 @@ def test_snapshot_uses_final_human_density_and_expansion_values(tmp_path):
         ),
         tmp_path / "final-conflicts-job.json",
     )
-    snapshot_path = next(
-        Path(item["path"])
-        for item in final["outputs"]
-        if item["type"] == "monthly_snapshot"
-    )
+    assert final["monthly_snapshot"] is not None
+    snapshot_path = Path(final["monthly_snapshot"]["path"])
     record = json.loads(snapshot_path.read_text(encoding="utf-8"))["payload"][
         "records"
     ][0]
@@ -349,6 +354,7 @@ def test_finalize_with_unanswered_business_confirmation_has_no_snapshot(tmp_path
         ),
         tmp_path / "final-unanswered-job.json",
     )
+    assert final["monthly_snapshot"] is None
     assert all(item["type"] != "monthly_snapshot" for item in final["outputs"])
     assert not (final_output / "boiling_monthly_snapshot.json").exists()
 
@@ -373,8 +379,7 @@ def test_rollup_allows_month_gap_and_never_builds_ai_request(tmp_path, monkeypat
     request = rollup_request(
         snapshot_root,
         output,
-        snapshots=[january],
-        candidate=march,
+        snapshots=[january, march],
     )
     request_path = tmp_path / "rollup-request.json"
     response_path = output / "rollup-response.json"
@@ -398,21 +403,44 @@ def test_rollup_allows_month_gap_and_never_builds_ai_request(tmp_path, monkeypat
     assert response["status"] == expected["expected_status"]
     assert response["used_months"] == expected["expected_used_months"]
     assert response["network_call_count"] == expected["expected_network_call_count"]
+    assert response["record_count"] == expected["expected_record_count"]
+    assert [
+        (item["snapshot_id"], item["month"], item["sha256"])
+        for item in response["snapshot_hashes"]
+    ] == [
+        (item["snapshot_id"], item["month"], item["sha256"])
+        for item in (january, march)
+    ]
     assert [item["type"] for item in response["outputs"]] == expected[
         "expected_output_types"
     ]
+    assert all(Path(item["path"]).parent == output for item in response["outputs"])
+    assert all(digest(item["path"]) == item["sha256"] for item in response["outputs"])
+    assert all("snapshot" not in item["type"] for item in response["outputs"])
     request_schema = json.loads(
         (MODULE_ROOT / "schemas" / "monthly-rollup-request.schema.json").read_text(
             encoding="utf-8"
         )
     )
     response_schema = json.loads(
-        (MODULE_ROOT / "schemas" / "monthly-rollup-response.schema.json").read_text(
+        (MODULE_ROOT / "schemas" / "monthly-rollup-result.schema.json").read_text(
             encoding="utf-8"
         )
     )
     jsonschema.Draft202012Validator(request_schema).validate(request)
     jsonschema.Draft202012Validator(response_schema).validate(response)
+    central_request_schema = json.loads(
+        (REPO_ROOT / "contracts" / "schemas" / "monthly-rollup-request.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    central_result_schema = json.loads(
+        (REPO_ROOT / "contracts" / "schemas" / "monthly-rollup-result.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    jsonschema.Draft202012Validator(central_request_schema).validate(request)
+    jsonschema.Draft202012Validator(central_result_schema).validate(response)
     workbook = openpyxl.load_workbook(output / "boiling_summary.xlsx", data_only=True)
     try:
         assert (
@@ -431,7 +459,7 @@ def test_early_month_candidate_replaces_existing_snapshot(tmp_path):
     _, source_snapshot = finalized_snapshot(tmp_path)
     snapshot_root = tmp_path / "snapshots"
     snapshot_root.mkdir()
-    january_old = snapshot_variant(
+    snapshot_variant(
         source_snapshot,
         snapshot_root / "01-old.json",
         month=1,
@@ -453,8 +481,7 @@ def test_early_month_candidate_replaces_existing_snapshot(tmp_path):
     request = rollup_request(
         snapshot_root,
         output,
-        snapshots=[january_old, march],
-        candidate=january_new,
+        snapshots=[january_new, march],
     )
     request_path = tmp_path / "request.json"
     response_path = output / "response.json"
@@ -478,7 +505,11 @@ def test_early_month_candidate_replaces_existing_snapshot(tmp_path):
         ("out_of_order", "月份乱序"),
         ("duplicate", "重复月份"),
         ("hash", "哈希不一致"),
-        ("cross_year", "年份与累计请求不一致"),
+        ("cross_year", "跨年快照"),
+        ("size", "大小不一致"),
+        ("other_module", "module_id 必须为 boiling"),
+        ("late_month", "晚于目标月份"),
+        ("outside_root", "超出授权目录"),
     ],
 )
 def test_rollup_rejects_order_duplicate_hash_and_cross_year(
@@ -508,7 +539,7 @@ def test_rollup_rejects_order_duplicate_hash_and_cross_year(
         batch_no="MAR",
     )
     snapshots = [january, february]
-    candidate = march
+    target_month = 3
     if mutation == "out_of_order":
         snapshots = [february, january]
     elif mutation == "duplicate":
@@ -524,12 +555,27 @@ def test_rollup_rejects_order_duplicate_hash_and_cross_year(
             year=2025,
         )
         snapshots = [january]
+    elif mutation == "size":
+        snapshots[0] = {**january, "size": january["size"] + 1}
+    elif mutation == "other_module":
+        snapshots[0] = {**january, "module_id": "moisture"}
+    elif mutation == "late_month":
+        target_month = 2
+    elif mutation == "outside_root":
+        outside = tmp_path / "outside.json"
+        outside.write_bytes(Path(january["path"]).read_bytes())
+        snapshots[0] = {
+            **january,
+            "path": str(outside.resolve()),
+            "size": outside.stat().st_size,
+            "sha256": digest(outside),
+        }
     output = tmp_path / "rollup"
     request = rollup_request(
         snapshot_root,
         output,
-        snapshots=snapshots,
-        candidate=candidate,
+        snapshots=[*snapshots, march] if mutation != "out_of_order" else snapshots,
+        target_month=target_month,
     )
     request_path = tmp_path / "request.json"
     response_path = output / "response.json"
@@ -538,7 +584,8 @@ def test_rollup_rejects_order_duplicate_hash_and_cross_year(
     assert boiling_module.run_monthly_rollup(request_path, response_path) == 2
     response = json.loads(response_path.read_text(encoding="utf-8"))
     assert response["status"] == "failed"
-    assert message in response["error"]
+    assert response["error"]["code"] == "contract_error"
+    assert message in response["error"]["message"]
     assert response["network_call_count"] == 0
 
 
@@ -559,15 +606,51 @@ def test_module_owned_schemas_validate_examples(tmp_path):
         {"product_usage": "墙板"},
     )
     assert description is not None
-    learning_payload = {
-        "schema_version": "1.0",
-        "module_id": "boiling",
-        "descriptions": [description],
-    }
-    jsonschema.Draft202012Validator(learning_schema).validate(learning_payload)
-    serialized = json.dumps(learning_payload, ensure_ascii=False)
+    jsonschema.Draft202012Validator(learning_schema).validate(description)
+    serialized = json.dumps(description, ensure_ascii=False)
     assert "脱敏竹材" not in serialized
     assert not re.search(r"(?i)[a-z]:[\\/]", serialized)
+
+
+def test_learning_descriptor_is_embedded_in_public_confirmation(tmp_path):
+    sample = tmp_path / "wall-panel.xlsx"
+    make_sample(sample)
+    workbook = openpyxl.load_workbook(sample)
+    try:
+        sheet = workbook["水煮实验"]
+        sheet["F2"] = "墙板"
+        for row in range(8, 14):
+            sheet.cell(row, 7, 10.7)
+        sheet.cell(14, 8, 0.07)
+        workbook.save(sample)
+    finally:
+        workbook.close()
+    draft = run_job(
+        make_job(sample, tmp_path / "learning-output"),
+        tmp_path / "learning-job.json",
+    )
+    prompt = next(
+        item
+        for item in draft["confirmations"]
+        if item["confirmation_id"].startswith("C-EXPANSION-REVIEW-")
+    )
+    assert prompt["learning"]["learning_key"] == "boiling.expansion.rule-gap.v1"
+    assert prompt["learning"]["context"]["product_usage"] == "墙板"
+    assert prompt["learning"]["base_suggestion_id"] == "keep_review"
+    assert all(set(item) == {"candidate_id", "label"} for item in prompt["learning"]["candidates"])
+    module_schema = json.loads(
+        (MODULE_ROOT / "schemas" / "confirmation-learning.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    central_schema = json.loads(
+        (REPO_ROOT / "contracts" / "schemas" / "module-result.schema.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    jsonschema.Draft202012Validator(module_schema).validate(prompt["learning"])
+    jsonschema.Draft202012Validator(central_schema).validate(draft)
+    assert all(item["type"] != "confirmation_learning" for item in draft["outputs"])
 
 
 def test_source_and_optional_portable_rollup_entrypoints(tmp_path):
@@ -584,8 +667,7 @@ def test_source_and_optional_portable_rollup_entrypoints(tmp_path):
     request = rollup_request(
         snapshot_root,
         output,
-        snapshots=[],
-        candidate=candidate,
+        snapshots=[candidate],
         target_month=1,
     )
     request_path = tmp_path / "request.json"

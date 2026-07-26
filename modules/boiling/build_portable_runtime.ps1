@@ -138,6 +138,10 @@ $DraftJob = [ordered]@{
     output_dir = $DraftOutput
     module_config_file = $null
     ai_enabled = $false
+    task_name = 'Boiling portable validation 2026-01'
+    period_year = 2026
+    period_month = 1
+    learning_enabled = $true
     allowed_knowledge_scopes = @()
     parent_job_id = $null
     confirmation_file = $null
@@ -199,6 +203,19 @@ $SnapshotSource = Join-Path $FinalOutput 'boiling_monthly_snapshot.json'
 if (-not (Test-Path -LiteralPath $SnapshotSource -PathType Leaf)) {
     throw 'Packaged boiling finalize did not create boiling_monthly_snapshot.json'
 }
+if (
+    $null -eq $FinalResult.monthly_snapshot -or
+    $FinalResult.monthly_snapshot.path -ne $SnapshotSource -or
+    $FinalResult.monthly_snapshot.year -ne 2026 -or
+    $FinalResult.monthly_snapshot.month -ne 1
+) {
+    throw 'Packaged boiling finalize did not publish the expected monthly_snapshot reference.'
+}
+if (@($FinalResult.outputs | Where-Object {
+    $_.type -in @('monthly_snapshot', 'confirmation_learning')
+}).Count -ne 0) {
+    throw 'Packaged boiling finalize published internal artifacts as ordinary outputs.'
+}
 $Snapshot = Get-Content -LiteralPath $SnapshotSource -Raw -Encoding UTF8 | ConvertFrom-Json
 $SnapshotRoot = Join-Path $VerificationRoot 'snapshots'
 $RollupOutput = Join-Path $VerificationRoot 'rollup-output'
@@ -215,23 +232,28 @@ $RuleHash = (
 ).Hash.ToLowerInvariant()
 [ordered]@{
     schema_version = '1.0'
-    request_id = 'PORTABLE-ROLLUP-001'
+    transaction_id = 'PORTABLE-ROLLUP-001'
     module_id = 'boiling'
+    module_version = '1.3.0'
     year = [int]$Snapshot.year
     target_month = [int]$Snapshot.month
     snapshot_root = $SnapshotRoot
     output_dir = $RollupOutput
-    snapshots = @()
-    candidate_snapshot = [ordered]@{
+    snapshots = @([ordered]@{
+        snapshot_id = 'PORTABLE-SNAPSHOT-001'
+        job_id = 'PORTABLE-FINAL-001'
+        module_id = 'boiling'
+        year = [int]$Snapshot.year
         month = [int]$Snapshot.month
         path = $CandidateSnapshot
+        size = (Get-Item -LiteralPath $CandidateSnapshot).Length
         sha256 = $SnapshotHash
-    }
-    config_identity = [ordered]@{
-        rule_version = $Snapshot.payload.rule_version
+    })
+    configuration_identity = [ordered]@{
+        version = $Snapshot.payload.rule_version
         sha256 = $RuleHash
     }
-    forbid_network = $true
+    offline_required = $true
 } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $RollupRequestPath -Encoding UTF8
 $RollupRun = Invoke-IsolatedLauncher -Launcher $Launcher -Arguments @(
     'rollup',
@@ -247,9 +269,15 @@ $RollupResponse = Get-Content -LiteralPath $RollupResponsePath -Raw -Encoding UT
     ConvertFrom-Json
 if (
     $RollupResponse.status -ne 'success' -or
+    $RollupResponse.transaction_id -ne 'PORTABLE-ROLLUP-001' -or
+    $RollupResponse.module_version -ne '1.3.0' -or
     $RollupResponse.network_call_count -ne 0 -or
+    $RollupResponse.record_count -lt 1 -or
     $RollupResponse.used_months.Count -ne 1 -or
-    $RollupResponse.used_months[0] -ne [int]$Snapshot.month
+    $RollupResponse.used_months[0] -ne [int]$Snapshot.month -or
+    $RollupResponse.snapshot_hashes.Count -ne 1 -or
+    $RollupResponse.snapshot_hashes[0].snapshot_id -ne 'PORTABLE-SNAPSHOT-001' -or
+    $RollupResponse.snapshot_hashes[0].sha256 -ne $SnapshotHash
 ) {
     throw 'Packaged boiling rollup response did not satisfy the offline monthly contract.'
 }

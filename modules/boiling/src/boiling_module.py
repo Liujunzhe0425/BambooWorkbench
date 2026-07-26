@@ -85,6 +85,10 @@ ALLOWED_JOB_FIELDS = {
     "parent_job_id",
     "confirmation_file",
     "service_response_file",
+    "task_name",
+    "period_year",
+    "period_month",
+    "learning_enabled",
 }
 FIELD_LABELS = {
     "batch_no": ("批号", "批次号", "批次"),
@@ -206,7 +210,7 @@ def learning_description_for_confirmation(confirmation, record):
         "metric": "expansion_ratio",
     }
     return {
-        "confirmation_id": confirmation_id,
+        "schema_version": "1.0",
         "learning_key": "boiling.expansion.rule-gap.v1",
         "field": "expansion_review",
         "context": context,
@@ -217,21 +221,18 @@ def learning_description_for_confirmation(confirmation, record):
         "candidates": [
             {
                 "candidate_id": "treat_as_pass",
-                "display_text": "按合格处理",
-                "value": "按合格处理",
+                "label": "按合格处理",
             },
             {
                 "candidate_id": "treat_as_fail",
-                "display_text": "按不合格处理",
-                "value": "按不合格处理",
+                "label": "按不合格处理",
             },
             {
                 "candidate_id": "keep_review",
-                "display_text": "继续待复核",
-                "value": "继续待复核",
+                "label": "继续待复核",
             },
         ],
-        "base_suggestion": "keep_review",
+        "base_suggestion_id": "keep_review",
         "preference_adjustable": True,
     }
 
@@ -2780,8 +2781,29 @@ def validate_job(job):
             errors.append("finalize 阶段缺少 parent_job_id")
         if not job.get("confirmation_file"):
             errors.append("finalize 阶段缺少 confirmation_file")
-    if not isinstance(job.get("ai_enabled"), bool):
+    if "ai_enabled" in job and not isinstance(job.get("ai_enabled"), bool):
         errors.append("ai_enabled 必须为布尔值")
+    if "learning_enabled" in job and not isinstance(job.get("learning_enabled"), bool):
+        errors.append("learning_enabled 必须为布尔值")
+    task_name = job.get("task_name")
+    if task_name is not None and (
+        not isinstance(task_name, str) or not 1 <= len(task_name) <= 160
+    ):
+        errors.append("task_name 必须为 1～160 字符的字符串或 null")
+    period_year = job.get("period_year")
+    if period_year is not None and (
+        isinstance(period_year, bool)
+        or not isinstance(period_year, int)
+        or not 2000 <= period_year <= 9999
+    ):
+        errors.append("period_year 必须为 2000～9999 的整数或 null")
+    period_month = job.get("period_month")
+    if period_month is not None and (
+        isinstance(period_month, bool)
+        or not isinstance(period_month, int)
+        or not 1 <= period_month <= 12
+    ):
+        errors.append("period_month 必须为 1～12 的整数或 null")
     for key in ("module_config_file", "confirmation_file", "service_response_file"):
         path_value = job.get(key)
         if path_value is not None and not isinstance(path_value, str):
@@ -2927,6 +2949,7 @@ def result_template(job, started, rule_version):
         "file_results": [],
         "errors": [],
         "service_requests": [],
+        "monthly_snapshot": None,
         "rule_version": rule_version,
         "analysis_summary": None,
         "started_at": started.isoformat(timespec="seconds"),
@@ -3615,6 +3638,8 @@ def write_learning_descriptions(descriptions, output_path):
 
 def write_monthly_snapshot(
     *,
+    year=None,
+    month=None,
     records,
     excluded_records,
     anomalies,
@@ -3625,7 +3650,8 @@ def write_monthly_snapshot(
     rules,
     output_path,
 ):
-    year, month = derive_snapshot_period(records)
+    if year is None or month is None:
+        year, month = derive_snapshot_period(records)
     payload = {
         "rule_version": rules.get("rule_version"),
         "records": sanitize_business_value(deepcopy(records)),
@@ -3754,17 +3780,14 @@ def run_monthly_rollup(request_path, response_path):
             raise RollupContractError("累计响应文件必须位于授权输出目录")
         output_dir.mkdir(parents=True, exist_ok=True)
         rules = load_rules()
-        config_identity = request["config_identity"]
-        expected_rule_version = as_text(config_identity.get("rule_version"))
-        if expected_rule_version and expected_rule_version != as_text(
-            rules.get("rule_version")
-        ):
-            raise RollupContractError("累计请求规则版本与模块当前规则不一致")
-        expected_rule_hash = as_text(config_identity.get("sha256"))
-        if expected_rule_hash and expected_rule_hash != rollup_sha256_file(
-            DEFAULT_RULES_FILE
-        ):
-            raise RollupContractError("累计请求规则快照哈希与模块当前规则不一致")
+        configuration_identity = request.get("configuration_identity")
+        if configuration_identity is not None:
+            expected_rule_version = as_text(configuration_identity.get("version"))
+            if expected_rule_version != as_text(rules.get("rule_version")):
+                raise RollupContractError("累计请求规则版本与模块当前规则不一致")
+            expected_rule_hash = as_text(configuration_identity.get("sha256"))
+            if expected_rule_hash != rollup_sha256_file(DEFAULT_RULES_FILE):
+                raise RollupContractError("累计请求规则快照哈希与模块当前规则不一致")
 
         records = []
         excluded_records = []
@@ -3869,6 +3892,7 @@ def run_monthly_rollup(request_path, response_path):
             status="success",
             outputs=outputs,
             used=verified,
+            record_count=len(records),
         )
         write_rollup_json(response_target, response)
         emit(
@@ -3878,10 +3902,25 @@ def run_monthly_rollup(request_path, response_path):
         )
         return 0
     except (OSError, ValueError, RollupContractError) as exc:
+        if isinstance(exc, RollupContractError):
+            error = {
+                "code": "contract_error",
+                "message": sanitize_ai_text(str(exc))[:300] or "累计合同校验失败",
+            }
+        elif isinstance(exc, OSError):
+            error = {
+                "code": "io_error",
+                "message": "累计渲染读写失败",
+            }
+        else:
+            error = {
+                "code": "invalid_data",
+                "message": "累计渲染数据无效",
+            }
         response = rollup_response_template(
             request if isinstance(request, dict) else {},
             status="failed",
-            error=str(exc),
+            error=error,
         )
         try:
             response_target.parent.mkdir(parents=True, exist_ok=True)
@@ -3889,7 +3928,10 @@ def run_monthly_rollup(request_path, response_path):
         except OSError:
             pass
         print(
-            json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False),
+            json.dumps(
+                {"type": "error", "message": error["message"]},
+                ensure_ascii=False,
+            ),
             file=sys.stderr,
         )
         return 2
@@ -4027,11 +4069,10 @@ def run_job(job_path):
                             confirmation,
                             record,
                         )
-                        if description and all(
-                            item["confirmation_id"] != description["confirmation_id"]
-                            for item in learning_descriptions
-                        ):
-                            learning_descriptions.append(description)
+                        if description and job.get("learning_enabled", True):
+                            confirmation["learning"] = description
+                            if description not in learning_descriptions:
+                                learning_descriptions.append(description)
                     apply_confirmation_decisions(record, confirmations, answer_map)
                     pending_confirmations = [
                         item for item in confirmations if item["confirmation_id"] not in answer_map
@@ -4196,17 +4237,6 @@ def run_job(job_path):
                     },
                 ]
             )
-            if learning_descriptions:
-                learning_path = output_dir / "boiling_confirmation_learning.json"
-                write_learning_descriptions(learning_descriptions, learning_path)
-                result["outputs"].append(
-                    {
-                        "type": "confirmation_learning",
-                        "path": str(learning_path),
-                        "label": "水煮实验确认项学习描述（内部）",
-                        "mime_type": "application/json",
-                    }
-                )
         except (OSError, ValueError) as exc:
             result["errors"].append(f"生成汇总文件失败: {exc}")
 
@@ -4227,6 +4257,8 @@ def run_job(job_path):
         snapshot_path = output_dir / "boiling_monthly_snapshot.json"
         try:
             snapshot = write_monthly_snapshot(
+                year=job.get("period_year"),
+                month=job.get("period_month"),
                 records=records,
                 excluded_records=excluded_records,
                 anomalies=result["anomalies"],
@@ -4237,16 +4269,13 @@ def run_job(job_path):
                 rules=rules,
                 output_path=snapshot_path,
             )
-            result["outputs"].append(
-                {
-                    "type": "monthly_snapshot",
-                    "path": str(snapshot_path),
-                    "label": (
-                        f"水煮实验{snapshot['year']}年{snapshot['month']}月业务快照（内部）"
-                    ),
-                    "mime_type": "application/json",
-                }
-            )
+            result["monthly_snapshot"] = {
+                "schema_version": "1.0",
+                "path": str(snapshot_path),
+                "snapshot_format": snapshot["snapshot_format"],
+                "year": snapshot["year"],
+                "month": snapshot["month"],
+            }
         except (OSError, ValueError, RollupContractError) as exc:
             result["errors"].append(f"生成月度快照失败: {exc}")
             result["status"] = "failed"

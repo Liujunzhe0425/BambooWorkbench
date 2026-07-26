@@ -62,7 +62,7 @@ AI 响应必须符合模块声明的严格 JSON 结构，并且只能引用请�
 
 ## 月度快照与年度累计
 
-单一检测月份的成功 `finalize` 会额外生成内部 `boiling_monthly_snapshot.json`。快照采用 `module-owned-v1` 信封，保存最终人工值、业务记录、异常、冲突以及本月已经取得的 AI/知识库建议；业务负载中的来源文件只保留文件名，不保留绝对路径。当前模块不再为新任务创建人工开裂检查确认，但对历史快照中已有的 `crack_inspection_confirmed` 和 `crack_inspection_status` 字段原样累计，不再次询问或推断。
+带年月且成功的 `finalize` 会生成内部 `boiling_monthly_snapshot.json`，并只通过顶层 `ModuleResult.monthly_snapshot` 交给框架登记，不会作为普通用户成果发布。快照采用 `module-owned-v1` 信封，保存最终人工值、业务记录、异常、冲突以及本月已经取得的 AI/知识库建议；业务负载中的来源文件只保留文件名，不保留绝对路径。当前模块不再为新任务创建人工开裂检查确认，但对历史快照中已有的 `crack_inspection_confirmed` 和 `crack_inspection_status` 字段原样累计，不再次询问或推断。
 
 框架按同年月份升序准备快照后，可调用模块离线累计入口：
 
@@ -72,9 +72,9 @@ modules\boiling\run_module.bat rollup `
   --response D:\authorized\staging\rollup-response.json
 ```
 
-累计请求必须显式设置 `forbid_network=true`，并提供快照授权根、目标年月、已有正式快照、当前候选快照、逐文件 SHA-256 和规则配置身份。模块允许月份缺口；拒绝跨年、乱序、重复月份、晚于目标月、路径越界和哈希不一致。候选快照与已有快照同月时替换旧月后重算，累计输出包括完整 Excel 汇总、Excel 分析报告、Markdown 报告、图表和结构化业务记录，`network_call_count` 固定为 `0`。
+累计请求遵循中央 `monthly-rollup-request` 合同，使用 `transaction_id`、`module_version`、`snapshot_root`、`output_dir`、`configuration_identity` 和 `offline_required=true`。框架已在请求中完成候选月份替换并按月份升序提供最终快照清单；模块允许月份缺口，拒绝跨模块、跨年、乱序、重复、晚于目标月、路径越界、大小或哈希不一致。响应原样确认快照 ID、月份和 SHA-256，并为四类完整成果提供 SHA-256、记录数和固定 `network_call_count=0`。
 
-模块自有合同位于 `schemas/`。现有 v1.2.0 框架尚未提供任务年月、月度槽位、原子替换事务和确认项 `learning` 公共字段，完整接入要求见 `docs/framework-change-requests/FCR-boiling-20260726-monthly-rollup-framework.md`；在框架适配前，普通 draft/finalize 保持兼容，累计入口可独立复验。
+模块自有合同位于 `schemas/`，并由 `module.json.monthly_rollup` 显式声明。框架 PR #64/#68 已提供任务年月、月度槽位、原子替换事务和公共 `ConfirmationPrompt.learning`；原 FCR 已标记完成，公开接入以仓库中央 Schema 和 `docs/contracts/monthly-rollup-v1.3.md` 为准。
 
 规则版本为 `2026.07.18-v0.1`：每个有效试件密度须在 `1.1～1.3 g/cm³`（含边界），密度差须 `≤0.1 g/cm³`（含边界）；膨胀率按产品用途执行。墙板/栏杆 `>6.5% 且 <8%` 在本版转人工复核，不自动标色。具体规则和权限边界见 `docs/`。
 

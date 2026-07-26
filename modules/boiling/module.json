@@ -14,5 +14,13 @@
     "monthly_snapshot_schema_v1",
     "monthly_rollup_schema_v1",
     "confirmation_learning_schema_v1"
-  ]
+  ],
+  "monthly_rollup": {
+    "schema_version": "1.0",
+    "entrypoint": "run_module.bat",
+    "snapshot_schema": "schemas/monthly-snapshot.schema.json",
+    "request_schema": "schemas/monthly-rollup-request.schema.json",
+    "response_schema": "schemas/monthly-rollup-result.schema.json",
+    "learning_schema": "schemas/confirmation-learning.schema.json"
+  }
 }

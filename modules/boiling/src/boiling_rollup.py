@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 MODULE_ID = "boiling"
+MODULE_VERSION = "1.3.0"
 SNAPSHOT_FORMAT = "module-owned-v1"
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 WINDOWS_ABSOLUTE_PATTERN = re.compile(r"^[A-Za-z]:[\\/]")
@@ -33,10 +34,12 @@ def sha256_file(path):
 def write_json(path, value):
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
+    temporary = target.with_name(f".{target.name}.tmp")
+    temporary.write_text(
         json.dumps(value, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    temporary.replace(target)
 
 
 def read_json(path, label):
@@ -150,12 +153,33 @@ def ensure_within(path, root, *, label):
 def validate_snapshot_ref(item, *, label):
     if not isinstance(item, dict):
         raise RollupContractError(f"{label}必须是对象")
-    if set(item) != {"month", "path", "sha256"}:
-        raise RollupContractError(f"{label}字段必须为 month/path/sha256")
+    required = {
+        "snapshot_id",
+        "job_id",
+        "module_id",
+        "year",
+        "month",
+        "path",
+        "size",
+        "sha256",
+    }
+    if set(item) != required:
+        raise RollupContractError(f"{label}字段不符合中央快照引用合同")
+    for field in ("snapshot_id", "job_id"):
+        if not isinstance(item[field], str) or not re.fullmatch(
+            r"[A-Za-z0-9-]{6,64}", item[field]
+        ):
+            raise RollupContractError(f"{label} {field} 格式不合法")
+    if item["module_id"] != MODULE_ID:
+        raise RollupContractError(f"{label} module_id 必须为 boiling")
+    if not isinstance(item["year"], int) or not 2000 <= item["year"] <= 9999:
+        raise RollupContractError(f"{label} year 必须为 2000～9999")
     if not isinstance(item["month"], int) or not 1 <= item["month"] <= 12:
         raise RollupContractError(f"{label} month 必须为 1～12")
     if not isinstance(item["path"], str) or not item["path"]:
         raise RollupContractError(f"{label} path 必须是非空字符串")
+    if not isinstance(item["size"], int) or item["size"] < 0:
+        raise RollupContractError(f"{label} size 必须是非负整数")
     if not isinstance(item["sha256"], str) or not SHA256_PATTERN.fullmatch(item["sha256"]):
         raise RollupContractError(f"{label} sha256 必须是 64 位小写十六进制")
 
@@ -165,19 +189,18 @@ def validate_rollup_request(request):
         raise RollupContractError("累计请求根节点必须是对象")
     required = {
         "schema_version",
-        "request_id",
+        "transaction_id",
         "module_id",
+        "module_version",
         "year",
         "target_month",
         "snapshot_root",
         "output_dir",
         "snapshots",
-        "candidate_snapshot",
-        "config_identity",
-        "forbid_network",
     }
+    optional = {"configuration_identity", "offline_required"}
     missing = required - set(request)
-    unknown = set(request) - required
+    unknown = set(request) - required - optional
     if missing:
         raise RollupContractError("累计请求缺少字段: " + ", ".join(sorted(missing)))
     if unknown:
@@ -186,22 +209,41 @@ def validate_rollup_request(request):
         raise RollupContractError("累计请求 schema_version 必须为 1.0")
     if request["module_id"] != MODULE_ID:
         raise RollupContractError("累计请求 module_id 必须为 boiling")
-    if not re.fullmatch(r"[A-Za-z0-9-]{6,64}", str(request["request_id"])):
-        raise RollupContractError("累计请求 request_id 格式不合法")
+    if request["module_version"] != MODULE_VERSION:
+        raise RollupContractError("累计请求 module_version 与当前模块版本不一致")
+    if not re.fullmatch(r"[A-Za-z0-9-]{6,64}", str(request["transaction_id"])):
+        raise RollupContractError("累计请求 transaction_id 格式不合法")
     validate_year_month(request["year"], request["target_month"], label="累计请求")
     if not isinstance(request["snapshot_root"], str) or not request["snapshot_root"]:
         raise RollupContractError("累计请求 snapshot_root 必须是非空路径")
     if not isinstance(request["output_dir"], str) or not request["output_dir"]:
         raise RollupContractError("累计请求 output_dir 必须是非空路径")
-    if request["forbid_network"] is not True:
-        raise RollupContractError("累计请求必须显式设置 forbid_network=true")
-    if not isinstance(request["config_identity"], dict):
-        raise RollupContractError("累计请求 config_identity 必须是对象")
-    if not isinstance(request["snapshots"], list):
-        raise RollupContractError("累计请求 snapshots 必须是数组")
+    if request.get("offline_required", True) is not True:
+        raise RollupContractError("累计请求 offline_required 必须为 true")
+    configuration_identity = request.get("configuration_identity")
+    if configuration_identity is not None:
+        if not isinstance(configuration_identity, dict) or set(
+            configuration_identity
+        ) != {"version", "sha256"}:
+            raise RollupContractError("累计请求 configuration_identity 格式不合法")
+        if not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}",
+            str(configuration_identity["version"]),
+        ):
+            raise RollupContractError("累计请求 configuration_identity.version 格式不合法")
+        if not isinstance(
+            configuration_identity["sha256"], str
+        ) or not SHA256_PATTERN.fullmatch(configuration_identity["sha256"]):
+            raise RollupContractError("累计请求 configuration_identity.sha256 格式不合法")
+    if not isinstance(request["snapshots"], list) or not request["snapshots"]:
+        raise RollupContractError("累计请求 snapshots 必须是非空数组")
+    if len(request["snapshots"]) > 12:
+        raise RollupContractError("累计请求 snapshots 最多包含 12 个月")
     previous = 0
     for index, item in enumerate(request["snapshots"]):
         validate_snapshot_ref(item, label=f"snapshots[{index}]")
+        if item["year"] != request["year"]:
+            raise RollupContractError("累计请求包含跨年快照")
         month = item["month"]
         if month <= previous:
             reason = "重复月份" if month == previous else "月份乱序"
@@ -209,9 +251,6 @@ def validate_rollup_request(request):
         if month > request["target_month"]:
             raise RollupContractError("累计请求包含晚于目标月份的快照")
         previous = month
-    validate_snapshot_ref(request["candidate_snapshot"], label="candidate_snapshot")
-    if request["candidate_snapshot"]["month"] > request["target_month"]:
-        raise RollupContractError("候选快照月份晚于目标月份")
     return request
 
 
@@ -219,6 +258,8 @@ def load_verified_snapshot(reference, *, snapshot_root, year):
     path = ensure_within(reference["path"], snapshot_root, label="快照路径")
     if not path.is_file():
         raise RollupContractError(f"快照文件不存在: {path.name}")
+    if path.stat().st_size != reference["size"]:
+        raise RollupContractError(f"快照大小不一致: {path.name}")
     actual_hash = sha256_file(path)
     if actual_hash != reference["sha256"]:
         raise RollupContractError(f"快照哈希不一致: {path.name}")
@@ -229,6 +270,8 @@ def load_verified_snapshot(reference, *, snapshot_root, year):
         expected_month=reference["month"],
     )
     return {
+        "snapshot_id": reference["snapshot_id"],
+        "job_id": reference["job_id"],
         "month": reference["month"],
         "path": path,
         "sha256": actual_hash,
@@ -241,7 +284,7 @@ def resolve_rollup_snapshots(request):
     snapshot_root = Path(request["snapshot_root"]).resolve()
     if not snapshot_root.is_dir():
         raise RollupContractError("累计请求 snapshot_root 不存在或不是目录")
-    verified = [
+    return [
         load_verified_snapshot(
             item,
             snapshot_root=snapshot_root,
@@ -249,31 +292,37 @@ def resolve_rollup_snapshots(request):
         )
         for item in request["snapshots"]
     ]
-    candidate = load_verified_snapshot(
-        request["candidate_snapshot"],
-        snapshot_root=snapshot_root,
-        year=request["year"],
-    )
-    by_month = {item["month"]: item for item in verified}
-    by_month[candidate["month"]] = candidate
-    months = sorted(by_month)
-    return [by_month[month] for month in months if month <= request["target_month"]]
 
 
-def response_template(request, *, status, outputs=None, used=None, error=None):
+def response_template(
+    request,
+    *,
+    status,
+    outputs=None,
+    used=None,
+    record_count=0,
+    error=None,
+):
     used = used or []
     return {
         "schema_version": "1.0",
-        "request_id": request.get("request_id", ""),
+        "transaction_id": request.get("transaction_id", "invalid"),
         "module_id": MODULE_ID,
+        "module_version": MODULE_VERSION,
         "status": status,
-        "year": request.get("year"),
-        "target_month": request.get("target_month"),
+        "year": request.get("year", 2000),
+        "target_month": request.get("target_month", 1),
         "used_months": [item["month"] for item in used],
         "snapshot_hashes": [
-            {"month": item["month"], "sha256": item["sha256"]} for item in used
+            {
+                "snapshot_id": item["snapshot_id"],
+                "month": item["month"],
+                "sha256": item["sha256"],
+            }
+            for item in used
         ],
         "outputs": outputs or [],
+        "record_count": record_count,
         "error": error,
         "network_call_count": 0,
     }

@@ -3,7 +3,7 @@ request_id: FCR-boiling-20260726-monthly-rollup-framework
 module_id: boiling
 module_version: 1.3.0
 owner: anyuyu1
-status: proposed
+status: implemented
 framework_areas:
   - contract
   - storage
@@ -11,10 +11,12 @@ framework_areas:
   - ui
   - packaging
 breaking_change: false
-required_before_module_merge: true
+required_before_module_merge: false
 ---
 
 # 框架适配请求：接入水煮月度快照、年度累计和确认学习描述
+
+> 处理结论（2026-07-26）：框架 PR #64/#68 已在 `integration@cfc446e7` 实现并冻结中央合同。本文件保留为历史申请记录；模块现按 `contracts/schemas/monthly-rollup-*.schema.json`、`module-result.schema.json` 和 `docs/contracts/monthly-rollup-v1.3.md` 接入，以下草案字段不再作为实现依据。
 
 ## 1. 业务目标与使用场景
 
