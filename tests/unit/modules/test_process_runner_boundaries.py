@@ -2,7 +2,9 @@ from pathlib import Path
 
 import pytest
 
-from core.modules.process_runner import resolve_contained_file
+from core.contracts.enums import JobPhase, ModuleId, RunMode
+from core.contracts.job import JobRequest
+from core.modules.process_runner import _requires_monthly_snapshot, resolve_contained_file
 
 
 def test_resolve_contained_file_accepts_regular_file(tmp_path: Path) -> None:
@@ -22,6 +24,28 @@ def test_resolve_contained_file_rejects_escape(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="outside output_dir"):
         resolve_contained_file(outside, root, "result.json")
+
+
+def _finalize_job(*, with_period: bool) -> JobRequest:
+    return JobRequest(
+        schema_version="1.0",
+        job_id="job-123456",
+        module_id=ModuleId.MOISTURE,
+        phase=JobPhase.FINALIZE,
+        run_mode=RunMode.SINGLE,
+        input_files=[r"C:\source\input.xlsx"],
+        output_dir=r"C:\output\job-123456",
+        parent_job_id="draft-123456",
+        confirmation_file=r"C:\tasks\answers.json",
+        period_year=2026 if with_period else None,
+        period_month=3 if with_period else None,
+    )
+
+
+def test_only_period_bound_finalize_requires_monthly_snapshot() -> None:
+    assert _requires_monthly_snapshot(_finalize_job(with_period=True), True) is True
+    assert _requires_monthly_snapshot(_finalize_job(with_period=False), True) is False
+    assert _requires_monthly_snapshot(_finalize_job(with_period=True), False) is False
 
 
 def test_resolve_contained_file_rejects_symlink_escape(tmp_path: Path) -> None:
