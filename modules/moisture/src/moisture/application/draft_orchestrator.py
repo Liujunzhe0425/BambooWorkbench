@@ -125,7 +125,13 @@ def _confirmation_prompts(
     outcome: object,
 ) -> tuple[dict[str, object], ...]:
     business_outcome = getattr(outcome, "new_outcome", outcome)
-    prompts = list(build_confirmations(job.root_job_id, _confirmation_issues(business_outcome)))
+    prompts = list(
+        build_confirmations(
+            job.root_job_id,
+            _confirmation_issues(business_outcome),
+            learning_enabled=job.learning_enabled,
+        )
+    )
     conflicts = tuple(getattr(outcome, "conflicts", ()))
     if conflicts:
         prompts.extend(build_history_conflict_prompts(job.root_job_id, conflicts))

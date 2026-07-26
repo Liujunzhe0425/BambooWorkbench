@@ -3,7 +3,7 @@ request_id: FCR-moisture-20260726-monthly-rollup-learning
 module_id: moisture
 module_version: 1.3.0
 owner: moisture 模块负责人
-status: proposed
+status: completed
 framework_areas:
   - contract
   - workflow
@@ -12,10 +12,17 @@ framework_areas:
   - ui
   - packaging
 breaking_change: false
-required_before_module_merge: true
+required_before_module_merge: false
 ---
 
+> 文档状态：历史归档
+> 不作为当前实现和验收依据。
+> 当前有效说明以 README 和三份主指导文档为准。
+
 # 框架适配请求：水分模块月度快照、年度累计与确认学习接入
+
+> 处理结果（2026-07-26）：中央公共 Schema、manifest capability、TaskService
+> 月度事务和学习存储已经由框架负责人合并；模块已按批准合同完成适配。
 
 ## 1. 业务目标与使用场景
 

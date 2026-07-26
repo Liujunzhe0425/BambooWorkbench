@@ -21,7 +21,7 @@ def test_manifest_matches_framework_contract() -> None:
         "schema_version": "1.0",
         "module_id": "moisture",
         "module_name": "竹丝水分检测",
-        "module_version": "1.2.0",
+        "module_version": "1.3.0",
         "entrypoint": "run_module.bat",
         "management_entrypoint": "run_management.bat",
         "management_contract": {
@@ -34,7 +34,20 @@ def test_manifest_matches_framework_contract() -> None:
             "experience_management",
             "rule_management",
             "rule_snapshot",
+            "monthly_rollup",
         ],
+        "monthly_rollup": {
+            "schema_version": "1.0",
+            "entrypoint": "run_module.bat",
+            "snapshot_schema": "schemas/moisture-monthly-snapshot.schema.json",
+            "request_schema": (
+                "schemas/moisture-monthly-rollup-public-request.schema.json"
+            ),
+            "response_schema": (
+                "schemas/moisture-monthly-rollup-public-response.schema.json"
+            ),
+            "learning_schema": "schemas/moisture-learning-public.schema.json",
+        },
         "supported_extensions": [".xlsx"],
         "supports_single_file": True,
         "supports_batch": True,
@@ -53,6 +66,25 @@ def test_management_contract_schema_assets_exist() -> None:
     assert contract.schema_version == "1.1"
     assert (MODULE_ROOT / contract.request_schema).is_file()
     assert (MODULE_ROOT / contract.response_schema).is_file()
+
+
+def test_monthly_rollup_contract_schema_assets_exist() -> None:
+    manifest = ModuleManifest.model_validate_json(
+        (MODULE_ROOT / "module.json").read_text(encoding="utf-8")
+    )
+    contract = manifest.monthly_rollup
+
+    assert contract is not None
+    assert contract.schema_version == "1.0"
+    assert "monthly_rollup" in manifest.capabilities
+    for relative_path in (
+        contract.snapshot_schema,
+        contract.request_schema,
+        contract.response_schema,
+        contract.learning_schema,
+    ):
+        assert relative_path is not None
+        assert (MODULE_ROOT / relative_path).is_file()
 
 
 def test_manifest_entrypoint_and_minimum_package_exist() -> None:

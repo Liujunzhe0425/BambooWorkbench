@@ -20,10 +20,18 @@ def test_private_monthly_snapshot_schema_is_valid_and_not_a_central_contract() -
     assert not (MODULE_ROOT / "schemas" / "contracts" / schema_path.name).exists()
 
 
-def test_manifest_does_not_claim_framework_monthly_rollup_before_adapter() -> None:
+def test_manifest_claims_approved_framework_monthly_rollup_contract() -> None:
     manifest = json.loads((MODULE_ROOT / "module.json").read_text(encoding="utf-8"))
 
-    assert "monthly_rollup" not in manifest["capabilities"]
+    assert "monthly_rollup" in manifest["capabilities"]
+    assert manifest["monthly_rollup"] == {
+        "schema_version": "1.0",
+        "entrypoint": "run_module.bat",
+        "snapshot_schema": "schemas/moisture-monthly-snapshot.schema.json",
+        "request_schema": "schemas/moisture-monthly-rollup-public-request.schema.json",
+        "response_schema": "schemas/moisture-monthly-rollup-public-response.schema.json",
+        "learning_schema": "schemas/moisture-learning-public.schema.json",
+    }
 
 
 def test_fixture_snapshot_passes_schema() -> None:

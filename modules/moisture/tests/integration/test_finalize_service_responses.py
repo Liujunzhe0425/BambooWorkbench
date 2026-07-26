@@ -48,6 +48,41 @@ def test_summary_finalize_keeps_deterministic_color_without_ai_review(
     assert not workbook_contains_color(final_dir / "moisture_summary.xlsx", "blue")
 
 
+def test_finalize_with_period_publishes_hidden_monthly_snapshot(
+    tmp_path: Path, workbook_factory
+) -> None:
+    root = rule_root(tmp_path / "module", "high")
+    source = governed_workbook(workbook_factory, tmp_path / "source.xlsx", "high")
+    final_dir = tmp_path / "final"
+
+    assert (
+        run_finalize(
+            job(
+                source,
+                final_dir,
+                phase=JobPhase.FINALIZE,
+                period=(2026, 7),
+            ),
+            pipeline(root),
+        )
+        == 0
+    )
+
+    result = json.loads((final_dir / "result.json").read_text(encoding="utf-8"))
+    snapshot = result["monthly_snapshot"]
+    assert snapshot == {
+        "schema_version": "1.0",
+        "path": str((final_dir / "moisture-monthly-snapshot.json").resolve()),
+        "snapshot_format": "moisture-v1",
+        "year": 2026,
+        "month": 7,
+    }
+    assert Path(snapshot["path"]).is_file()
+    assert all(
+        output["path"] != snapshot["path"] for output in result["outputs"]
+    )
+
+
 class _KnowledgePipeline:
     def __init__(self, delegate) -> None:
         self.delegate = delegate

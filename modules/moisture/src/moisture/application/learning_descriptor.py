@@ -188,3 +188,46 @@ def build_learning_descriptor(
         base_suggestion=suggestion_by_display.get(suggestion),
         preference_adjustable=True,
     )
+
+
+def to_public_learning_descriptor(
+    descriptor: LearningDescriptor,
+) -> dict[str, object]:
+    """Map the private descriptor to the approved framework v1.3 envelope."""
+
+    candidates = [
+        {
+            "candidate_id": candidate.candidate_id,
+            "label": candidate.display_text,
+        }
+        for candidate in descriptor.candidates
+    ]
+    if any(len(str(candidate["label"])) > 160 for candidate in candidates):
+        raise LearningDescriptorError(
+            "LEARNING_DESCRIPTOR_INVALID",
+            "learning candidate label exceeds the public contract",
+        )
+    context = {
+        "field": descriptor.field,
+        "material_category": descriptor.context.material_category or "unspecified",
+        "source_category": descriptor.context.source_category or "unspecified",
+    }
+    base_suggestion_id = descriptor.base_suggestion or str(
+        candidates[0]["candidate_id"]
+    )
+    return {
+        "schema_version": "1.0",
+        # The public learning store is already scoped by module. Use the
+        # field-level key so broader context fallback can match prior evidence.
+        "learning_key": descriptor.context_levels[-1].learning_key,
+        "field": descriptor.field,
+        "context": context,
+        "context_levels": [
+            ["field", "material_category", "source_category"],
+            ["field", "material_category"],
+            ["field"],
+        ],
+        "candidates": candidates,
+        "base_suggestion_id": base_suggestion_id,
+        "preference_adjustable": descriptor.preference_adjustable,
+    }

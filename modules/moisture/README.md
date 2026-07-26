@@ -1,13 +1,15 @@
 # 竹丝水分检测模块
 
-BambooWorkbench 竹丝水分检测模块 v1.2.0。模块提供两条相互隔离的业务路径：
+BambooWorkbench 竹丝水分检测模块 v1.3.0。模块提供确定性普通汇总、独立
+AI 报告，以及由主框架编排的月度快照与年度累计：
 
 - 普通汇总：确定性 Excel 解析、统计、规则初筛和四表成果；
 - 独立 AI 报告：用户主动选择当前汇总表、可选历史资料和 approved 经验后，由主框架在逐次同意下调用 Provider。
 
 模块不直接访问网络、Provider、数据库或凭据，AI 结果不修改汇总表、规则颜色或确定性结论。
 
-> v1.2.0 已将历史追加、经验/规则三栏管理和 TaskService 规则快照接入主框架。
+> v1.3.0 在既有历史追加、经验/规则管理和规则快照基础上，新增 finalize
+> 月度快照、完全离线年度累计和可选确认学习描述。
 > 日常管理从“竹丝水分检测”页面进入“打开经验与规则管理”；发布前必须核对版本与完整
 > SHA-256。详细步骤见[经验与规则管理使用教程](docs/经验与规则管理使用教程.md)。
 
@@ -51,7 +53,7 @@ BambooWorkbench 竹丝水分检测模块 v1.2.0。模块提供两条相互隔离
 - `analysis_report.md`：面向客户的确定性业务摘要；正常批次聚合展示，异常、失败和待复核批次详细展开，
   规则哈希、内部来源及完整引用集中在文末技术附录。
 
-当前 v1.2.0 不生成“模型分析记录”，普通汇总也不声明 AI 辅助复判请求。橙色表示确定性偏高疑似，绿色表示确定性偏低疑似；区间值大于 13% 时按当前规则染橙色。`0.55/0.47` 均值阈值仍待业务批准，不得称为正式生产标准。
+当前 v1.3.0 不生成“模型分析记录”，普通汇总也不声明 AI 辅助复判请求。橙色表示确定性偏高疑似，绿色表示确定性偏低疑似；区间值大于 13% 时按当前规则染橙色。`0.55/0.47` 均值阈值仍待业务批准，不得称为正式生产标准。
 
 独立 AI 报告输出：
 
@@ -69,7 +71,14 @@ BambooWorkbench 竹丝水分检测模块 v1.2.0。模块提供两条相互隔离
 modules\moisture\run_module.bat version
 modules\moisture\run_module.bat self-check
 modules\moisture\run_module.bat run --job C:\absolute\path\to\job.json
+modules\moisture\run_module.bat rollup --request C:\absolute\rollup-request.json --response C:\absolute\output\rollup-result.json
 ```
+
+`rollup` 只接受主框架生成的绝对路径公共请求，并要求
+`BAMBOO_OFFLINE=1`。模块重新校验快照大小和 SHA-256 后，按同年目标月之前
+的已确认快照生成累计 `moisture_summary.xlsx`、`analysis_report.md` 和
+`moisture_business_records.json`。累计过程不访问网络、不调用 AI，也不重新
+发起人工确认。
 
 历史资料、经验治理和规则治理统一通过独立管理入口调用：
 
@@ -119,12 +128,14 @@ powershell -ExecutionPolicy Bypass -File modules\moisture\build_portable_runtime
 
 ## 当前验收状态
 
-- 模块公开版本：`1.2.0`；
+- 模块公开版本：`1.3.0`；
 - 历史追加继续保持 `supports_incremental: true`；
 - 统一管理进程覆盖 27 个公开操作，并保留旧 v1.0 四操作；
 - 主框架经验/规则管理页面通过 ManagementService/Runner 调用独立管理进程；
 - TaskService 创建任务时固定 `{version, sha256}`，draft/finalize 不重新选择 active；
-- 模块适配 PR #52 已合入 `integration`，v1.2.0 发布线已完成框架闭环复验。
+- v1.3.0 公共 Schema、finalize 快照、离线累计和确认学习适配已完成；
+- 真实框架累计链仍有两项最小运行时阻塞，详见
+  [`FCR-moisture-20260726-monthly-runtime-blockers.md`](docs/framework-change-requests/FCR-moisture-20260726-monthly-runtime-blockers.md)。
 
 ## 当前指导文档
 

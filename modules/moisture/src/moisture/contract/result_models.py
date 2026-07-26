@@ -174,9 +174,22 @@ class ConfirmationPrompt:
     source: SourceRef
     suggested_value: Any = None
     options: tuple[Any, ...] = ()
+    learning: Mapping[str, Any] | None = None
 
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any]) -> ConfirmationPrompt:
+        learning_value = payload.get("learning")
+        learning = (
+            None
+            if learning_value is None
+            else _freeze_json(learning_value, "confirmations.learning")
+        )
+        if learning is not None and not isinstance(learning, Mapping):
+            raise ResultModelError(
+                "CONTRACT_SEMANTIC_INVALID",
+                "confirmations.learning",
+                "learning descriptor must be an object",
+            )
         return cls(
             confirmation_id=payload["confirmation_id"],
             field=payload["field"],
@@ -193,6 +206,7 @@ class ConfirmationPrompt:
             batch_applicable=payload["batch_applicable"],
             rememberable=payload["rememberable"],
             source=SourceRef.from_payload(payload["source"]),
+            learning=learning,
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -207,6 +221,7 @@ class ConfirmationPrompt:
             "batch_applicable": self.batch_applicable,
             "rememberable": self.rememberable,
             "source": self.source.to_payload(),
+            "learning": _json_value(self.learning),
         }
 
 
@@ -232,6 +247,47 @@ class OutputArtifact:
             "path": str(self.path),
             "label": self.label,
             "mime_type": self.mime_type,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class MonthlySnapshotArtifact:
+    schema_version: str
+    path: Path
+    snapshot_format: str
+    year: int
+    month: int
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any]) -> MonthlySnapshotArtifact:
+        path = Path(payload["path"])
+        if (
+            payload["schema_version"] != "1.0"
+            or not path.is_absolute()
+            or not str(payload["snapshot_format"]).strip()
+            or not 2000 <= int(payload["year"]) <= 9999
+            or not 1 <= int(payload["month"]) <= 12
+        ):
+            raise ResultModelError(
+                "CONTRACT_SEMANTIC_INVALID",
+                "monthly_snapshot",
+                "monthly snapshot artifact is invalid",
+            )
+        return cls(
+            schema_version="1.0",
+            path=path,
+            snapshot_format=str(payload["snapshot_format"]),
+            year=int(payload["year"]),
+            month=int(payload["month"]),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "path": str(self.path),
+            "snapshot_format": self.snapshot_format,
+            "year": self.year,
+            "month": self.month,
         }
 
 
@@ -324,6 +380,7 @@ class ModuleResult:
     anomalies: tuple[Anomaly, ...] = ()
     confirmations: tuple[ConfirmationPrompt, ...] = ()
     outputs: tuple[OutputArtifact, ...] = ()
+    monthly_snapshot: MonthlySnapshotArtifact | None = None
     file_results: tuple[FileResult, ...] = ()
     service_requests: tuple[ServiceRequest, ...] = ()
     analysis_summary: str | None = None
@@ -373,6 +430,11 @@ class ModuleResult:
                 OutputArtifact.from_payload(item)
                 for item in payload.get("outputs", [])
             ),
+            monthly_snapshot=(
+                MonthlySnapshotArtifact.from_payload(payload["monthly_snapshot"])
+                if payload.get("monthly_snapshot") is not None
+                else None
+            ),
             file_results=tuple(
                 FileResult.from_payload(item)
                 for item in payload.get("file_results", [])
@@ -399,6 +461,9 @@ class ModuleResult:
             "anomalies": [item.to_payload() for item in self.anomalies],
             "confirmations": [item.to_payload() for item in self.confirmations],
             "outputs": [item.to_payload() for item in self.outputs],
+            "monthly_snapshot": (
+                self.monthly_snapshot.to_payload() if self.monthly_snapshot else None
+            ),
             "file_results": [item.to_payload() for item in self.file_results],
             "service_requests": [item.to_payload() for item in self.service_requests],
             "analysis_summary": self.analysis_summary,
