@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bamboo:moisture:learning-descriptor:1.0",
+  "title": "Moisture Learning Descriptor",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "learning_key", "field", "context", "context_levels",
+    "candidates", "base_suggestion", "preference_adjustable"
+  ],
+  "properties": {
+    "learning_key": {
+      "type": "string",
+      "pattern": "^msr-learning-[0-9a-f]{24}$"
+    },
+    "field": {"enum": ["supplier", "department"]},
+    "context": {"$ref": "#/$defs/context_body"},
+    "context_levels": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {"$ref": "#/$defs/context_level"}
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 50,
+      "items": {"$ref": "#/$defs/candidate"}
+    },
+    "base_suggestion": {
+      "anyOf": [
+        {"type": "string", "pattern": "^msr-candidate-[0-9a-f]{24}$"},
+        {"type": "null"}
+      ]
+    },
+    "preference_adjustable": {"const": true}
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_id", "display_text"],
+      "properties": {
+        "candidate_id": {
+          "type": "string",
+          "pattern": "^msr-candidate-[0-9a-f]{24}$"
+        },
+        "display_text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        }
+      }
+    },
+    "context_body": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["module_id", "field"],
+      "properties": {
+        "module_id": {"const": "moisture"},
+        "field": {"enum": ["supplier", "department"]},
+        "material_category": {"enum": ["raw_bamboo_filament", "unspecified"]},
+        "source_category": {
+          "enum": ["workbook_header", "workbook_sample_rows", "unspecified"]
+        }
+      }
+    },
+    "context_level": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["learning_key", "context"],
+      "properties": {
+        "learning_key": {"type": "string", "pattern": "^msr-learning-[0-9a-f]{24}$"},
+        "context": {"$ref": "#/$defs/context_body"}
+      }
+    }
+  }
+}

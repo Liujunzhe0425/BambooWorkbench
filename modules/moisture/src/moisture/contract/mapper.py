@@ -16,6 +16,7 @@ from moisture.contract.result_models import (
     ConfirmationPrompt,
     FileResult,
     ModuleResult,
+    MonthlySnapshotArtifact,
     OutputArtifact,
     ResultSummary,
     ServiceRequest,
@@ -134,6 +135,11 @@ def map_run_result(run: InternalMoistureRunResult) -> MappedRunResult:
                 mime_type=item.mime_type,
             )
             for item in run.outputs
+        ),
+        monthly_snapshot=(
+            MonthlySnapshotArtifact.from_payload(run.monthly_snapshot)
+            if run.monthly_snapshot is not None
+            else None
         ),
         file_results=tuple(FileResult.from_payload(item) for item in run.file_results),
         service_requests=tuple(

@@ -54,6 +54,10 @@ class JobRequest:
     parent_job_id: str | None = None
     confirmation_file: Path | None = None
     service_response_file: Path | None = None
+    task_name: str | None = None
+    period_year: int | None = None
+    period_month: int | None = None
+    learning_enabled: bool = True
 
     @property
     def root_job_id(self) -> str:
@@ -85,6 +89,14 @@ class JobRequest:
                 "parent_job_id",
                 "finalize jobs require parent identity",
             )
+        period_year = payload.get("period_year")
+        period_month = payload.get("period_month")
+        if (period_year is None) != (period_month is None):
+            raise JobModelError(
+                "CONTRACT_SEMANTIC_INVALID",
+                "period_year",
+                "task period year and month must be supplied together",
+            )
 
         return cls(
             schema_version=payload["schema_version"],
@@ -115,6 +127,10 @@ class JobRequest:
                 if payload.get("service_response_file") is not None
                 else None
             ),
+            task_name=payload.get("task_name"),
+            period_year=period_year,
+            period_month=period_month,
+            learning_enabled=payload.get("learning_enabled", True),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -136,4 +152,8 @@ class JobRequest:
             "service_response_file": (
                 str(self.service_response_file) if self.service_response_file else None
             ),
+            "task_name": self.task_name,
+            "period_year": self.period_year,
+            "period_month": self.period_month,
+            "learning_enabled": self.learning_enabled,
         }

@@ -5,6 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 
+from moisture.application.learning_descriptor import (
+    build_learning_descriptor,
+    to_public_learning_descriptor,
+)
 from moisture.domain.models import BusinessConfirmationIssue
 
 _REASONS = {
@@ -23,6 +27,8 @@ def _normalized_candidates(issue: BusinessConfirmationIssue) -> tuple[str, ...]:
 def build_confirmations(
     root_job_id: str,
     issues: tuple[BusinessConfirmationIssue, ...],
+    *,
+    learning_enabled: bool = True,
 ) -> tuple[dict[str, object], ...]:
     """Map genuine module ambiguities to stable contract prompts."""
 
@@ -84,8 +90,7 @@ def build_confirmations(
             separators=(",", ":"),
         ).encode("utf-8")
         confirmation_id = f"msr-confirm-{hashlib.sha256(identity).hexdigest()[:24]}"
-        prompts.append(
-            {
+        prompt: dict[str, object] = {
                 "confirmation_id": confirmation_id,
                 "field": issue.field,
                 "reason": _REASONS[issue.kind],
@@ -102,5 +107,9 @@ def build_confirmations(
                     "cell_or_range": issue.cell_or_range,
                 },
             }
-        )
+        if learning_enabled and issue.kind in {"supplier_mapping", "department_mapping"}:
+            descriptor = build_learning_descriptor(issue)
+            if descriptor is not None:
+                prompt["learning"] = to_public_learning_descriptor(descriptor)
+        prompts.append(prompt)
     return tuple(sorted(prompts, key=lambda item: str(item["confirmation_id"])))
