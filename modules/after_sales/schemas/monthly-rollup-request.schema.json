@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AfterSalesMonthlyRollupRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "module_id",
+    "year",
+    "target_month",
+    "offline_required",
+    "snapshots",
+    "staging_output_dir"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "request_id": {"type": "string", "minLength": 1},
+    "module_id": {"const": "after_sales"},
+    "module_version": {"type": "string"},
+    "year": {"type": "integer", "minimum": 1900, "maximum": 2200},
+    "target_month": {"type": "integer", "minimum": 1, "maximum": 12},
+    "offline_required": {"const": true},
+    "staging_output_dir": {"type": "string", "minLength": 1},
+    "rule_snapshot_id": {"type": ["string", "null"]},
+    "experience_snapshot_id": {"type": ["string", "null"]},
+    "business_config_snapshot_id": {"type": ["string", "null"]},
+    "snapshots": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["month", "path", "sha256"],
+        "properties": {
+          "month": {"type": "integer", "minimum": 1, "maximum": 12},
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[0-9a-fA-F]{64}$"}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AfterSalesMonthlySnapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "module_id",
+    "module_version",
+    "year",
+    "month",
+    "snapshot_format",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "module_id": {"const": "after_sales"},
+    "module_version": {"pattern": "^\\d+\\.\\d+\\.\\d+$"},
+    "year": {"type": "integer", "minimum": 1900, "maximum": 2200},
+    "month": {"type": "integer", "minimum": 1, "maximum": 12},
+    "snapshot_format": {"const": "module-owned-v1"},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["record_count", "records"],
+      "properties": {
+        "record_count": {"type": "integer", "minimum": 1},
+        "records": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "record_key",
+              "source_file",
+              "year",
+              "month",
+              "brand",
+              "primary_issue_type",
+              "after_sales_fee_reviewed",
+              "responsibility_reviewed",
+              "complaint_type_reviewed",
+              "manual_review_completed"
+            ],
+            "properties": {
+              "record_key": {"type": "string", "pattern": "^[0-9a-f]{24}$"},
+              "source_file": {"type": "string", "pattern": "^售后记录-[0-9]{4}\\.(xlsx|xlsm)$"},
+              "year": {"type": "integer", "minimum": 1900, "maximum": 2200},
+              "month": {"type": "integer", "minimum": 1, "maximum": 12},
+              "brand": {"type": "string", "minLength": 1},
+              "primary_issue_type": {"enum": ["性能", "外观", "加工", "其他"]},
+              "after_sales_fee_amount": {"type": ["number", "null"], "minimum": 0},
+              "responsible_factory": {"type": "string", "minLength": 1},
+              "after_sales_fee_reviewed": {"const": true},
+              "responsibility_reviewed": {"const": true},
+              "complaint_type_reviewed": {"const": true},
+              "manual_review_completed": {"const": true}
+            },
+            "additionalProperties": true
+          }
+        }
+      }
+    }
+  }
+}

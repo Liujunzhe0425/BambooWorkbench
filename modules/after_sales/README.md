@@ -1,4 +1,4 @@
-# 售后统计模块（1.2.0）
+# 售后统计模块（1.3.0）
 
 `after_sales` 是 BambooWorkbench 的售后 Excel 分析模块。模块解析每份输入，生成品牌、月份、问题原因、三类金额、处理状态、图表和 Word 报告，并要求逐文件人工确认售后费用、责任工厂和投诉类型。
 
@@ -51,6 +51,33 @@ AI 可提供品牌、问题类型、原因、费用、责任工厂、方案和�
 
 Provider 超时、拒绝、错误、响应缺失或 JSON 非法时，模块保留每份输入的离线结果和失败对账，继续人工复核及完整导出。用户在任务开始前拒绝强制 AI 授权时，由框架阻止创建任务。
 
+## 月度快照与年度累计
+
+模块清单声明 `monthly_rollup` 能力。finalize 成功且本批全部正式记录均已完成“售后费用、责任工厂、投诉类型”三项人工确认、报修年月有效时，模块在输出目录生成内部快照：
+
+- `after_sales_monthly_snapshot.json`：单月任务的标准内部快照；
+- `monthly_snapshots/YYYY-MM.json`：兼容旧批次中含多个报修月份的模块内部快照。
+
+快照不作为普通用户成果展示，不保存客户原文、客户身份、绝对输入路径或原始单元格，只保留年度累计所需的脱敏结构化最终值。
+
+框架可使用模块自有合同调用完全离线的累计入口：
+
+```bat
+run_module.bat rollup --request D:\data\rollup-request.json --response D:\data\rollup-response.json
+```
+
+请求必须提供同模块、同年份、严格按月份升序且不大于目标月的正式快照及 SHA-256，并明确 `offline_required: true` 和框架授权的暂存目录。允许月份缺口；重复月、乱序、跨年、越界、哈希损坏、符号链接或 junction 会返回稳定错误码。
+
+累计入口不导入 AI 服务适配代码，不读取 API Key、Windows 凭据或 Provider，不发送服务请求。它只复用快照中的最终人工值，生成截至目标月份的累计台账、Word 报告、品牌/原因/费用图表、年度看板和结构化业务记录。
+
+模块自有 Schema 位于：
+
+- `schemas/monthly-snapshot.schema.json`
+- `schemas/monthly-rollup-request.schema.json`
+- `schemas/monthly-rollup-response.schema.json`
+
+框架尚需按 `docs/framework-change-requests/FCR-after_sales-20260726-monthly-rollup-integration.md` 提供正式月份槽位、替换事务、后续月份重算、公开学习合同和历史数据页面。
+
 ## 数据边界
 
 - 请求不包含客户、联系人、销售、电话、邮箱、地址、订单号、本机路径、原文件名或 Excel 二进制。
@@ -78,6 +105,7 @@ Provider 超时、拒绝、错误、响应缺失或 JSON 非法时，模块保�
 - 重复文件仍逐份保留；损坏文件写入稳定错误码，不影响其他文件。
 - 日期只使用质量问题、报修或投诉日期，不用订单、交货、文件名或文件时间补齐。
 - 所有正式输出以人工复核值为最终口径。
+- 投诉类型确认项提供稳定、脱敏的学习描述；非枚举费用和自由文本责任工厂不由框架自行推断学习场景。
 
 业务关键词和字段同义词位于 `rules/default_rules.yaml`。
 

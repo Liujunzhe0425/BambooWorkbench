@@ -47,6 +47,22 @@ def write_word_analysis_report(
     reason_counts: dict[str, int] = metrics["primary_issue_counts"]
     monthly: list[dict[str, Any]] = metrics["monthly"]
     risks = metrics["risks"]
+    report_period = result.get("report_period")
+    cumulative_year = (
+        int(report_period.get("year"))
+        if isinstance(report_period, dict) and report_period.get("year")
+        else None
+    )
+    cumulative_month = (
+        int(report_period.get("target_month"))
+        if isinstance(report_period, dict) and report_period.get("target_month")
+        else None
+    )
+    cumulative_label = (
+        f"{cumulative_year}年1—{cumulative_month}月"
+        if cumulative_year is not None and cumulative_month is not None
+        else ""
+    )
 
     document = Document()
     _configure_document(document)
@@ -54,10 +70,14 @@ def write_word_analysis_report(
 
     title = document.add_paragraph()
     title.style = document.styles["Title"]
-    title.add_run("售后分析报告")
+    title.add_run(f"{cumulative_label}售后累计分析报告" if cumulative_label else "售后分析报告")
     subtitle = document.add_paragraph()
     subtitle.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    run = subtitle.add_run("基于已导入文件、AI 分析结果与人工复核值生成")
+    run = subtitle.add_run(
+        "基于正式月度快照中的最终人工确认值离线累计生成"
+        if cumulative_label
+        else "基于已导入文件、AI 分析结果与人工复核值生成"
+    )
     run.font.name = "微软雅黑"
     run.font.size = Pt(10)
     run.font.color.rgb = RGBColor.from_string(MUTED)
@@ -66,6 +86,7 @@ def write_word_analysis_report(
     meta.paragraph_format.space_after = Pt(12)
     meta_run = meta.add_run(
         f"生成时间：{datetime.now().strftime('%Y-%m-%d %H:%M')}    "
+        f"{('累计期间：' + cumulative_label + '    ') if cumulative_label else ''}"
         f"输入文件：{int(summary.get('input_count') or 0)} 份    "
         f"成功处理：{int(summary.get('processed_count') or 0)} 份"
     )
@@ -91,7 +112,8 @@ def write_word_analysis_report(
         default=None,
     )
     lead_lines = [
-        f"本次共汇总 {case_count} 件售后案件，人工复核口径费用合计 "
+        f"{('截至' + cumulative_label) if cumulative_label else '本次'}共汇总 "
+        f"{case_count} 件售后案件，人工复核口径费用合计 "
         f"{total_fee:,.2f} 元。",
         (
             f"案件数最多的品牌为“{top_brand[0]}”（{top_brand[1]} 件）；"
@@ -220,6 +242,7 @@ def write_word_analysis_report(
         (3.6, 1.3, 1.6),
     )
 
+    document.add_page_break()
     document.add_heading("六、数据风险与复核提示", level=1)
     risk_rows = [
         ("售后费用为空或待确认", int(risks["unknown_enterprise_cost_count"])),

@@ -8,7 +8,7 @@ from typing import Any
 from openpyxl import Workbook
 from openpyxl.chart import BarChart, LineChart, PieChart, PieChart3D, Reference
 from openpyxl.chart.label import DataLabelList
-from openpyxl.chart.series import DataPoint
+from openpyxl.chart.series import DataPoint, SeriesLabel
 from openpyxl.chart.shapes import GraphicalProperties
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
@@ -547,6 +547,8 @@ def _dashboard_monthly_case_chart(
     chart.y_axis.majorUnit = 1 if maximum <= 10 else max(1, math.ceil(maximum / 5))
     chart.series[0].graphicalProperties.solidFill = BLUE
     chart.series[0].graphicalProperties.line.solidFill = DARK_GREEN
+    chart.series[0].tx = SeriesLabel(v="售后反馈")
+    chart.y_axis.numFmt = "0"
     chart.dataLabels = DataLabelList()
     chart.dataLabels.showVal = True
     chart.dataLabels.showLegendKey = False
@@ -826,6 +828,7 @@ def _write_year_fee_block(
     )
     bar.series[0].graphicalProperties.solidFill = BLUE
     bar.series[0].graphicalProperties.line.solidFill = BLUE
+    bar.series[0].tx = SeriesLabel(v="售后费用（元）")
     bar.dataLabels = DataLabelList()
     bar.dataLabels.showVal = True
     bar.dataLabels.showLegendKey = False
@@ -861,6 +864,7 @@ def _write_year_fee_block(
     line.series[0].graphicalProperties.line.solidFill = RED
     line.series[0].graphicalProperties.line.width = 38_100
     line.series[0].graphicalProperties.solidFill = RED
+    line.series[0].tx = SeriesLabel(v="1万元预警线")
     bar += line
     worksheet.add_chart(bar, f"G{start_row}")
 
@@ -1010,8 +1014,14 @@ def _write_monthly_case_block(
     chart.x_axis.tickLblPos = "low"
     chart.x_axis.tickLblSkip = 1
     chart.x_axis.tickMarkSkip = 1
+    maximum = max(monthly_cases.values(), default=0)
+    chart.y_axis.scaling.min = 0
+    chart.y_axis.scaling.max = max(4, maximum + 1)
+    chart.y_axis.majorUnit = 1 if maximum <= 10 else max(1, math.ceil(maximum / 5))
     chart.series[0].graphicalProperties.solidFill = GREEN
     chart.series[0].graphicalProperties.line.solidFill = GREEN
+    chart.series[0].tx = SeriesLabel(v="案件数量")
+    chart.y_axis.numFmt = "0"
     chart.dataLabels = DataLabelList()
     chart.dataLabels.showVal = True
     chart.dataLabels.showLegendKey = False

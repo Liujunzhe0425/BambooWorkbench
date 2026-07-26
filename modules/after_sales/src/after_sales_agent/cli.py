@@ -16,15 +16,14 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from after_sales_agent import MODULE_ID, MODULE_NAME, MODULE_VERSION
-from after_sales_agent.ai_service import (
-    apply_ai_service_outcome,
-    build_ai_service_requests,
-    read_ai_service_responses,
-)
 from after_sales_agent.extractor import file_sha256, process_workbook
 from after_sales_agent.manual_review import (
     apply_business_review_value,
     build_required_review_prompts,
+)
+from after_sales_agent.monthly_rollup import (
+    run_rollup_request,
+    write_finalize_monthly_snapshots,
 )
 from after_sales_agent.report import write_summary_workbook
 from after_sales_agent.rules import load_rules
@@ -91,6 +90,9 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("self-check")
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--job", required=True, help="任务JSON路径")
+    rollup_parser = subparsers.add_parser("rollup")
+    rollup_parser.add_argument("--request", required=True, help="累计请求JSON路径")
+    rollup_parser.add_argument("--response", required=True, help="累计响应JSON路径")
     args = parser.parse_args(argv)
 
     if args.command == "version":
@@ -104,11 +106,21 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(f"模块运行失败：{exc}", file=sys.stderr)
             return 3
+    if args.command == "rollup":
+        return run_rollup_request(Path(args.request), Path(args.response))
     parser.print_help()
     return 2
 
 
 def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int:
+    # AI 编排只属于普通 draft 阶段。累计入口不会导入本模块 AI 适配代码，
+    # 从进程级保证累计重算无法读取凭据或发出服务请求。
+    from after_sales_agent.ai_service import (
+        apply_ai_service_outcome,
+        build_ai_service_requests,
+        read_ai_service_responses,
+    )
+
     started_at = datetime.now().astimezone().isoformat()
     module_root = _module_root()
     try:
@@ -139,6 +151,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
         input_files = expand_inputs(job.get("input_files", []))
         result["summary"]["input_count"] = len(input_files)
         records: list[dict[str, Any]] = []
+        learning_descriptors: list[dict[str, Any]] = []
         draft_snapshots = (
             _load_draft_ai_snapshots(output_dir) if job.get("phase") == "finalize" else {}
         )
@@ -294,6 +307,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                         _normalize_confirmations(
                             build_required_review_prompts(record, rules),
                             len(result["confirmations"]),
+                            learning_descriptors,
                         )
                     )
 
@@ -340,6 +354,10 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
         write_issue_share_workbook(records, issue_chart_path)
         write_annual_monthly_fee_workbook(records, monthly_fee_chart_path)
         write_yearly_chart_dashboard_workbook(records, yearly_dashboard_path)
+        if learning_descriptors:
+            _write_learning_descriptors(output_dir, learning_descriptors)
+        if job.get("phase") == "finalize" and result["status"] == "success":
+            write_finalize_monthly_snapshots(records, output_dir)
 
         result["outputs"] = [
             {
@@ -535,16 +553,21 @@ def _normalize_anomalies(items: list[dict[str, Any]], offset: int) -> list[dict[
     return normalized
 
 
-def _normalize_confirmations(items: list[dict[str, Any]], offset: int) -> list[dict[str, Any]]:
+def _normalize_confirmations(
+    items: list[dict[str, Any]],
+    offset: int,
+    learning_descriptors: list[dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for index, item in enumerate(items, start=offset + 1):
         try:
             confidence = float(item.get("confidence") or 0.0)
         except (TypeError, ValueError):
             confidence = 0.0
+        confirmation_id = f"C-{index:04d}"
         normalized.append(
             {
-                "confirmation_id": f"C-{index:04d}",
+                "confirmation_id": confirmation_id,
                 "field": str(item.get("field") or "unknown"),
                 "reason": str(item.get("reason") or "需要人工复核"),
                 "suggested_value": item.get("suggested_value"),
@@ -556,7 +579,40 @@ def _normalize_confirmations(items: list[dict[str, Any]], offset: int) -> list[d
                 "source": _source_ref(item),
             }
         )
+        learning = item.get("learning")
+        if isinstance(learning, dict) and learning_descriptors is not None:
+            learning_descriptors.append(
+                {
+                    "confirmation_id": confirmation_id,
+                    "learning": learning,
+                }
+            )
     return normalized
+
+
+def _write_learning_descriptors(
+    output_dir: Path,
+    descriptors: list[dict[str, Any]],
+) -> None:
+    """Write module-owned learning metadata without changing the public result schema."""
+
+    path = output_dir / "after_sales_learning_descriptors.json"
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text(
+        json.dumps(
+            {
+                "schema_version": "1.0",
+                "module_id": MODULE_ID,
+                "module_version": MODULE_VERSION,
+                "items": descriptors,
+            },
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
 
 
 def _source_ref(item: dict[str, Any]) -> dict[str, Any]:

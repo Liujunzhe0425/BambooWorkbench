@@ -10,7 +10,6 @@ from openpyxl import Workbook
 from openpyxl.chart import BarChart, LineChart, Reference
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.table import Table, TableStyleInfo
 
 from after_sales_agent.analysis import ISSUE_ORDER, build_analysis_metrics
 from after_sales_agent.manual_review import (
@@ -282,19 +281,6 @@ def _write_master_detail(ws: Any, records: list[dict[str, Any]]) -> None:
     ws.freeze_panes = "E4"
     ws.sheet_view.showGridLines = False
     ws.auto_filter.ref = f"A3:{last_letter}{max(3, len(records) + 3)}"
-    if records:
-        table = Table(
-            displayName="AfterSalesMasterDetail",
-            ref=f"A3:{last_letter}{len(records) + 3}",
-        )
-        table.tableStyleInfo = TableStyleInfo(
-            name="TableStyleMedium4",
-            showFirstColumn=False,
-            showLastColumn=False,
-            showRowStripes=False,
-            showColumnStripes=False,
-        )
-        ws.add_table(table)
     ws.print_title_rows = "1:3"
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.page_setup.fitToWidth = 1
