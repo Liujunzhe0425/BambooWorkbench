@@ -1,6 +1,7 @@
 import ctypes
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer
@@ -31,6 +32,8 @@ from ui.pages.knowledge_page import KnowledgePage
 from ui.pages.module_task_page import ModuleTaskPage
 from ui.pages.moisture_ai_report_page import MoistureAIReportPage
 from ui.pages.moisture_governance_page import MoistureGovernancePage
+from ui.pages.monthly_history_page import MonthlyHistoryPage
+from ui.pages.pending_list_page import PendingListPage
 from ui.pages.result_center_page import ResultCenterPage
 from ui.pages.settings_page import SettingsPage
 from ui.pages.task_progress_page import TaskProgressPage
@@ -74,26 +77,32 @@ class MainWindow(QMainWindow):
             context.task_repository,
             status_resolver=self._historical_status,
         )
+        self.monthly_history_page = MonthlyHistoryPage(context.monthly_repository)
+        self.pending_list_page = PendingListPage(context.task_repository)
         self.confirmations_page = ConfirmationsPage(context.task_repository.get_number)
         self.knowledge_page = KnowledgePage(
             context.knowledge_repository,
             context.paths.knowledge,
+            context.learning_repository,
         )
         self.settings_page = SettingsPage(
             context.settings,
             context.paths,
             context.credential_store,
+            context.credential_state_repository,
+            context.output_root_repository,
         )
         self.pages: dict[PageId, QWidget] = {
             PageId.WORKBENCH: self.workbench_page,
             PageId.HISTORY: self.history_page,
-            PageId.CONFIRMATIONS: self.confirmations_page,
+            PageId.MONTHLY_HISTORY: self.monthly_history_page,
+            PageId.CONFIRMATIONS: self.pending_list_page,
             PageId.KNOWLEDGE: self.knowledge_page,
             PageId.SETTINGS: self.settings_page,
         }
         for page in self.pages.values():
             self.stack.addWidget(page)
-        self.module_task_page = ModuleTaskPage()
+        self.module_task_page = ModuleTaskPage(context.paths.source)
         self.task_progress_page = TaskProgressPage()
         self.result_center_page = ResultCenterPage()
         self.moisture_ai_report_page = MoistureAIReportPage(
@@ -107,8 +116,10 @@ class MainWindow(QMainWindow):
             context.settings,
             context.credential_store,
             context.reload_ai_configuration,
+            credential_state=context.credential_state_repository,
         )
         for page in (
+            self.confirmations_page,
             self.module_task_page,
             self.task_progress_page,
             self.result_center_page,
@@ -150,10 +161,19 @@ class MainWindow(QMainWindow):
         self.size_grip.resize(18, 18)
         self.navigation.page_selected.connect(self.navigate)
         self.history_page.result_requested.connect(self._open_history_result)
+        self.monthly_history_page.result_requested.connect(self._open_history_result)
+        self.monthly_history_page.governance_requested.connect(
+            self._govern_monthly_result
+        )
+        self.pending_list_page.task_requested.connect(self._select_confirmation_job)
         self.workbench_page.module_selected.connect(self._open_module)
         self.module_task_page.task_requested.connect(self._start_task)
         self.module_task_page.configured_task_requested.connect(
             self._start_configured_task
+        )
+        self.module_task_page.period_task_requested.connect(self._start_period_task)
+        self.module_task_page.period_configured_task_requested.connect(
+            self._start_period_configured_task
         )
         self.module_task_page.ai_report_requested.connect(self._open_moisture_ai_report)
         self.module_task_page.governance_requested.connect(self._open_moisture_governance)
@@ -173,6 +193,7 @@ class MainWindow(QMainWindow):
         self.task_progress_page.cancel_requested.connect(self._cancel_task)
         self.confirmations_page.submitted.connect(self._submit_confirmation)
         self.confirmations_page.job_selected.connect(self._select_confirmation_job)
+        self.confirmations_page.draft_changed.connect(self._save_confirmation_draft)
         self.result_center_page.output_files.open_failed.connect(
             lambda message: self._show_failure("输出文件不可用", message)
         )
@@ -199,9 +220,19 @@ class MainWindow(QMainWindow):
         context.task_service.publication_warning.connect(
             lambda _job_id, message: self._show_failure("成果目录复制提醒", message)
         )
+        context.task_service.monthly_rollup_service.governance_completed.connect(
+            lambda _module, _year, _month: self.monthly_history_page.refresh()
+        )
+        context.task_service.monthly_rollup_service.governance_failed.connect(
+            lambda message: self._show_failure("月度成果治理失败", message)
+        )
         for job_id, result in context.task_service.pending_confirmations():
             self._confirmation_job_ids.add(job_id)
-            self.confirmations_page.load(job_id, result.confirmations)
+            self.confirmations_page.load(
+                job_id,
+                result.confirmations,
+                context.confirmation_repository.load_draft(job_id),
+            )
         self._show_widget(
             self.workbench_page,
             nav_page=PageId.WORKBENCH,
@@ -256,6 +287,10 @@ class MainWindow(QMainWindow):
     def navigate(self, page_id: PageId) -> None:
         if page_id is PageId.HISTORY:
             self.history_page.refresh()
+        elif page_id is PageId.MONTHLY_HISTORY:
+            self.monthly_history_page.refresh()
+        elif page_id is PageId.CONFIRMATIONS:
+            self.pending_list_page.refresh()
         self._show_widget(self.pages[page_id], nav_page=page_id)
 
     def _show_widget(
@@ -326,6 +361,7 @@ class MainWindow(QMainWindow):
             module_id is ModuleId.AFTER_SALES
             and policy is not None
             and policy.required
+            and not self.after_sales_ai_setup_page.configuration_is_verified()
         ):
             self._after_sales_ai_ready = False
             self.after_sales_ai_setup_page.activate()
@@ -350,6 +386,11 @@ class MainWindow(QMainWindow):
                 <= set(manifest.capabilities)
             ),
             framework_ai_required=bool(manifest.framework_ai and manifest.framework_ai.required),
+            per_task_ai_consent_required=(
+                module_id is ModuleId.AFTER_SALES
+                and bool(manifest.framework_ai and manifest.framework_ai.required)
+                and self.context.settings.get("ai_network_enabled", "false") != "true"
+            ),
         )
         self._show_widget(self.module_task_page, nav_page=PageId.WORKBENCH)
 
@@ -376,24 +417,77 @@ class MainWindow(QMainWindow):
             return
         self._start_task_with_config(module_id, files, module_config)
 
+    def _start_period_task(
+        self, module_id: object, files: list, metadata: object
+    ) -> None:
+        if not isinstance(metadata, dict):
+            self._show_failure("任务创建失败", "任务年月和名称无效")
+            return
+        self._start_task_with_config(module_id, files, None, metadata)
+
+    def _start_period_configured_task(
+        self,
+        module_id: object,
+        files: list,
+        module_config: object,
+        metadata: object,
+    ) -> None:
+        if not isinstance(module_config, dict) or not isinstance(metadata, dict):
+            self._show_failure("任务创建失败", "模块配置或任务年月无效")
+            return
+        self._start_task_with_config(module_id, files, module_config, metadata)
+
     def _start_task_with_config(
         self,
         module_id: object,
         files: list,
         module_config: dict[str, object] | None,
+        metadata: dict[str, object] | None = None,
     ) -> None:
         self._starting_task = True
         self._start_failure_job_id = None
         try:
+            metadata = metadata or {}
+            year = int(metadata.get("period_year", datetime.now().year))
+            month = int(metadata.get("period_month", datetime.now().month))
+            existing = self.context.monthly_repository.get_slot(
+                str(getattr(module_id, "value", module_id)), year, month
+            )
+            if existing is not None:
+                later = [
+                    int(item["month"])
+                    for item in self.context.monthly_repository.list_year(
+                        str(getattr(module_id, "value", module_id)), year
+                    )
+                    if int(item["month"]) > month
+                ]
+                affected = "、".join(f"{value}月" for value in [month, *later])
+                answer = QMessageBox.question(
+                    self,
+                    "替换正式月度结果",
+                    f"{year}年{month:02d}月已有正式结果。继续后将在新任务成功时原子替换，"
+                    f"并重算：{affected}。失败或取消不会影响原结果。是否继续？",
+                )
+                if answer != QMessageBox.StandardButton.Yes:
+                    return
+            network_default = self.context.settings.get("ai_network_enabled", "false") == "true"
             job_id = self.context.task_service.create_and_start(
                 module_id,
                 files,
                 module_config=module_config,
                 ai_consent_granted=(
                     module_id is ModuleId.AFTER_SALES
-                    and self._after_sales_ai_ready
-                    and self.module_task_page.ai_consent.isChecked()
+                    and (
+                        network_default
+                        or (
+                            self.after_sales_ai_setup_page.configuration_is_verified()
+                            and self.module_task_page.ai_consent.isChecked()
+                        )
+                    )
                 ),
+                task_name=str(metadata.get("task_name") or "") or None,
+                period_year=year,
+                period_month=month,
             )
         except Exception as error:
             self._show_failure("任务创建失败", str(error))
@@ -479,14 +573,37 @@ class MainWindow(QMainWindow):
 
     def _on_confirmation(self, job_id: str, result: ModuleResult) -> None:
         self._confirmation_job_ids.add(job_id)
-        self.confirmations_page.load(job_id, result.confirmations)
+        self.confirmations_page.load(
+            job_id,
+            result.confirmations,
+            self.context.confirmation_repository.load_draft(job_id),
+        )
+        self.pending_list_page.refresh()
         if self._foreground_job_id == job_id:
             self.confirmations_page.select_job(job_id, user_selected=False)
+            self._show_widget(
+                self.pending_list_page,
+                nav_page=PageId.CONFIRMATIONS,
+                record_history=False,
+            )
             self._show_widget(self.confirmations_page, nav_page=PageId.CONFIRMATIONS)
 
     def _select_confirmation_job(self, job_id: str) -> None:
         self._foreground_job_id = job_id
+        if job_id not in self.confirmations_page.pending_job_ids:
+            return
         self._show_widget(self.confirmations_page, nav_page=PageId.CONFIRMATIONS)
+
+    def _save_confirmation_draft(
+        self, job_id: str, answers: list, learning_enabled: bool
+    ) -> None:
+        try:
+            self.context.confirmation_repository.save_draft(
+                job_id, answers, learning_enabled=learning_enabled
+            )
+            self.context.task_repository.set_learning_enabled(job_id, learning_enabled)
+        except Exception as error:
+            self._show_failure("确认草稿保存失败", str(error))
 
     def _submit_confirmation(self, job_id: str, answers: list) -> None:
         self._foreground_job_id = job_id
@@ -504,6 +621,7 @@ class MainWindow(QMainWindow):
         if self._finalize_failed:
             return
         self._clear_confirmation(job_id)
+        self.pending_list_page.refresh()
         self.task_progress_page.bind(job_id)
         self._show_widget(self.task_progress_page)
 
@@ -517,6 +635,9 @@ class MainWindow(QMainWindow):
             self.task_progress_page.current_job_id = ""
             self.task_progress_page.cancel_button.setEnabled(False)
         self.result_center_page.show_result(result)
+        self.result_center_page.set_ai_audit(
+            self.context.consent_audit_repository.list_for_task(result.job_id)
+        )
         self._show_widget(self.result_center_page)
         if result.status in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
             self._show_failure("任务未完成", "；".join(result.errors) or result.status.value)
@@ -527,6 +648,8 @@ class MainWindow(QMainWindow):
             task = self.context.task_repository.get(job_id)
             if task["status"] not in {"success", "partial_success"}:
                 return
+            if task.get("result_integrity") in {"missing", "invalid", "conflict"}:
+                raise ValueError("成果文件缺失或完整性异常，当前禁止打开")
             task_dir = self.context.paths.tasks / job_id
             result_path = resolve_contained_file(
                 Path(str(task["result_path"])),
@@ -541,7 +664,55 @@ class MainWindow(QMainWindow):
             self._show_failure("无法打开历史结果", str(error))
             return
         self.result_center_page.show_result(self._result_with_stored_outputs(result))
-        self._show_widget(self.result_center_page, nav_page=PageId.HISTORY)
+        self.result_center_page.set_ai_audit(
+            self.context.consent_audit_repository.list_for_task(job_id)
+        )
+        source_page = (
+            PageId.MONTHLY_HISTORY
+            if self._current_nav_page is PageId.MONTHLY_HISTORY
+            else PageId.HISTORY
+        )
+        self._show_widget(self.result_center_page, nav_page=source_page)
+
+    def _govern_monthly_result(
+        self, job_id: str, module_id: str, year: int, month: int
+    ) -> None:
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("月度成果治理")
+        dialog.setText(
+            f"{year}年{month:02d}月成果文件缺失或完整性异常。"
+            "可从内部月度快照重新生成，或移除该正式任务记录。"
+        )
+        regenerate = dialog.addButton("重新生成成果", QMessageBox.ButtonRole.AcceptRole)
+        remove = dialog.addButton("移除此任务记录", QMessageBox.ButtonRole.DestructiveRole)
+        dialog.addButton(QMessageBox.StandardButton.Cancel)
+        dialog.exec()
+        try:
+            if dialog.clickedButton() is regenerate:
+                self.context.task_service.monthly_rollup_service.regenerate_official(
+                    module_id, year, month
+                )
+            elif dialog.clickedButton() is remove:
+                affected = [
+                    int(item["month"])
+                    for item in self.context.monthly_repository.list_year(module_id, year)
+                    if int(item["month"]) >= month
+                ]
+                warning = "、".join(f"{value}月" for value in affected)
+                answer = QMessageBox.warning(
+                    self,
+                    "确认移除正式结果",
+                    f"将取消 {month} 月正式结果、撤销任务 {job_id} 的学习贡献，"
+                    f"并重新生成后续月份：{warning}。是否继续？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Cancel,
+                )
+                if answer is QMessageBox.StandardButton.Yes:
+                    self.context.task_service.monthly_rollup_service.remove_official(
+                        module_id, year, month
+                    )
+        except Exception as error:
+            self._show_failure("月度成果治理失败", str(error))
 
     def _historical_status(self, task: dict[str, object]) -> str:
         persisted = str(task["status"])

@@ -46,7 +46,12 @@ class AIGateway:
     def preview(self, request: GatewayRequest) -> RedactionPreview:
         return self.redactor.redact(request.payload)
 
-    def complete(self, request: GatewayRequest, allowed: bool | None) -> AIResponse:
+    def complete(
+        self,
+        request: GatewayRequest,
+        allowed: bool | None,
+        authorization_source: str = "legacy",
+    ) -> AIResponse:
         preview = self.preview(request)
         if allowed is None:
             raise ConsentRequired("AI request requires an explicit consent decision")
@@ -58,6 +63,7 @@ class AIGateway:
                 allowed=allowed,
                 data_categories=preview.categories,
                 decided_at=self.clock(),
+                authorization_source=authorization_source,
             )
         )
         if not allowed:

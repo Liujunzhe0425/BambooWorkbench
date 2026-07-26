@@ -49,7 +49,8 @@ class Navigation(QWidget):
         labels = {
             PageId.WORKBENCH: ("⌂", "工作台"),
             PageId.HISTORY: ("☷", "任务历史"),
-            PageId.CONFIRMATIONS: ("✓", "待确认"),
+            PageId.MONTHLY_HISTORY: ("▦", "历史数据"),
+            PageId.CONFIRMATIONS: ("✓", "待确认清单"),
             PageId.KNOWLEDGE: ("◇", "知识库"),
             PageId.SETTINGS: ("⚙", "系统设置"),
         }

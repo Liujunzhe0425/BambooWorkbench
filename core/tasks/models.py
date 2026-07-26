@@ -11,6 +11,7 @@ class TaskLifecycleState(StrEnum):
     PARTIAL_SUCCESS = "partial_success"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    REPLACEMENT_CANDIDATE = "replacement_candidate"
 
 
 class InvalidTaskTransition(ValueError):
@@ -47,12 +48,16 @@ _ALLOWED_TRANSITIONS: dict[TaskLifecycleState, frozenset[TaskLifecycleState]] = 
             TaskLifecycleState.PARTIAL_SUCCESS,
             TaskLifecycleState.FAILED,
             TaskLifecycleState.CANCELLED,
+            TaskLifecycleState.REPLACEMENT_CANDIDATE,
         }
     ),
     TaskLifecycleState.SUCCESS: frozenset(),
     TaskLifecycleState.PARTIAL_SUCCESS: frozenset(),
     TaskLifecycleState.FAILED: frozenset(),
     TaskLifecycleState.CANCELLED: frozenset(),
+    TaskLifecycleState.REPLACEMENT_CANDIDATE: frozenset(
+        {TaskLifecycleState.RUNNING_FINALIZE, TaskLifecycleState.CANCELLED}
+    ),
 }
 
 
