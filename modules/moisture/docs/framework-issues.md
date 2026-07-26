@@ -17,6 +17,7 @@
 | DeepSeek / OpenAI-compatible Provider | 已有框架能力，待生产环境验收 | 框架方、安全负责人 | 使用 Windows 凭据、联网开关和逐次同意；异常结构化降级 |
 | `0.55/0.47` 均值阈值业务批准 | 待业务批准 | 业务负责人 | 继续标注为待批准筛查提示，不得称为正式生产标准 |
 | 便携包正式发布签署 | v1.2.0 发布线已准备 | 发布负责人 | 按发布清单执行签名、发布与回滚准备 |
+| v1.3.0 月度快照、年度累计与确认学习 | 待框架适配 | 框架方/模块方 | 以 [`FCR-moisture-20260726-monthly-rollup-learning.md`](framework-change-requests/FCR-moisture-20260726-monthly-rollup-learning.md) 为唯一当前请求；框架发布公共合同后再进行 A-C0—A-C4 |
 
 ## 模块已交付边界
 

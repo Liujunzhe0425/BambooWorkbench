@@ -162,6 +162,7 @@ class DeterministicPipeline:
                     version=reference.version,
                     title=reference.title,
                     source=reference.source,
+                    content_hash=reference.content_hash,
                 )
                 for reference in references[:10]
             ),

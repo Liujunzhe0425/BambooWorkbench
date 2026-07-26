@@ -28,6 +28,7 @@ class ExperienceCitation:
     version: str
     title: str
     source: str
+    content_hash: str = ""
 
 
 @dataclass(frozen=True, slots=True)

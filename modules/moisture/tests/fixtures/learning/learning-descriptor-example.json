@@ -1,0 +1,48 @@
+{
+  "learning_key": "msr-learning-aaaaaaaaaaaaaaaaaaaaaaaa",
+  "field": "supplier",
+  "context": {
+    "module_id": "moisture",
+    "field": "supplier",
+    "material_category": "raw_bamboo_filament",
+    "source_category": "workbook_header"
+  },
+  "context_levels": [
+    {
+      "learning_key": "msr-learning-aaaaaaaaaaaaaaaaaaaaaaaa",
+      "context": {
+        "module_id": "moisture",
+        "field": "supplier",
+        "material_category": "raw_bamboo_filament",
+        "source_category": "workbook_header"
+      }
+    },
+    {
+      "learning_key": "msr-learning-bbbbbbbbbbbbbbbbbbbbbbbb",
+      "context": {
+        "module_id": "moisture",
+        "field": "supplier",
+        "material_category": "raw_bamboo_filament"
+      }
+    },
+    {
+      "learning_key": "msr-learning-cccccccccccccccccccccccc",
+      "context": {
+        "module_id": "moisture",
+        "field": "supplier"
+      }
+    }
+  ],
+  "candidates": [
+    {
+      "candidate_id": "msr-candidate-111111111111111111111111",
+      "display_text": "供应方Alpha"
+    },
+    {
+      "candidate_id": "msr-candidate-222222222222222222222222",
+      "display_text": "供应方Beta"
+    }
+  ],
+  "base_suggestion": "msr-candidate-111111111111111111111111",
+  "preference_adjustable": true
+}

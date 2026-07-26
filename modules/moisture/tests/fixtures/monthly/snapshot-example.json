@@ -1,0 +1,93 @@
+{
+  "schema_version": "1.0",
+  "module_id": "moisture",
+  "module_version": "1.3.0",
+  "period": {"year": 2026, "month": 4},
+  "rule_snapshot": {
+    "version": "default-v2-approved",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "records": [
+    {
+      "record_id": "batch-synthetic-001",
+      "business_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "supplier": "供应方Alpha",
+      "material_type": "原竹丝",
+      "arrival_date": "2026-04-07",
+      "test_date": "2026-04-08",
+      "total_weight_kg": "1200.0",
+      "samples": [
+        {"sample_index": 1, "department": "品质", "source_row": 5, "value": "0.47"},
+        {"sample_index": 2, "department": "二厂", "source_row": 6, "value": "0.45"}
+      ],
+      "statistics": {
+        "sample_count": 2,
+        "mean": "0.46",
+        "total_average": "0.46",
+        "standard_deviation": "0.01",
+        "minimum": "0.45",
+        "maximum": "0.47",
+        "range_value": "0.02",
+        "median": "0.46",
+        "first_quartile": "0.45",
+        "third_quartile": "0.47",
+        "interquartile_range": "0.02",
+        "department_averages": [
+          {"department": "品质", "value": "0.47"},
+          {"department": "二厂", "value": "0.45"}
+        ],
+        "maximum_department_average_difference": "0.02"
+      },
+      "screening": {
+        "primary": {
+          "status": "low",
+          "display_color": "green",
+          "target_field": "mean",
+          "reason": "确定性筛查提示",
+          "rule_hits": [
+            {"rule_id": "LOW_DEFAULT", "message": "偏低疑似", "display_color": "green", "target_field": "mean"}
+          ]
+        },
+        "decisions": [
+          {
+            "status": "low",
+            "display_color": "green",
+            "target_field": "mean",
+            "reason": "确定性筛查提示",
+            "rule_hits": [
+              {"rule_id": "LOW_DEFAULT", "message": "偏低疑似", "display_color": "green", "target_field": "mean"}
+            ]
+          }
+        ],
+        "final_display_color": "green",
+        "confirmation_state": "confirmed_anomaly",
+        "review_suggestion": "建议人工复核取样和称量记录",
+        "lower_threshold": "0.47",
+        "upper_threshold": "0.55"
+      },
+      "anomalies": [
+        {
+          "status": "low",
+          "display_color": "green",
+          "target_field": "mean",
+          "reason": "确定性筛查提示",
+          "rule_hits": [
+            {"rule_id": "LOW_DEFAULT", "message": "偏低疑似", "display_color": "green", "target_field": "mean"}
+          ]
+        }
+      ],
+      "traceability": {
+        "source_display_name": "batch-synthetic-001.xlsx",
+        "source_file_hash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "source_sheet": "检测数据",
+        "rule_version": "default-v2-approved",
+        "rule_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "rule_applicable_scope": "竹丝/原竹丝；全年",
+        "rule_confirmation_status": "confirmed",
+        "experience_references": [
+          {"entry_id": "EXP-GENERIC-001", "version": "1.0.0", "title": "通用复核指导", "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"}
+        ]
+      }
+    }
+  ]
+}

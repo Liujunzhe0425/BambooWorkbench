@@ -88,7 +88,7 @@ Codex冻结任务边界
 全部开发记录写入仓库外目录：
 
 ```text
-D:\codexprogram\竹丝水分检测框架适配开发\日志\moisture-v1.0.1\
+<仓库外日志目录>\moisture-v1.0.1\
 ```
 
 固定文件：
