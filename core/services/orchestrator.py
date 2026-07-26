@@ -101,6 +101,7 @@ class ServiceOrchestrator:
         requests: list[ServiceRequest | dict[str, object]],
         ai_consent: dict[str, bool],
         task_dir: Path,
+        authorization_source: str = "legacy",
     ) -> Path:
         validated = [ServiceRequest.model_validate(item) for item in requests]
         request_ids = [item.request_id for item in validated]
@@ -120,6 +121,7 @@ class ServiceOrchestrator:
                     module_id,
                     item,
                     allowed=ai_consent.get(item.request_id),
+                    authorization_source=authorization_source,
                 )
             )
 
@@ -185,6 +187,7 @@ class ServiceOrchestrator:
         request: ServiceRequest,
         *,
         allowed: bool | None,
+        authorization_source: str,
     ) -> dict[str, object]:
         try:
             response = self.ai_gateway.complete(
@@ -197,6 +200,7 @@ class ServiceOrchestrator:
                     response_format=request.response_format,
                 ),
                 allowed,
+                authorization_source,
             )
         except ConsentDenied:
             return {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from contextlib import suppress
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
@@ -21,6 +22,7 @@ from core.ai.providers import (
     OpenAICompatibleProvider,
 )
 from core.security.credentials import CredentialStore
+from core.storage.repositories.credential_state import CredentialStateRepository
 from core.storage.settings import SettingsStore
 
 _MODEL = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
@@ -36,12 +38,14 @@ class AfterSalesAiSetupPage(QWidget):
         credentials: CredentialStore,
         reload_configuration: Callable[[], None],
         connection_tester: Callable[[str, str, str, str], None] | None = None,
+        credential_state: CredentialStateRepository | None = None,
     ) -> None:
         super().__init__()
         self.settings = settings
         self.credentials = credentials
         self.reload_configuration = reload_configuration
         self.connection_tester = connection_tester or self._test_provider
+        self.credential_state = credential_state
         self._verified = False
 
         layout = QVBoxLayout(self)
@@ -146,11 +150,19 @@ class AfterSalesAiSetupPage(QWidget):
         self.connection_status.setText("正在由框架测试连接…")
         try:
             self.connection_tester(provider, base_url, model, key)
+            had_same_secret = False
+            with suppress(Exception):
+                had_same_secret = self.credentials.get_secret(provider) == key
             self.credentials.set_secret(provider, key)
+            if self.credential_state is not None and (
+                not had_same_secret or self.credential_state.revision(provider) is None
+            ):
+                self.credential_state.rotate_revision(provider)
             self.settings.set("ai_provider", provider)
             self.settings.set("ai_base_url", base_url)
             self.settings.set("ai_model", model)
-            self.settings.set("ai_network_enabled", "true")
+            if self.credential_state is not None:
+                self.credential_state.mark_verified(provider, base_url, model)
             self.reload_configuration()
         except Exception as error:
             self._verified = False
@@ -179,6 +191,22 @@ class AfterSalesAiSetupPage(QWidget):
     def _continue(self) -> None:
         if self._verified:
             self.setup_completed.emit()
+
+    def configuration_is_verified(self) -> bool:
+        provider = self.settings.get("ai_provider", "") or ""
+        base_url = self.settings.get("ai_base_url", "") or ""
+        model = self.settings.get("ai_model", "") or ""
+        if not provider or not base_url or not model or provider == "mock":
+            return False
+        try:
+            if not self.credentials.has_secret(provider):
+                return False
+        except Exception:
+            return False
+        return bool(
+            self.credential_state
+            and self.credential_state.is_verified(provider, base_url, model)
+        )
 
     @staticmethod
     def _default_base_url(provider: str) -> str:

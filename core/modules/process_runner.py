@@ -1,7 +1,9 @@
+import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal
 
@@ -253,6 +255,31 @@ class ModuleProcessRunner(QObject):
 
         for output in result.outputs:
             resolve_contained_file(Path(output.path), output_dir, "output artifact")
+
+        if self._job.phase.value == "finalize" and self._module.manifest.monthly_rollup:
+            snapshot = result.monthly_snapshot
+            if snapshot is None:
+                raise ValueError("monthly_rollup module finalize result is missing a snapshot")
+            if self._job.period_year is None or self._job.period_month is None:
+                raise ValueError("monthly_rollup finalize job is missing its period")
+            if (
+                snapshot.year != self._job.period_year
+                or snapshot.month != self._job.period_month
+            ):
+                raise ValueError("monthly snapshot period does not match the job")
+            snapshot_path = resolve_contained_file(
+                Path(snapshot.path), output_dir, "monthly snapshot"
+            )
+            contract = self._module.manifest.monthly_rollup
+            schema_path = resolve_contained_file(
+                self._module.path / contract.snapshot_schema,
+                self._module.path,
+                "monthly snapshot schema",
+            )
+            raw_snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            Draft202012Validator(
+                json.loads(schema_path.read_text(encoding="utf-8"))
+            ).validate(raw_snapshot)
 
         input_files = {_resolve_path(Path(path)) for path in self._job.input_files}
         for file_result in result.file_results:

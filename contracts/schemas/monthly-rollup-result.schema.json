@@ -1,0 +1,115 @@
+{
+  "$defs": {
+    "ModuleId": {
+      "enum": [
+        "moisture",
+        "boiling",
+        "after_sales"
+      ],
+      "title": "ModuleId",
+      "type": "string"
+    },
+    "OutputArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "mime_type": {
+          "title": "Mime Type",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "path",
+        "label",
+        "mime_type"
+      ],
+      "title": "OutputArtifact",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "errors": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Errors",
+      "type": "array"
+    },
+    "module_id": {
+      "$ref": "#/$defs/ModuleId"
+    },
+    "module_version": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "title": "Module Version",
+      "type": "string"
+    },
+    "outputs": {
+      "items": {
+        "$ref": "#/$defs/OutputArtifact"
+      },
+      "title": "Outputs",
+      "type": "array"
+    },
+    "schema_version": {
+      "pattern": "^1\\.0$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "status": {
+      "enum": [
+        "success",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "target_month": {
+      "maximum": 12,
+      "minimum": 1,
+      "title": "Target Month",
+      "type": "integer"
+    },
+    "transaction_id": {
+      "pattern": "^[A-Za-z0-9-]{6,64}$",
+      "title": "Transaction Id",
+      "type": "string"
+    },
+    "used_snapshots": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Used Snapshots",
+      "type": "object"
+    },
+    "year": {
+      "maximum": 9999,
+      "minimum": 2000,
+      "title": "Year",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "transaction_id",
+    "module_id",
+    "module_version",
+    "year",
+    "target_month",
+    "status"
+  ],
+  "title": "MonthlyRollupResult",
+  "type": "object"
+}

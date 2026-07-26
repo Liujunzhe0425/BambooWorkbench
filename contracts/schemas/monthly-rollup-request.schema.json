@@ -1,0 +1,140 @@
+{
+  "$defs": {
+    "ModuleId": {
+      "enum": [
+        "moisture",
+        "boiling",
+        "after_sales"
+      ],
+      "title": "ModuleId",
+      "type": "string"
+    },
+    "RollupSnapshotRef": {
+      "additionalProperties": false,
+      "properties": {
+        "job_id": {
+          "pattern": "^[A-Za-z0-9-]{6,64}$",
+          "title": "Job Id",
+          "type": "string"
+        },
+        "module_id": {
+          "$ref": "#/$defs/ModuleId"
+        },
+        "month": {
+          "maximum": 12,
+          "minimum": 1,
+          "title": "Month",
+          "type": "integer"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "size": {
+          "minimum": 0,
+          "title": "Size",
+          "type": "integer"
+        },
+        "snapshot_id": {
+          "pattern": "^[A-Za-z0-9-]{6,64}$",
+          "title": "Snapshot Id",
+          "type": "string"
+        },
+        "year": {
+          "maximum": 9999,
+          "minimum": 2000,
+          "title": "Year",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "snapshot_id",
+        "job_id",
+        "module_id",
+        "year",
+        "month",
+        "path",
+        "size",
+        "sha256"
+      ],
+      "title": "RollupSnapshotRef",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "configuration_identity": {
+      "additionalProperties": {
+        "type": "string"
+      },
+      "title": "Configuration Identity",
+      "type": "object"
+    },
+    "module_id": {
+      "$ref": "#/$defs/ModuleId"
+    },
+    "module_version": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "title": "Module Version",
+      "type": "string"
+    },
+    "offline_required": {
+      "const": true,
+      "default": true,
+      "title": "Offline Required",
+      "type": "boolean"
+    },
+    "output_dir": {
+      "title": "Output Dir",
+      "type": "string"
+    },
+    "schema_version": {
+      "pattern": "^1\\.0$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "snapshots": {
+      "items": {
+        "$ref": "#/$defs/RollupSnapshotRef"
+      },
+      "maxItems": 12,
+      "minItems": 1,
+      "title": "Snapshots",
+      "type": "array"
+    },
+    "target_month": {
+      "maximum": 12,
+      "minimum": 1,
+      "title": "Target Month",
+      "type": "integer"
+    },
+    "transaction_id": {
+      "pattern": "^[A-Za-z0-9-]{6,64}$",
+      "title": "Transaction Id",
+      "type": "string"
+    },
+    "year": {
+      "maximum": 9999,
+      "minimum": 2000,
+      "title": "Year",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "transaction_id",
+    "module_id",
+    "module_version",
+    "year",
+    "target_month",
+    "snapshots",
+    "output_dir"
+  ],
+  "title": "MonthlyRollupRequest",
+  "type": "object"
+}

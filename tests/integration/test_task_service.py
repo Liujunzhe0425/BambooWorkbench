@@ -159,9 +159,10 @@ def test_task_service_publishes_outputs_after_module_finishes(
     with qtbot.waitSignal(service.finished, timeout=15_000) as signal:
         job_id = service.create_and_start(ModuleId.MOISTURE, [source])
 
-    folders = list(output_root.glob("000001-竹丝水分-*"))
+    folders = [path for path in output_root.iterdir() if path.is_dir()]
     assert len(folders) == 1
-    assert (folders[0] / "result.json").is_file()
+    assert not folders[0].name.startswith("000001-")
+    assert not (folders[0] / "result.json").exists()
     assert all(Path(output.path).is_relative_to(folders[0]) for output in signal.args[0].outputs)
     stored = app_services["task_repository"].list_outputs(job_id)
     assert all(Path(str(output["path"])).is_relative_to(folders[0]) for output in stored)

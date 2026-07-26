@@ -161,11 +161,14 @@ def test_secondary_pages_replace_only_canonical_placeholders(main_window) -> Non
     assert list(main_window.pages) == [
         PageId.WORKBENCH,
         PageId.HISTORY,
+        PageId.MONTHLY_HISTORY,
         PageId.CONFIRMATIONS,
         PageId.KNOWLEDGE,
         PageId.SETTINGS,
     ]
     assert main_window.pages[PageId.HISTORY] is main_window.history_page
+    assert main_window.pages[PageId.MONTHLY_HISTORY] is main_window.monthly_history_page
+    assert main_window.pages[PageId.CONFIRMATIONS] is main_window.pending_list_page
     assert main_window.pages[PageId.KNOWLEDGE] is main_window.knowledge_page
     assert main_window.pages[PageId.SETTINGS] is main_window.settings_page
 

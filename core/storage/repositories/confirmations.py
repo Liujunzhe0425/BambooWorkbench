@@ -104,3 +104,60 @@ class ConfirmationRepository:
             if record["answer"] is not None:
                 record["answer"] = json.loads(str(record["answer"]))
         return records
+
+    def save_draft(
+        self,
+        job_id: str,
+        answers: list[ConfirmationAnswer],
+        *,
+        learning_enabled: bool,
+    ) -> None:
+        answer_ids = [answer.confirmation_id for answer in answers]
+        if len(answer_ids) != len(set(answer_ids)):
+            raise ValueError("duplicate confirmation answer IDs")
+        known = {
+            str(row["confirmation_id"])
+            for row in self.database.connection.execute(
+                "SELECT confirmation_id FROM confirmations WHERE job_id = ?", (job_id,)
+            ).fetchall()
+        }
+        unknown = set(answer_ids) - known
+        if unknown:
+            raise KeyError(f"unknown confirmations for {job_id}: {sorted(unknown)}")
+        payload = json.dumps(
+            [answer.model_dump(mode="json") for answer in answers],
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        self.database.execute(
+            "INSERT INTO confirmation_drafts("
+            "job_id, answers_json, learning_enabled, updated_at"
+            ") VALUES (?, ?, ?, ?) ON CONFLICT(job_id) DO UPDATE SET "
+            "answers_json=excluded.answers_json, "
+            "learning_enabled=excluded.learning_enabled, updated_at=excluded.updated_at",
+            (
+                job_id,
+                payload,
+                int(learning_enabled),
+                datetime.now().astimezone().isoformat(),
+            ),
+        )
+
+    def load_draft(self, job_id: str) -> dict[str, object] | None:
+        row = self.database.connection.execute(
+            "SELECT * FROM confirmation_drafts WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return {
+            "job_id": str(row["job_id"]),
+            "answers": [
+                ConfirmationAnswer.model_validate(item)
+                for item in json.loads(str(row["answers_json"]))
+            ],
+            "learning_enabled": bool(row["learning_enabled"]),
+            "updated_at": str(row["updated_at"]),
+        }
+
+    def delete_draft(self, job_id: str) -> None:
+        self.database.execute("DELETE FROM confirmation_drafts WHERE job_id = ?", (job_id,))

@@ -16,7 +16,7 @@ from PySide6.QtCore import QObject, Signal
 from core.contracts.confirmation import ConfirmationAnswer, ConfirmationBundle
 from core.contracts.enums import JobPhase, ModuleId, RunMode, TaskStatus
 from core.contracts.job import JobRequest
-from core.contracts.result import ConfirmationPrompt, ModuleResult, SourceRef
+from core.contracts.result import ConfirmationPrompt, ModuleResult
 from core.contracts.service_request import ServiceRequest
 from core.modules.process_runner import ModuleProcessRunner
 from core.modules.registry import ModuleRegistry
@@ -39,6 +39,7 @@ from core.tasks.snapshots import remove_snapshots, snapshot_inputs
 if TYPE_CHECKING:
     from core.modules.management_service import ModuleManagementService
     from core.services.orchestrator import ServiceOrchestrator
+    from core.tasks.monthly_service import MonthlyRollupService
 
 _JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{6,64}$")
 _TERMINAL_MARKER = ".terminal-pending.json"
@@ -106,6 +107,7 @@ class TaskService(QObject):
         service_orchestrator: "ServiceOrchestrator | None" = None,
         settings: SettingsStore | None = None,
         module_management_service: "ModuleManagementService | None" = None,
+        monthly_rollup_service: "MonthlyRollupService | None" = None,
     ) -> None:
         super().__init__()
         self.paths = paths
@@ -117,6 +119,7 @@ class TaskService(QObject):
         self.service_orchestrator = service_orchestrator
         self.settings = settings
         self.module_management_service = module_management_service
+        self.monthly_rollup_service = monthly_rollup_service
         self.runners: dict[str, ModuleProcessRunner] = {}
         self._states: dict[str, TaskStateMachine] = {}
         self._jobs: dict[str, JobRequest] = {}
@@ -127,6 +130,9 @@ class TaskService(QObject):
         self._shutdown_result = True
         self._blocked_callbacks: set[str] = set()
         self._preauthorized_ai: set[str] = set()
+        if self.monthly_rollup_service is not None:
+            self.monthly_rollup_service.completed.connect(self._monthly_completed)
+            self.monthly_rollup_service.failed.connect(self._monthly_failed)
         self._reconcile_startup()
 
     def pending_confirmations(self) -> list[tuple[str, ModuleResult]]:
@@ -203,6 +209,8 @@ class TaskService(QObject):
                         )
             self._cleanup_runner(job_id, runner, task_terminal=True)
             self._blocked_callbacks.discard(job_id)
+        if self.monthly_rollup_service is not None:
+            cleanup_ok = self.monthly_rollup_service.shutdown() and cleanup_ok
         self._shutdown_result = cleanup_ok
         if cleanup_ok:
             _LOG.info("task service shutdown complete")
@@ -233,6 +241,10 @@ class TaskService(QObject):
         *,
         module_config: dict[str, object] | None = None,
         ai_consent_granted: bool = False,
+        task_name: str | None = None,
+        period_year: int | None = None,
+        period_month: int | None = None,
+        learning_enabled: bool = True,
     ) -> str:
         module = self.registry.get(module_id)
         framework_ai = module.manifest.framework_ai
@@ -247,6 +259,20 @@ class TaskService(QObject):
                 input_count=len(inputs),
             )
         timestamp = datetime.now().astimezone()
+        year = timestamp.year if period_year is None else period_year
+        month = timestamp.month if period_month is None else period_month
+        if not 2000 <= year <= 9999 or not 1 <= month <= 12:
+            raise ValueError("任务年月无效")
+        resolved_name = (
+            task_name or f"{module.manifest.module_name}-{year}年{month:02d}月"
+        ).strip()
+        if not resolved_name or len(resolved_name) > 160:
+            raise ValueError("任务名称不能为空且不能超过 160 个字符")
+        output_root_id = None
+        if self.monthly_rollup_service is not None:
+            output_root_id = int(
+                self.monthly_rollup_service.output_roots.current()["id"]
+            )
         job_id = self.job_id_factory()
         if not _JOB_ID_PATTERN.fullmatch(job_id):
             raise ValueError("job_id_factory returned an invalid job ID")
@@ -259,6 +285,11 @@ class TaskService(QObject):
                 module_id.value,
                 TaskLifecycleState.CREATED.value,
                 timestamp.isoformat(),
+                task_name=resolved_name,
+                period_year=year,
+                period_month=month,
+                learning_enabled=learning_enabled,
+                output_root_id=output_root_id,
             )
         except Exception:
             shutil.rmtree(task_dir)
@@ -308,6 +339,10 @@ class TaskService(QObject):
                 [snapshot.copy for snapshot in snapshots],
                 task_dir,
                 module_config_file=module_config_file,
+                task_name=resolved_name,
+                period_year=year,
+                period_month=month,
+                learning_enabled=learning_enabled,
             )
             job_path = task_dir / "job-draft.json"
             job_path.write_text(job.model_dump_json(indent=2), encoding="utf-8")
@@ -323,6 +358,40 @@ class TaskService(QObject):
 
     def finalize(self, job_id: str, bundle_path: Path) -> None:
         self._begin_finalize(job_id, bundle_path, validate_answers=True)
+
+    def retry_monthly_rollup(self, job_id: str) -> None:
+        if self.monthly_rollup_service is None:
+            raise RuntimeError("月度累计框架服务未配置")
+        task = self.task_repository.get(job_id)
+        if task["status"] != TaskLifecycleState.REPLACEMENT_CANDIDATE.value:
+            raise InvalidTaskTransition("只有替换候选任务可以重试累计生成")
+        task_dir = resolve_contained_directory(
+            self.paths.tasks / job_id,
+            self.paths.tasks,
+            "replacement candidate task directory",
+            reject_link=True,
+        )
+        final_path = resolve_contained_file(
+            task_dir / "job-finalize.json",
+            task_dir,
+            "replacement candidate final job",
+            reject_link=True,
+        )
+        job = JobRequest.model_validate_json(final_path.read_text(encoding="utf-8"))
+        result_path = resolve_contained_file(
+            Path(job.output_dir) / "result.json",
+            task_dir,
+            "replacement candidate result",
+            reject_link=True,
+        )
+        result = ModuleResult.model_validate_json(result_path.read_text(encoding="utf-8"))
+        self._states[job_id] = TaskStateMachine(TaskLifecycleState.REPLACEMENT_CANDIDATE)
+        self._jobs[job_id] = job
+        self._persist_transition(job_id, TaskLifecycleState.RUNNING_FINALIZE)
+        try:
+            self.monthly_rollup_service.start(job_id, result)
+        except Exception as error:
+            self._monthly_failed(job_id, self._error_message(error), True)
 
     def _begin_finalize(
         self,
@@ -409,7 +478,9 @@ class TaskService(QObject):
         if draft_result.service_requests:
             if self.service_orchestrator is None:
                 raise RuntimeError("module requested shared services but none are configured")
-            ai_consent = self._service_consent_map(bundle, draft_result.service_requests)
+            ai_consent = self._service_consent_map(
+                job_id, bundle, draft_result.service_requests
+            )
             response_path = self.service_orchestrator.resolve(
                 task_id=job_id,
                 module_id=trusted_draft.module_id.value,
@@ -417,6 +488,7 @@ class TaskService(QObject):
                 requests=draft_result.service_requests,
                 ai_consent=ai_consent,
                 task_dir=task_dir,
+                authorization_source=self._ai_authorization_source(job_id),
             )
             service_response_file = str(response_path)
         final_payload = trusted_draft.model_dump(mode="python")
@@ -432,6 +504,7 @@ class TaskService(QObject):
         final_path = task_dir / "job-finalize.json"
         _atomic_write_text(frozen_bundle_path, bundle.model_dump_json(indent=2))
         _atomic_write_text(final_path, final_job.model_dump_json(indent=2))
+        self.confirmation_repository.delete_draft(job_id)
 
         self._persist_transition(job_id, TaskLifecycleState.RUNNING_FINALIZE)
         self._pending_confirmation_results.pop(job_id, None)
@@ -497,7 +570,7 @@ class TaskService(QObject):
         if draft.run_mode is not expected_mode:
             raise ValueError("job-draft run_mode does not match persisted snapshot count")
         service_bound = draft.service_response_file is not None
-        if draft.ai_enabled != service_bound:
+        if draft.ai_enabled and not service_bound:
             raise ValueError("job-draft AI state does not match its service response")
         if draft.allowed_knowledge_scopes != ["shared", draft.module_id.value]:
             raise ValueError("job-draft knowledge scopes are not canonical")
@@ -772,12 +845,14 @@ class TaskService(QObject):
         try:
             job = self._jobs[job_id]
             result_path = str((Path(job.output_dir) / "result.json").resolve())
-            if job.phase is JobPhase.DRAFT and self._service_first_required(job):
+            if job.phase is JobPhase.DRAFT:
                 if job.service_response_file is None and result.service_requests:
                     self._cleanup_runner(job_id, runner, task_terminal=False)
                     self._start_service_bound_draft(job_id, job, result)
                     return
                 if (
+                    self._service_first_required(job)
+                    and
                     job.service_response_file is None
                     and result.summary.processed_count > 0
                     and not result.service_requests
@@ -814,6 +889,16 @@ class TaskService(QObject):
                 target = TaskLifecycleState(host_result.status.value)
                 display_result = host_result
                 if host_result.status in {TaskStatus.SUCCESS, TaskStatus.PARTIAL_SUCCESS}:
+                    module = self.registry.get(job.module_id)
+                    if (
+                        job.phase is JobPhase.FINALIZE
+                        and module.manifest.monthly_rollup is not None
+                    ):
+                        if self.monthly_rollup_service is None:
+                            raise RuntimeError("月度累计框架服务未配置")
+                        self._cleanup_runner(job_id, runner, task_terminal=False)
+                        self.monthly_rollup_service.start(job_id, host_result)
+                        return
                     display_result = self._publish_result(job_id, job, host_result)
                     self.task_repository.replace_outputs(job_id, display_result.outputs)
                 self._persist_transition(job_id, target, result_path=result_path)
@@ -830,6 +915,34 @@ class TaskService(QObject):
             except Exception as exc:
                 self._record_failure(job_id, self._error_message(exc))
 
+    def _monthly_completed(self, job_id: str, result: ModuleResult) -> None:
+        try:
+            target = TaskLifecycleState(result.status.value)
+            result_path = str((Path(self._jobs[job_id].output_dir) / "result.json").resolve())
+            self._persist_transition(job_id, target, result_path=result_path)
+            self.finished.emit(result)
+            _LOG.info("monthly rollup committed job=%s status=%s", job_id, target.value)
+        except Exception as error:
+            self._record_failure(job_id, self._error_message(error))
+            return
+        self._cleanup_runner(job_id, task_terminal=True)
+
+    def _monthly_failed(
+        self, job_id: str, message: str, replacement_candidate: bool
+    ) -> None:
+        target = (
+            TaskLifecycleState.REPLACEMENT_CANDIDATE
+            if replacement_candidate
+            else TaskLifecycleState.FAILED
+        )
+        try:
+            self._persist_transition(job_id, target, error=message)
+        except Exception as error:
+            self._record_failure(job_id, self._error_message(error))
+            return
+        self.failed.emit(job_id, message)
+        self._cleanup_runner(job_id, task_terminal=True)
+
     def _service_first_required(self, job: JobRequest) -> bool:
         module = self.registry.get(job.module_id)
         policy = module.manifest.framework_ai
@@ -841,8 +954,6 @@ class TaskService(QObject):
         draft: JobRequest,
         result: ModuleResult,
     ) -> None:
-        if job_id not in self._preauthorized_ai:
-            raise RuntimeError("售后任务缺少本批次 AI 授权")
         if self.service_orchestrator is None:
             raise RuntimeError("框架 AI 服务尚未配置")
         task_dir = resolve_contained_directory(
@@ -851,8 +962,12 @@ class TaskService(QObject):
             "service-first task directory",
             reject_link=True,
         )
+        allowed = bool(
+            (self.settings and self.settings.get("ai_network_enabled", "false") == "true")
+            or job_id in self._preauthorized_ai
+        )
         decisions = {
-            request.request_id: True
+            request.request_id: allowed
             for request in result.service_requests
             if request.service == "ai"
         }
@@ -863,11 +978,12 @@ class TaskService(QObject):
             requests=result.service_requests,
             ai_consent=decisions,
             task_dir=task_dir,
+            authorization_source=self._ai_authorization_source(job_id),
         )
         rebound_payload = draft.model_dump(mode="python")
         rebound_payload.update(
             service_response_file=str(response_path),
-            ai_enabled=bool(decisions),
+            ai_enabled=allowed and bool(decisions),
         )
         rebound = JobRequest.model_validate(rebound_payload)
         draft_path = resolve_contained_target(
@@ -894,16 +1010,21 @@ class TaskService(QObject):
         job: JobRequest,
         result: ModuleResult,
     ) -> ModuleResult:
-        configured_root = self.settings.get("output_dir", "") if self.settings else ""
-        if not configured_root:
-            return result
+        configured_root = (
+            self.settings.get("output_dir", str(self.paths.output))
+            if self.settings
+            else str(self.paths.output)
+        ) or str(self.paths.output)
         try:
+            task = self.task_repository.get(job_id)
             published = publish_outputs(
                 result,
+                task_name=str(task.get("task_name") or "").strip() or None,
                 task_number=self.task_repository.get_number(job_id),
                 task_dir=self.paths.tasks / job_id,
                 task_output_dir=Path(job.output_dir),
                 configured_root=configured_root,
+                folder_timestamp=datetime.fromisoformat(str(task["created_at"])),
             )
         except Exception as error:
             message = (
@@ -1207,6 +1328,23 @@ class TaskService(QObject):
         if result.status in {TaskStatus.FAILED, TaskStatus.CANCELLED}:
             return None
         prompts = list(result.confirmations)
+        if self.monthly_rollup_service is not None:
+            adjusted: list[ConfirmationPrompt] = []
+            for prompt in prompts:
+                if prompt.learning is None:
+                    adjusted.append(prompt)
+                    continue
+                preference = self.monthly_rollup_service.learning.preference(
+                    job.module_id.value, prompt.learning
+                )
+                adjusted.append(
+                    prompt
+                    if preference is None
+                    else prompt.model_copy(
+                        update={"suggested_value": preference.candidate_label}
+                    )
+                )
+            prompts = adjusted
         if result.service_requests:
             if self.service_orchestrator is None:
                 raise RuntimeError("module requested shared services but none are configured")
@@ -1232,48 +1370,11 @@ class TaskService(QObject):
         job: JobRequest,
         requests: list[ServiceRequest],
     ) -> list[ConfirmationPrompt]:
-        if self.service_orchestrator is None:
-            return []
-        prompts: list[ConfirmationPrompt] = []
-        for request in requests:
-            if request.service != "ai" or not request.requires_user_consent:
-                continue
-            preview = self.service_orchestrator.preview_ai(
-                job_id,
-                job.module_id.value,
-                request,
-            )
-            preview_text = json.dumps(
-                preview.payload,
-                ensure_ascii=False,
-                sort_keys=True,
-                indent=2,
-            )
-            categories = "、".join(preview.categories) or "未识别到需替换的敏感类别"
-            record_count = _preview_record_count(preview.payload)
-            field_count = len(preview.payload) if isinstance(preview.payload, dict) else 0
-            prompts.append(
-                ConfirmationPrompt(
-                    confirmation_id=f"{_SERVICE_CONSENT_PREFIX}{request.request_id}",
-                    field=f"AI联网授权：{request.purpose}",
-                    reason=(
-                        f"用途：{request.purpose}。拟发送约 {record_count} 条候选记录、"
-                        f"{field_count} 个顶层字段至 {self.service_orchestrator.provider_id} "
-                        f"({self.service_orchestrator.model})，请求 AI 提供辅助复核。"
-                        f"框架不会发送 API 密钥或原始文件；脱敏检查：{categories}。"
-                        "AI 结果仅作辅助，最终成果仍受模块规则与人工确认约束。"
-                        f"\n\n{_REDACTED_PREVIEW_MARKER}\n{preview_text}"
-                    ),
-                    suggested_value="拒绝",
-                    options=["允许", "拒绝"],
-                    confidence=1.0,
-                    blocking=True,
-                    batch_applicable=False,
-                    rememberable=False,
-                    source=SourceRef(source_file=job.input_files[0]),
-                )
-            )
-        return prompts
+        del job_id, job, requests
+        # v1.3 obtains policy from the global default.  After-sales obtains its
+        # exceptional per-task decision before task creation, never as a
+        # confirmation item.  Redaction and consent auditing remain mandatory.
+        return []
 
     def _load_draft_result(
         self,
@@ -1292,34 +1393,30 @@ class TaskService(QObject):
             raise ValueError("draft result identity does not match task")
         return result
 
-    @staticmethod
     def _service_consent_map(
+        self,
+        job_id: str,
         bundle: ConfirmationBundle,
         requests: list[ServiceRequest],
     ) -> dict[str, bool]:
-        supplied = {answer.confirmation_id: answer.value for answer in bundle.answers}
+        del bundle
+        default_allowed = bool(
+            self.settings and self.settings.get("ai_network_enabled", "false") == "true"
+        )
+        allowed = default_allowed or job_id in self._preauthorized_ai
         decisions: dict[str, bool] = {}
         for request in requests:
             if request.service != "ai":
                 continue
-            if not request.requires_user_consent:
-                decisions[request.request_id] = True
-                continue
-            key = f"{_SERVICE_CONSENT_PREFIX}{request.request_id}"
-            value = supplied.get(key)
-            if isinstance(value, bool):
-                decisions[request.request_id] = value
-            else:
-                decisions[request.request_id] = str(value).strip().lower() in {
-                    "1",
-                    "allow",
-                    "allowed",
-                    "true",
-                    "yes",
-                    "允许",
-                    "同意",
-                }
+            decisions[request.request_id] = allowed
         return decisions
+
+    def _ai_authorization_source(self, job_id: str) -> str:
+        if self.settings and self.settings.get("ai_network_enabled", "false") == "true":
+            return "global_default_allow"
+        if job_id in self._preauthorized_ai:
+            return "after_sales_task_allow"
+        return "global_default_deny"
 
     def _auto_finalize_services(self, job_id: str) -> None:
         task_dir = resolve_contained_directory(
