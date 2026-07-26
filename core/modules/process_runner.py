@@ -34,6 +34,15 @@ def resolve_contained_file(path: Path, root: Path, label: str) -> Path:
     return resolved_path
 
 
+def _requires_monthly_snapshot(job: JobRequest, has_monthly_contract: bool) -> bool:
+    return (
+        job.phase.value == "finalize"
+        and has_monthly_contract
+        and job.period_year is not None
+        and job.period_month is not None
+    )
+
+
 class ModuleProcessRunner(QObject):
     progress = Signal(object)
     completed = Signal(object)
@@ -275,12 +284,17 @@ class ModuleProcessRunner(QObject):
                 if prompt.learning is not None:
                     learning_validator.validate(prompt.learning.model_dump(mode="json"))
 
-        if self._job.phase.value == "finalize" and monthly_contract:
-            snapshot = result.monthly_snapshot
-            if snapshot is None:
-                raise ValueError("monthly_rollup module finalize result is missing a snapshot")
+        snapshot = result.monthly_snapshot
+        monthly_finalize = _requires_monthly_snapshot(
+            self._job, monthly_contract is not None
+        )
+        if monthly_finalize and snapshot is None:
+            raise ValueError("monthly_rollup module finalize result is missing a snapshot")
+        if snapshot is not None:
+            if self._job.phase.value != "finalize" or monthly_contract is None:
+                raise ValueError("monthly snapshot is only valid for a monthly finalize")
             if self._job.period_year is None or self._job.period_month is None:
-                raise ValueError("monthly_rollup finalize job is missing its period")
+                raise ValueError("monthly snapshot requires a job period")
             if (
                 snapshot.year != self._job.period_year
                 or snapshot.month != self._job.period_month

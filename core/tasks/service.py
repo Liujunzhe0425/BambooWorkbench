@@ -266,6 +266,12 @@ class TaskService(QObject):
         month = timestamp.month if period_month is None else period_month
         if not 2000 <= year <= 9999 or not 1 <= month <= 12:
             raise ValueError("任务年月无效")
+        non_monthly_operation = (
+            module_config is not None
+            and module_config.get("operation") == "ai_report"
+        )
+        stored_year = None if non_monthly_operation else year
+        stored_month = None if non_monthly_operation else month
         resolved_name = (
             task_name or f"{module.manifest.module_name}-{year}年{month:02d}月"
         ).strip()
@@ -289,8 +295,8 @@ class TaskService(QObject):
                 TaskLifecycleState.CREATED.value,
                 timestamp.isoformat(),
                 task_name=resolved_name,
-                period_year=year,
-                period_month=month,
+                period_year=stored_year,
+                period_month=stored_month,
                 learning_enabled=learning_enabled,
                 output_root_id=output_root_id,
             )
@@ -343,8 +349,8 @@ class TaskService(QObject):
                 task_dir,
                 module_config_file=module_config_file,
                 task_name=resolved_name,
-                period_year=year,
-                period_month=month,
+                period_year=stored_year,
+                period_month=stored_month,
                 learning_enabled=learning_enabled,
             )
             job_path = task_dir / "job-draft.json"
@@ -896,6 +902,7 @@ class TaskService(QObject):
                     if (
                         job.phase is JobPhase.FINALIZE
                         and module.manifest.monthly_rollup is not None
+                        and host_result.monthly_snapshot is not None
                     ):
                         if self.monthly_rollup_service is None:
                             raise RuntimeError("月度累计框架服务未配置")

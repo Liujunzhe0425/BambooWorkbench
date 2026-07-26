@@ -302,7 +302,7 @@ class MonthlyRollupRunner(QObject):
 def _offline_environment() -> QProcessEnvironment:
     source = QProcessEnvironment.systemEnvironment()
     environment = QProcessEnvironment()
-    for name in source:
+    for name in source.keys():  # noqa: SIM118 - QProcessEnvironment is not iterable.
         if any(marker in name.upper() for marker in _SENSITIVE_ENVIRONMENT_MARKERS):
             continue
         environment.insert(name, source.value(name))
