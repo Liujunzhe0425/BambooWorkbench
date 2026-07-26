@@ -8,6 +8,7 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\BambooWorkbench
+DisableDirPage=no
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=..\installer-output
@@ -35,3 +36,10 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\BambooWorkbench.exe"; IconF
 
 [Run]
 Filename: "{app}\BambooWorkbench.exe"; Description: "启动{#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+Type: filesandordirs; Name: "{app}\cache"
+Type: filesandordirs; Name: "{app}\logs"
+
+[Messages]
+SelectDirLabel3=请选择竹简工作台安装目录。source、output、数据库和知识数据将保存在此目录并在卸载时保留；建议选择空间充足的非系统盘。

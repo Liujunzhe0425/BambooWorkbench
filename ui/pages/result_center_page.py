@@ -42,6 +42,10 @@ class ResultCenterPage(QWidget):
         self.ai_notice.setWordWrap(True)
         self.ai_notice.setProperty("subtle", True)
         self.ai_notice.setVisible(False)
+        self.ai_audit_label = QLabel()
+        self.ai_audit_label.setWordWrap(True)
+        self.ai_audit_label.setProperty("caption", True)
+        self.ai_audit_label.setVisible(False)
         self.failure_toggle = QToolButton()
         self.failure_toggle.setCheckable(True)
         self.failure_toggle.setProperty("detailToggle", True)
@@ -69,6 +73,7 @@ class ResultCenterPage(QWidget):
         card_layout.addLayout(summary_row)
         card_layout.addWidget(self.failure_panel)
         card_layout.addWidget(self.ai_notice)
+        card_layout.addWidget(self.ai_audit_label)
         card_layout.addWidget(self.output_files)
         layout.addWidget(title)
         layout.addWidget(subtitle)
@@ -91,6 +96,23 @@ class ResultCenterPage(QWidget):
         self._set_failures(result)
         self._set_ai_notice(result)
         self.output_files.set_outputs(result.outputs)
+
+    def set_ai_audit(self, decisions: list[object]) -> None:
+        if not decisions:
+            self.ai_audit_label.clear()
+            self.ai_audit_label.setVisible(False)
+            return
+        lines = []
+        for decision in decisions:
+            categories = "、".join(getattr(decision, "data_categories", ())) or "无"
+            allowed = "允许" if bool(getattr(decision, "allowed", False)) else "拒绝"
+            lines.append(
+                f"{allowed} · 数据类别：{categories} · Provider："
+                f"{getattr(decision, 'provider_id', 'unknown')} · 授权来源："
+                f"{getattr(decision, 'authorization_source', 'legacy')}"
+            )
+        self.ai_audit_label.setText("本次 AI 授权与脱敏摘要：\n" + "\n".join(lines))
+        self.ai_audit_label.setVisible(True)
 
     def _set_ai_notice(self, result: ModuleResult) -> None:
         notices = [error for error in result.errors if error.startswith("AI_REPORT_DEGRADED:")]

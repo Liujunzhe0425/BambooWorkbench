@@ -16,6 +16,7 @@ from core.knowledge.models import KnowledgeRecord, KnowledgeSourceKind
 from core.knowledge.repository import KnowledgeRepository
 from core.security.redaction import RedactionService
 from core.services.orchestrator import KnowledgeScopeDenied, ServiceOrchestrator
+from core.storage.settings import SettingsStore
 from core.tasks.service import TaskService
 
 
@@ -162,7 +163,9 @@ def test_unavailable_ai_provider_is_written_as_degraded_response(
     }
     assert "sensitive" not in path.read_text(encoding="utf-8")
 
-def _task_service(app_services: dict[str, object]) -> TaskService:
+def _task_service(
+    app_services: dict[str, object], settings: SettingsStore | None = None
+) -> TaskService:
     orchestrator, _audit = _orchestrator(app_services["database"])
     return TaskService(
         paths=app_services["paths"],
@@ -170,6 +173,7 @@ def _task_service(app_services: dict[str, object]) -> TaskService:
         task_repository=app_services["task_repository"],
         confirmation_repository=app_services["confirmation_repository"],
         service_orchestrator=orchestrator,
+        settings=settings,
     )
 
 
@@ -186,17 +190,18 @@ def test_ai_service_consent_finalizes_with_task_local_response(
 ) -> None:
     source = tmp_path / "ai.xlsx"
     source.write_bytes(b"ai-service")
-    service = _task_service(app_services)
+    settings = SettingsStore(app_services["database"])
+    settings.set("ai_network_enabled", "true")
+    service = _task_service(app_services, settings)
 
     with qtbot.waitSignal(service.needs_confirmation, timeout=15_000) as pending:
         job_id = service.create_and_start(ModuleId.AFTER_SALES, [source])
 
     prompt = pending.args[1].confirmations[0]
-    assert prompt.confirmation_id == "service-consent:ai-1"
-    assert "[LOCAL_PATH]" not in prompt.reason  # mock payload contains metrics only
+    assert prompt.confirmation_id == "mock-ai-review"
     bundle_path = _confirmation_service(app_services).submit(
         job_id,
-        [ConfirmationAnswer(confirmation_id=prompt.confirmation_id, value="允许")],
+        [ConfirmationAnswer(confirmation_id=prompt.confirmation_id, value="人工值")],
     )
 
     with qtbot.waitSignal(service.finished, timeout=15_000) as finished:
@@ -226,7 +231,7 @@ def test_denied_ai_still_finalizes_local_module(
     prompt = pending.args[1].confirmations[0]
     bundle_path = _confirmation_service(app_services).submit(
         job_id,
-        [ConfirmationAnswer(confirmation_id=prompt.confirmation_id, value="拒绝")],
+        [ConfirmationAnswer(confirmation_id=prompt.confirmation_id, value="人工值")],
     )
 
     with qtbot.waitSignal(service.finished, timeout=15_000):

@@ -66,6 +66,11 @@
       "title": "Job Id",
       "type": "string"
     },
+    "learning_enabled": {
+      "default": true,
+      "title": "Learning Enabled",
+      "type": "boolean"
+    },
     "module_config_file": {
       "anyOf": [
         {
@@ -97,6 +102,34 @@
       "default": null,
       "title": "Parent Job Id"
     },
+    "period_month": {
+      "anyOf": [
+        {
+          "maximum": 12,
+          "minimum": 1,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Period Month"
+    },
+    "period_year": {
+      "anyOf": [
+        {
+          "maximum": 9999,
+          "minimum": 2000,
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Period Year"
+    },
     "phase": {
       "$ref": "#/$defs/JobPhase"
     },
@@ -119,6 +152,20 @@
       ],
       "default": null,
       "title": "Service Response File"
+    },
+    "task_name": {
+      "anyOf": [
+        {
+          "maxLength": 160,
+          "minLength": 1,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Task Name"
     }
   },
   "required": [

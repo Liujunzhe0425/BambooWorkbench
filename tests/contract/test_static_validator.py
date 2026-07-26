@@ -44,6 +44,33 @@ def test_validator_accepts_minimal_module(tmp_path: Path) -> None:
     assert validate_module(module_dir).ok is True
 
 
+def test_validator_accepts_complete_monthly_rollup_contract(tmp_path: Path) -> None:
+    module_dir = tmp_path / "module"
+    write_module(module_dir, "run_module.bat")
+    (module_dir / "run_module.bat").write_text("@exit /b 0\n", encoding="utf-8")
+    schema_dir = module_dir / "schemas"
+    schema_dir.mkdir()
+    for name in ("snapshot.json", "request.json", "response.json", "learning.json"):
+        (schema_dir / name).write_text(
+            json.dumps({"$schema": "https://json-schema.org/draft/2020-12/schema"}),
+            encoding="utf-8",
+        )
+    manifest_path = module_dir / "module.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["capabilities"] = ["monthly_rollup"]
+    manifest["monthly_rollup"] = {
+        "schema_version": "1.0",
+        "entrypoint": "run_module.bat",
+        "snapshot_schema": "schemas/snapshot.json",
+        "request_schema": "schemas/request.json",
+        "response_schema": "schemas/response.json",
+        "learning_schema": "schemas/learning.json",
+    }
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    assert validate_module(module_dir).ok is True
+
+
 def test_validator_rejects_absolute_entrypoint(tmp_path: Path) -> None:
     outside_entrypoint = tmp_path / "outside.cmd"
     outside_entrypoint.write_text("@exit /b 0\n", encoding="utf-8")

@@ -69,6 +69,41 @@ def validate_module(module_dir: Path) -> ValidationReport:
             manifest.management_contract.response_schema,
             "management-response-schema",
         )
+    if manifest.monthly_rollup is not None:
+        if "monthly_rollup" not in manifest.capabilities:
+            report.issues.append(
+                ValidationIssue(
+                    "missing-monthly-rollup-capability",
+                    "monthly_rollup contract requires the monthly_rollup capability",
+                )
+            )
+        _validate_entrypoint(
+            report,
+            module_root,
+            manifest.monthly_rollup.entrypoint,
+            "monthly-rollup-entrypoint",
+            required=False,
+        )
+        for raw_path, label in (
+            (manifest.monthly_rollup.snapshot_schema, "monthly-snapshot-schema"),
+            (manifest.monthly_rollup.request_schema, "monthly-request-schema"),
+            (manifest.monthly_rollup.response_schema, "monthly-response-schema"),
+        ):
+            _validate_json_schema_asset(report, module_root, raw_path, label)
+        if manifest.monthly_rollup.learning_schema is not None:
+            _validate_json_schema_asset(
+                report,
+                module_root,
+                manifest.monthly_rollup.learning_schema,
+                "monthly-learning-schema",
+            )
+    elif "monthly_rollup" in manifest.capabilities:
+        report.issues.append(
+            ValidationIssue(
+                "missing-monthly-rollup-contract",
+                "monthly_rollup capability requires a monthly_rollup contract",
+            )
+        )
     if len(manifest.capabilities) != len(set(manifest.capabilities)):
         report.issues.append(
             ValidationIssue("duplicate-capability", "module capabilities must be unique")
