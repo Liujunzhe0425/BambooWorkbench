@@ -20,6 +20,7 @@ from core.confirmations.service import ConfirmationService  # noqa: E402
 from core.contracts.confirmation import ConfirmationAnswer  # noqa: E402
 from core.contracts.enums import ModuleId  # noqa: E402
 from core.contracts.manifest import ModuleManifest  # noqa: E402
+from core.knowledge.learning import LearningEvidenceRepository  # noqa: E402
 from core.knowledge.repository import KnowledgeRepository  # noqa: E402
 from core.modules.registry import (  # noqa: E402
     ModuleRegistry,
@@ -30,8 +31,11 @@ from core.security.redaction import RedactionService  # noqa: E402
 from core.services.orchestrator import ServiceOrchestrator  # noqa: E402
 from core.storage.database import Database  # noqa: E402
 from core.storage.repositories.confirmations import ConfirmationRepository  # noqa: E402
+from core.storage.repositories.monthly import MonthlyRepository  # noqa: E402
+from core.storage.repositories.output_roots import OutputRootRepository  # noqa: E402
 from core.storage.repositories.tasks import TaskRepository  # noqa: E402
 from core.tasks.models import InvalidTaskTransition  # noqa: E402
+from core.tasks.monthly_service import MonthlyRollupService  # noqa: E402
 from core.tasks.service import TaskService  # noqa: E402
 
 
@@ -97,13 +101,27 @@ def test_real_task_service_calls_provider_once_and_finalize_reuses_response(
         provider_id=provider.provider_id,
         model="contract-model",
     )
+    registry = _real_registry(tmp_path)
+    monthly_repository = MonthlyRepository(database)
+    output_roots = OutputRootRepository(database, paths)
+    output_roots.initialize_default()
+    monthly_service = MonthlyRollupService(
+        paths=paths,
+        registry=registry,
+        tasks=task_repository,
+        confirmations=confirmation_repository,
+        monthly=monthly_repository,
+        learning=LearningEvidenceRepository(database),
+        output_roots=output_roots,
+    )
     service = TaskService(
         paths=paths,
-        registry=_real_registry(tmp_path),
+        registry=registry,
         task_repository=task_repository,
         confirmation_repository=confirmation_repository,
         service_orchestrator=orchestrator,
         job_id_factory=lambda: "after-sales-real-flow",
+        monthly_rollup_service=monthly_service,
     )
     source = tmp_path / "真实TaskService脱敏样表.xlsx"
     _create_sample_workbook(
@@ -128,6 +146,10 @@ def test_real_task_service_calls_provider_once_and_finalize_reuses_response(
             ModuleId.AFTER_SALES,
             [source],
             ai_consent_granted=True,
+            task_name="售后中央合同真实链路",
+            period_year=2026,
+            period_month=7,
+            learning_enabled=True,
         )
 
     assert job_id == "after-sales-real-flow"
@@ -135,6 +157,9 @@ def test_real_task_service_calls_provider_once_and_finalize_reuses_response(
     assert provider.calls[0].response_format == "json_object"
     prompts = pending.args[1].confirmations
     assert {prompt.field for prompt in prompts} >= {"售后费用", "责任工厂", "投诉类型"}
+    complaint_prompt = next(prompt for prompt in prompts if prompt.field == "投诉类型")
+    assert complaint_prompt.learning is not None
+    assert complaint_prompt.learning.learning_key == "after_sales.complaint_type.v1"
     response_path = paths.tasks / job_id / "protocol" / "service-response.json"
     assert response_path.is_file()
     assert "api_key" not in response_path.read_text(encoding="utf-8").casefold()
@@ -159,12 +184,12 @@ def test_real_task_service_calls_provider_once_and_finalize_reuses_response(
 
     assert finished.args[0].status.value == "success"
     assert len(provider.calls) == 1
-    final_result = json.loads(
-        (paths.tasks / job_id / "output-final" / "result.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert final_result["service_requests"] == []
+    final_result = finished.args[0]
+    assert final_result.service_requests == []
+    slot = monthly_repository.get_slot("after_sales", 2026, 7)
+    assert slot is not None
+    assert slot["official_job_id"] == job_id
+    assert final_result.outputs
     with pytest.raises(InvalidTaskTransition):
         service.finalize(job_id, bundle_path)
     assert len(provider.calls) == 1

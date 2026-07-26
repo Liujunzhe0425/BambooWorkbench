@@ -83,6 +83,7 @@ def build_required_review_prompts(
             suggested_value=primary,
             options=complaint_types,
             confidence=_confidence(record.get("issue_confidence")),
+            learning=build_complaint_type_learning(record, rules, primary),
         ),
     ]
 
@@ -253,8 +254,9 @@ def _prompt(
     suggested_value: Any,
     options: list[str],
     confidence: float,
+    learning: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    return {
+    prompt = {
         "source_file": source_file,
         "sheet": sheet,
         "cell_or_range": cell_or_range,
@@ -265,7 +267,53 @@ def _prompt(
         "confidence": confidence,
         "blocking": True,
         "batch_applicable": False,
-        "rememberable": False,
+        "rememberable": learning is not None,
+    }
+    if learning is not None:
+        prompt["learning"] = learning
+    return prompt
+
+
+def build_complaint_type_learning(
+    record: dict[str, Any],
+    rules: dict[str, Any],
+    base_suggestion: str,
+) -> dict[str, Any]:
+    """Build a stable, anonymized learning descriptor for the enum complaint type."""
+
+    options = _complaint_type_options(rules)
+    candidate_ids = {
+        "性能": "performance",
+        "外观": "appearance",
+        "加工": "processing",
+        "其他": "other",
+    }
+    brand = _learning_brand(record.get("brand"), rules)
+    product_group = _product_group(record.get("product"))
+    suggestion = (
+        base_suggestion if base_suggestion in candidate_ids else "其他"
+    )
+    return {
+        "schema_version": "1.0",
+        "learning_key": "after_sales.complaint_type.v1",
+        "field": COMPLAINT_TYPE_FIELD,
+        "context": {
+            "brand_group": brand,
+            "product_group": product_group,
+        },
+        "context_levels": [
+            ["brand_group", "product_group"],
+            ["brand_group"],
+        ],
+        "candidates": [
+            {
+                "candidate_id": candidate_ids[option],
+                "label": option,
+            }
+            for option in options
+        ],
+        "base_suggestion_id": candidate_ids[suggestion],
+        "preference_adjustable": True,
     }
 
 
@@ -275,6 +323,34 @@ def _complaint_type_options(rules: dict[str, Any]) -> list[str]:
         return list(DEFAULT_COMPLAINT_TYPES)
     options = [str(item) for item in configured if str(item) in DEFAULT_COMPLAINT_TYPES]
     return options or list(DEFAULT_COMPLAINT_TYPES)
+
+
+def _learning_brand(value: Any, rules: dict[str, Any]) -> str:
+    brand = _text(value)
+    allowed = {
+        str(item).strip()
+        for item in rules.get("brand_order", [])
+        if str(item).strip()
+    }
+    if brand in allowed:
+        return brand
+    if not brand or brand in {"未知", "待确认", "未识别"}:
+        return "未知"
+    return "其他品牌"
+
+
+def _product_group(value: Any) -> str:
+    text = _text(value)
+    groups = (
+        ("地板", ("地板", "板材")),
+        ("户外构件", ("户外", "廊架", "护栏")),
+        ("扶手", ("扶手",)),
+        ("坐凳", ("坐凳", "座椅", "座凳")),
+    )
+    for group, keywords in groups:
+        if any(keyword in text for keyword in keywords):
+            return group
+    return "其他"
 
 
 def _source_cells(source_cells: dict[str, Any], *keys: str) -> str | None:

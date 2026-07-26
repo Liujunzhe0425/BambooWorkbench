@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import subprocess
@@ -27,6 +28,27 @@ def _run(runtime: Path, job_path: Path) -> None:
             raise ValueError("便携运行时输出了非进度协议内容")
 
 
+def _run_rollup(runtime: Path, request_path: Path, response_path: Path) -> None:
+    completed = subprocess.run(
+        [
+            str(runtime),
+            "rollup",
+            "--request",
+            str(request_path),
+            "--response",
+            str(response_path),
+        ],
+        capture_output=True,
+        timeout=180,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise RuntimeError(
+            completed.stderr.decode("utf-8", errors="replace")
+            or f"便携累计运行时退出码：{completed.returncode}"
+        )
+
+
 def _write_json(path: Path, payload: dict[str, object]) -> None:
     path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -50,7 +72,7 @@ def main() -> int:
     draft_output = work / "output-draft"
     draft_job = {
         "schema_version": "1.0",
-        "job_id": "portable-v111-draft",
+        "job_id": "portable-v130-draft",
         "module_id": "after_sales",
         "phase": "draft",
         "run_mode": "single",
@@ -67,8 +89,8 @@ def main() -> int:
     _write_json(draft_job_path, draft_job)
     _run(runtime, draft_job_path)
     draft = json.loads((draft_output / "result.json").read_text(encoding="utf-8"))
-    if draft.get("module_version") != "1.2.0":
-        raise AssertionError("便携运行时不是售后模块 1.2.0")
+    if draft.get("module_version") != "1.3.0":
+        raise AssertionError("便携运行时不是售后模块 1.3.0")
     if draft.get("confirmations"):
         raise AssertionError("第一次 draft 不应在框架 AI 调用前生成业务确认")
     requests = draft.get("service_requests")
@@ -79,7 +101,7 @@ def main() -> int:
         service_path,
         {
             "schema_version": "1.0",
-            "task_id": "portable-v111-draft",
+            "task_id": "portable-v130-draft",
             "module_id": "after_sales",
             "responses": [
                 {
@@ -118,7 +140,7 @@ def main() -> int:
         confirmation_path,
         {
             "schema_version": "1.0",
-            "job_id": "portable-v111-draft",
+            "job_id": "portable-v130-draft",
             "answers": [
                 {
                     "confirmation_id": item["confirmation_id"],
@@ -131,11 +153,11 @@ def main() -> int:
     final_output = work / "output-final"
     final_job = {
         **rebound_job,
-        "job_id": "portable-v111-final",
+        "job_id": "portable-v130-final",
         "phase": "finalize",
         "output_dir": str(final_output),
         "ai_enabled": False,
-        "parent_job_id": "portable-v111-draft",
+        "parent_job_id": "portable-v130-draft",
         "confirmation_file": str(confirmation_path),
         "service_response_file": str(service_path),
     }
@@ -163,7 +185,43 @@ def main() -> int:
     }
     if not expected_outputs <= {path.name for path in final_output.iterdir()}:
         raise AssertionError("便携 finalize 输出不完整")
-    print("便携版 draft→拒绝AI→离线降级→finalize 闭环通过")
+    snapshot_path = final_output / "after_sales_monthly_snapshot.json"
+    if not snapshot_path.is_file():
+        raise AssertionError("便携 finalize 未生成确认后月度快照")
+    snapshot_hash = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+    rollup_output = work / "rollup-output"
+    rollup_request_path = work / "rollup-request.json"
+    rollup_response_path = work / "rollup-response.json"
+    _write_json(
+        rollup_request_path,
+        {
+            "schema_version": "1.0",
+            "request_id": "portable-v130-rollup",
+            "module_id": "after_sales",
+            "module_version": "1.3.0",
+            "year": 2026,
+            "target_month": 5,
+            "offline_required": True,
+            "snapshots": [
+                {
+                    "month": 5,
+                    "path": str(snapshot_path),
+                    "sha256": snapshot_hash,
+                }
+            ],
+            "staging_output_dir": str(rollup_output),
+            "rule_snapshot_id": "portable-rules",
+            "experience_snapshot_id": None,
+            "business_config_snapshot_id": "portable-config",
+        },
+    )
+    _run_rollup(runtime, rollup_request_path, rollup_response_path)
+    rollup = json.loads(rollup_response_path.read_text(encoding="utf-8"))
+    if rollup.get("status") != "success" or rollup.get("used_months") != [5]:
+        raise AssertionError(f"便携离线累计未成功：{rollup}")
+    if len(rollup.get("outputs", [])) != 7:
+        raise AssertionError("便携离线累计输出不完整")
+    print("便携版 draft→拒绝AI→finalize→月度快照→离线累计闭环通过")
     return 0
 
 

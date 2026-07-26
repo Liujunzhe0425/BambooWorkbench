@@ -16,15 +16,14 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from after_sales_agent import MODULE_ID, MODULE_NAME, MODULE_VERSION
-from after_sales_agent.ai_service import (
-    apply_ai_service_outcome,
-    build_ai_service_requests,
-    read_ai_service_responses,
-)
 from after_sales_agent.extractor import file_sha256, process_workbook
 from after_sales_agent.manual_review import (
     apply_business_review_value,
     build_required_review_prompts,
+)
+from after_sales_agent.monthly_rollup import (
+    run_rollup_request,
+    write_finalize_monthly_snapshot,
 )
 from after_sales_agent.report import write_summary_workbook
 from after_sales_agent.rules import load_rules
@@ -91,6 +90,9 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("self-check")
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--job", required=True, help="任务JSON路径")
+    rollup_parser = subparsers.add_parser("rollup")
+    rollup_parser.add_argument("--request", required=True, help="累计请求JSON路径")
+    rollup_parser.add_argument("--response", required=True, help="累计响应JSON路径")
     args = parser.parse_args(argv)
 
     if args.command == "version":
@@ -104,11 +106,21 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:
             print(f"模块运行失败：{exc}", file=sys.stderr)
             return 3
+    if args.command == "rollup":
+        return run_rollup_request(Path(args.request), Path(args.response))
     parser.print_help()
     return 2
 
 
 def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int:
+    # AI 编排只属于普通 draft 阶段。累计入口不会导入本模块 AI 适配代码，
+    # 从进程级保证累计重算无法读取凭据或发出服务请求。
+    from after_sales_agent.ai_service import (
+        apply_ai_service_outcome,
+        build_ai_service_requests,
+        read_ai_service_responses,
+    )
+
     started_at = datetime.now().astimezone().isoformat()
     module_root = _module_root()
     try:
@@ -340,6 +352,30 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
         write_issue_share_workbook(records, issue_chart_path)
         write_annual_monthly_fee_workbook(records, monthly_fee_chart_path)
         write_yearly_chart_dashboard_workbook(records, yearly_dashboard_path)
+        if job.get("phase") == "finalize" and result["status"] == "success":
+            period_year = job.get("period_year")
+            period_month = job.get("period_month")
+            if isinstance(period_year, int) and isinstance(period_month, int):
+                snapshot_path = write_finalize_monthly_snapshot(
+                    records,
+                    output_dir,
+                    year=period_year,
+                    month=period_month,
+                )
+                if snapshot_path is not None:
+                    result["monthly_snapshot"] = {
+                        "schema_version": "1.0",
+                        "path": str(snapshot_path.resolve()),
+                        "snapshot_format": "module-owned-v1",
+                        "year": period_year,
+                        "month": period_month,
+                    }
+                else:
+                    result["status"] = "failed"
+                    result["errors"].append(
+                        "MONTHLY_SNAPSHOT_TARGET_PERIOD_EMPTY："
+                        "目标年月没有可发布的已完成人工确认售后记录。"
+                    )
 
         result["outputs"] = [
             {
@@ -485,6 +521,10 @@ def _validate_job(job: Any) -> None:
         "parent_job_id",
         "confirmation_file",
         "service_response_file",
+        "task_name",
+        "period_year",
+        "period_month",
+        "learning_enabled",
     }
     unexpected = sorted(set(job) - allowed_keys)
     if unexpected:
@@ -497,6 +537,29 @@ def _validate_job(job: Any) -> None:
         raise ValueError("phase 必须为 draft 或 finalize")
     if job.get("run_mode") not in {"single", "batch", "incremental"}:
         raise ValueError("run_mode 不受支持")
+    task_name = job.get("task_name")
+    if task_name is not None and (
+        not isinstance(task_name, str) or not 1 <= len(task_name) <= 160
+    ):
+        raise ValueError("task_name 必须是 1 到 160 字符的文本")
+    period_year = job.get("period_year")
+    period_month = job.get("period_month")
+    if (period_year is None) != (period_month is None):
+        raise ValueError("period_year 和 period_month 必须同时提供")
+    if period_year is not None and (
+        not isinstance(period_year, int)
+        or isinstance(period_year, bool)
+        or not 2000 <= period_year <= 9999
+    ):
+        raise ValueError("period_year 必须为 2000 到 9999")
+    if period_month is not None and (
+        not isinstance(period_month, int)
+        or isinstance(period_month, bool)
+        or not 1 <= period_month <= 12
+    ):
+        raise ValueError("period_month 必须为 1 到 12")
+    if not isinstance(job.get("learning_enabled", True), bool):
+        raise ValueError("learning_enabled 必须为布尔值")
     input_files = job.get("input_files")
     if not isinstance(input_files, list) or not input_files:
         raise ValueError("input_files 至少需要一个文件")
@@ -535,27 +598,33 @@ def _normalize_anomalies(items: list[dict[str, Any]], offset: int) -> list[dict[
     return normalized
 
 
-def _normalize_confirmations(items: list[dict[str, Any]], offset: int) -> list[dict[str, Any]]:
+def _normalize_confirmations(
+    items: list[dict[str, Any]],
+    offset: int,
+) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for index, item in enumerate(items, start=offset + 1):
         try:
             confidence = float(item.get("confidence") or 0.0)
         except (TypeError, ValueError):
             confidence = 0.0
-        normalized.append(
-            {
-                "confirmation_id": f"C-{index:04d}",
-                "field": str(item.get("field") or "unknown"),
-                "reason": str(item.get("reason") or "需要人工复核"),
-                "suggested_value": item.get("suggested_value"),
-                "options": list(item.get("options") or []),
-                "confidence": max(0.0, min(confidence, 1.0)),
-                "blocking": bool(item.get("blocking")),
-                "batch_applicable": bool(item.get("batch_applicable", True)),
-                "rememberable": bool(item.get("rememberable", True)),
-                "source": _source_ref(item),
-            }
-        )
+        confirmation_id = f"C-{index:04d}"
+        prompt = {
+            "confirmation_id": confirmation_id,
+            "field": str(item.get("field") or "unknown"),
+            "reason": str(item.get("reason") or "需要人工复核"),
+            "suggested_value": item.get("suggested_value"),
+            "options": list(item.get("options") or []),
+            "confidence": max(0.0, min(confidence, 1.0)),
+            "blocking": bool(item.get("blocking")),
+            "batch_applicable": bool(item.get("batch_applicable", True)),
+            "rememberable": bool(item.get("rememberable", True)),
+            "source": _source_ref(item),
+        }
+        learning = item.get("learning")
+        if isinstance(learning, dict):
+            prompt["learning"] = learning
+        normalized.append(prompt)
     return normalized
 
 
