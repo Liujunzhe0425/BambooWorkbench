@@ -58,6 +58,7 @@ class InternalMoistureRunResult:
     anomalies: tuple[InternalAnomaly, ...] = ()
     confirmations: tuple[Mapping[str, Any], ...] = ()
     outputs: tuple[InternalOutput, ...] = ()
+    monthly_snapshot: Mapping[str, Any] | None = None
     file_results: tuple[Mapping[str, Any], ...] = ()
     service_requests: tuple[Mapping[str, Any], ...] = ()
     analysis_summary: str | None = None

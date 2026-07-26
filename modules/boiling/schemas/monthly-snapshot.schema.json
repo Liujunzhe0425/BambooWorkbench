@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bambooworkbench.local/modules/boiling/monthly-snapshot.schema.json",
+  "title": "BoilingMonthlySnapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "module_id",
+    "module_version",
+    "year",
+    "month",
+    "snapshot_format",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "module_id": {"const": "boiling"},
+    "module_version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
+    "year": {"type": "integer", "minimum": 2000, "maximum": 9999},
+    "month": {"type": "integer", "minimum": 1, "maximum": 12},
+    "snapshot_format": {"const": "module-owned-v1"},
+    "payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "rule_version",
+        "records",
+        "excluded_records",
+        "anomalies",
+        "confirmation_answers",
+        "learning_descriptions",
+        "ai_review",
+        "knowledge_review"
+      ],
+      "properties": {
+        "rule_version": {"type": ["string", "null"]},
+        "records": {"type": "array", "items": {"type": "object"}},
+        "excluded_records": {"type": "array", "items": {"type": "object"}},
+        "anomalies": {"type": "array", "items": {"type": "object"}},
+        "confirmation_answers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["confirmation_id", "value"],
+            "properties": {
+              "confirmation_id": {"type": "string", "minLength": 1},
+              "value": {}
+            }
+          }
+        },
+        "learning_descriptions": {
+          "type": "array",
+          "items": {"type": "object"}
+        },
+        "ai_review": {"type": ["object", "null"]},
+        "knowledge_review": {"type": ["object", "null"]}
+      }
+    }
+  }
+}

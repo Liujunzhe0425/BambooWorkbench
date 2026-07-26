@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bambooworkbench.local/modules/boiling/confirmation-learning.schema.json",
+  "title": "BoilingConfirmationLearning",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "learning_key",
+    "field",
+    "context",
+    "context_levels",
+    "candidates",
+    "base_suggestion_id"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "learning_key": {
+      "type": "string",
+      "pattern": "^boiling\\.[a-z0-9_.-]+\\.v\\d+$"
+    },
+    "field": {"type": "string", "minLength": 1, "maxLength": 120},
+    "context": {
+      "type": "object",
+      "additionalProperties": {
+        "type": ["string", "integer", "number", "boolean", "null"]
+      }
+    },
+    "context_levels": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 8,
+      "items": {
+        "type": "array",
+        "items": {"type": "string"}
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 64,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidate_id", "label"],
+        "properties": {
+          "candidate_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+          },
+          "label": {"type": "string", "minLength": 1, "maxLength": 160}
+        }
+      }
+    },
+    "base_suggestion_id": {"type": "string"},
+    "preference_adjustable": {"type": "boolean", "default": true}
+  }
+}

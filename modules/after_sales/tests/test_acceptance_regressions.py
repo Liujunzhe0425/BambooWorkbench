@@ -8,6 +8,7 @@ from zipfile import ZipFile
 
 import openpyxl
 from docx import Document
+from openpyxl.utils import get_column_letter
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 PR16_ACCEPTANCE_FIXTURE = (
@@ -248,6 +249,13 @@ def test_master_summary_keeps_one_row_and_all_issue_flags(tmp_path: Path) -> Non
     assert sheet.cell(4, headers["原因分类（性能/外观/加工）"]).value == "性能、加工"
     assert sheet.cell(4, headers["性能"]).value == "是"
     assert sheet.cell(4, headers["加工"]).value == "是"
+    assert sheet.auto_filter.ref == f"A3:{get_column_letter(sheet.max_column)}4"
+    assert not sheet.tables
+    with ZipFile(output) as archive:
+        names = archive.namelist()
+        assert not any(name.startswith("xl/tables/") for name in names)
+        worksheet_xml = archive.read("xl/worksheets/sheet1.xml").decode("utf-8")
+    assert '<autoFilter ref="A3:' in worksheet_xml
 
 
 def test_visual_workbooks_and_word_report_use_the_same_reviewed_metrics(
@@ -408,6 +416,10 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
         confirmation_file=str(confirmation_file),
         service_response_file=str(response_path),
         ai_enabled=True,
+        task_name="售后中央月度验收任务",
+        period_year=2026,
+        period_month=5,
+        learning_enabled=True,
     )
     final = _run(tmp_path, final_payload, "final-job")
     records = json.loads((final_output / "after_sales_records.json").read_text(encoding="utf-8"))
@@ -432,3 +444,40 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
     assert "企业承担金额合计：1,200.00 元" in report
     assert "内部责任扣款合计：200.00 元" in report
     assert "外部承担金额合计：300.00 元" in report
+    snapshot_path = final_output / "after_sales_monthly_snapshot.json"
+    assert snapshot_path.is_file()
+    snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert snapshot["payload"]["records"][0]["after_sales_fee_amount"] == 1200
+    assert snapshot["payload"]["records"][0]["responsible_factory"]
+    assert snapshot["payload"]["records"][0]["primary_issue_type"] in {
+        "性能",
+        "外观",
+        "加工",
+        "其他",
+    }
+    assert prompts["投诉类型"]["learning"]["learning_key"] == (
+        "after_sales.complaint_type.v1"
+    )
+    assert not (final_output / "after_sales_learning_descriptors.json").exists()
+    assert final["monthly_snapshot"] == {
+        "schema_version": "1.0",
+        "path": str(snapshot_path.resolve()),
+        "snapshot_format": "module-owned-v1",
+        "year": 2026,
+        "month": 5,
+    }
+
+    mismatched_output = tmp_path / "mismatched-final-output"
+    mismatched_payload = {
+        **final_payload,
+        "job_id": "acceptance-final-mismatched-period",
+        "output_dir": str(mismatched_output),
+        "period_month": 4,
+    }
+    mismatched = _run(tmp_path, mismatched_payload, "mismatched-final-job")
+    assert mismatched["status"] == "failed"
+    assert mismatched.get("monthly_snapshot") is None
+    assert any(
+        "MONTHLY_SNAPSHOT_TARGET_PERIOD_EMPTY" in error
+        for error in mismatched["errors"]
+    )

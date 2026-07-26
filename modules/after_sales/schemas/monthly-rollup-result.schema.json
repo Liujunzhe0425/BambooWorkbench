@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AfterSalesMonthlyRollupResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "transaction_id",
+    "module_id",
+    "module_version",
+    "year",
+    "target_month",
+    "status"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "transaction_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]{6,64}$"
+    },
+    "module_id": {"const": "after_sales"},
+    "module_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "year": {"type": "integer", "minimum": 2000, "maximum": 9999},
+    "target_month": {"type": "integer", "minimum": 1, "maximum": 12},
+    "status": {"enum": ["success", "failed"]},
+    "used_months": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {"type": "integer", "minimum": 1, "maximum": 12}
+    },
+    "snapshot_hashes": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["snapshot_id", "month", "sha256"],
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9-]{6,64}$"
+          },
+          "month": {"type": "integer", "minimum": 1, "maximum": 12},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "record_count": {"type": "integer", "minimum": 0, "default": 0},
+    "network_call_count": {"const": 0, "default": 0},
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "path", "label", "mime_type", "sha256"],
+        "properties": {
+          "type": {"type": "string"},
+          "path": {"type": "string"},
+          "label": {"type": "string"},
+          "mime_type": {"type": "string"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "error": {
+      "type": ["object", "null"],
+      "default": null,
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]{2,63}$"
+        },
+        "message": {"type": "string", "minLength": 1, "maxLength": 300}
+      }
+    }
+  }
+}

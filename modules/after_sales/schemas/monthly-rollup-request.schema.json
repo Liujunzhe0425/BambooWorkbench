@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AfterSalesMonthlyRollupRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "transaction_id",
+    "module_id",
+    "module_version",
+    "year",
+    "target_month",
+    "snapshots",
+    "snapshot_root",
+    "output_dir"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "transaction_id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9-]{6,64}$"
+    },
+    "module_id": {"const": "after_sales"},
+    "module_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "year": {"type": "integer", "minimum": 2000, "maximum": 9999},
+    "target_month": {"type": "integer", "minimum": 1, "maximum": 12},
+    "offline_required": {"const": true, "default": true},
+    "snapshot_root": {"type": "string", "minLength": 1},
+    "output_dir": {"type": "string", "minLength": 1},
+    "configuration_identity": {
+      "type": ["object", "null"],
+      "default": null,
+      "additionalProperties": false,
+      "required": ["version", "sha256"],
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "snapshots": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "snapshot_id",
+          "job_id",
+          "module_id",
+          "year",
+          "month",
+          "path",
+          "size",
+          "sha256"
+        ],
+        "properties": {
+          "snapshot_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9-]{6,64}$"
+          },
+          "job_id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9-]{6,64}$"
+          },
+          "module_id": {"const": "after_sales"},
+          "year": {"type": "integer", "minimum": 2000, "maximum": 9999},
+          "month": {"type": "integer", "minimum": 1, "maximum": 12},
+          "path": {"type": "string", "minLength": 1},
+          "size": {"type": "integer", "minimum": 0},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    }
+  }
+}

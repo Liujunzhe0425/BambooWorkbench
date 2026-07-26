@@ -21,6 +21,7 @@ from core.contracts.confirmation import ConfirmationAnswer
 from core.contracts.enums import ModuleId
 from core.contracts.manifest import ModuleManifest
 from core.contracts.result import ModuleResult
+from core.knowledge.learning import LearningEvidenceRepository
 from core.knowledge.repository import KnowledgeRepository
 from core.modules.registry import ModuleRegistry, RegisteredModule
 from core.platform.paths import AppPaths
@@ -28,7 +29,11 @@ from core.security.redaction import RedactionService
 from core.services.orchestrator import ServiceOrchestrator
 from core.storage.database import Database
 from core.storage.repositories.confirmations import ConfirmationRepository
+from core.storage.repositories.monthly import MonthlyRepository
+from core.storage.repositories.output_roots import OutputRootRepository
 from core.storage.repositories.tasks import TaskRepository
+from core.storage.settings import SettingsStore
+from core.tasks.monthly_service import MonthlyRollupService
 from core.tasks.service import TaskService
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
@@ -72,6 +77,58 @@ def make_sample(path, include_samples=True):
         sheet.cell(14, 8, 0.05)
         sheet.cell(17, 1, "检测结论：密度检测合格，2h膨胀率检测合格，浸渍剥离检测合格")
         sheet.cell(17, 8, "测试员")
+    workbook.save(path)
+
+
+def make_multi_month_summary(path):
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "水煮检测汇总"
+    sheet.append(
+        [
+            "来源文件",
+            "批号",
+            "产品",
+            "规格",
+            "检测日期",
+            "平均密度(g/cm³)",
+            "平均膨胀率",
+            "自动等级",
+            "需人工复核",
+            "浸渍剥离",
+            "业务状态",
+        ]
+    )
+    sheet.append(
+        [
+            "脱敏-01.xlsx",
+            "B-01",
+            "脱敏产品",
+            "100*100*10",
+            dt.date(2026, 5, 10),
+            1.10,
+            0.060,
+            "蓝色合格",
+            "否",
+            "合格",
+            "正常",
+        ]
+    )
+    sheet.append(
+        [
+            "脱敏-02.xlsx",
+            "B-02",
+            "脱敏产品",
+            "100*100*10",
+            dt.date(2026, 6, 10),
+            1.20,
+            0.075,
+            "蓝色合格",
+            "否",
+            "合格",
+            "正常",
+        ]
+    )
     workbook.save(path)
 
 
@@ -528,11 +585,11 @@ def test_product_usage_in_source_does_not_request_confirmation(tmp_path):
     job_path.write_text(json.dumps(make_job(sample, output), ensure_ascii=False), encoding="utf-8")
     assert boiling_module.run_job(job_path) == 0
     result = load_result(output)
-    assert result["status"] == "needs_confirmation"
-    assert [item["field"] for item in result["confirmations"]] == ["人工开裂检查"]
+    assert result["status"] == "success"
+    assert result["confirmations"] == []
     assert result["service_requests"] == []
     records = json.loads((output / "boiling_records.json").read_text(encoding="utf-8"))
-    assert records["records"][0]["expansion_human_review_required"] is True
+    assert records["records"][0]["expansion_human_review_required"] is False
     assert {item["type"] for item in result["outputs"]} == {
         "summary_excel",
         "analysis_report",
@@ -541,119 +598,35 @@ def test_product_usage_in_source_does_not_request_confirmation(tmp_path):
     }
 
 
-def test_crack_inspection_batch_confirmation_controls_only_crack_review(tmp_path):
-    sample = tmp_path / "crack-review.xlsx"
+def test_numeric_expansion_grade_does_not_request_crack_confirmation(tmp_path):
+    sample = tmp_path / "numeric-grade.xlsx"
     make_labeled_sample(sample, product_usage="家具", expansion=0.05)
-    draft_output = tmp_path / "draft"
-    draft_path = tmp_path / "draft-job.json"
-    draft_path.write_text(
-        json.dumps(make_job(sample, draft_output), ensure_ascii=False),
+    output = tmp_path / "output"
+    job_path = tmp_path / "job.json"
+    job_path.write_text(
+        json.dumps(make_job(sample, output), ensure_ascii=False),
         encoding="utf-8",
     )
-    assert boiling_module.run_job(draft_path) == 0
-    draft_result = load_result(draft_output)
-    prompts = [
-        item for item in draft_result["confirmations"] if item["field"] == "人工开裂检查"
-    ]
-    assert len(prompts) == 1
-    prompt = prompts[0]
-    assert prompt["confirmation_id"].startswith("C-CRACK-INSPECTION-BATCH-")
-    assert prompt["batch_applicable"] is True
-    assert prompt["blocking"] is True
-    assert prompt["options"] == [
-        "是（已检查且符合对应等级）",
-        "否（尚未完成或不符合对应等级）",
-    ]
-
-    for suffix, answer, expected_review in (
-        ("yes", prompt["options"][0], False),
-        ("no", prompt["options"][1], True),
-    ):
-        confirmation_path = tmp_path / f"confirmation-{suffix}.json"
-        confirmation_path.write_text(
-            json.dumps(
-                {
-                    "schema_version": "1.0",
-                    "job_id": "TEST-JOB-001",
-                    "answers": [
-                        {
-                            "confirmation_id": prompt["confirmation_id"],
-                            "value": answer,
-                            "apply_to_batch": True,
-                            "remember_mapping": False,
-                        }
-                    ],
-                },
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )
-        final_output = tmp_path / f"final-{suffix}"
-        final_path = tmp_path / f"final-{suffix}.json"
-        final_job = make_job(
-            sample,
-            final_output,
-            phase="finalize",
-            parent_job_id="TEST-JOB-001",
-            confirmation_file=str(confirmation_path),
-        )
-        final_job["job_id"] = f"CRACK-FINAL-{suffix.upper()}"
-        final_path.write_text(
-            json.dumps(final_job, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        assert boiling_module.run_job(final_path) == 0
-        result = load_result(final_output)
-        assert result["status"] == "success"
-        assert result["confirmations"] == []
-        records = json.loads(
-            (final_output / "boiling_records.json").read_text(encoding="utf-8")
-        )
-        record = records["records"][0]
-        assert record["expansion_crack_review_applicable"] is True
-        assert record["expansion_human_review_required"] is expected_review
-        assert record["crack_inspection_confirmed"] is (not expected_review)
-        summary_book = openpyxl.load_workbook(final_output / "boiling_summary.xlsx")
-        summary_sheet = summary_book["水煮检测汇总"]
-        headers = [cell.value for cell in summary_sheet[1]]
-        review_column = headers.index("需人工复核") + 1
-        assert summary_sheet.cell(2, review_column).value == (
-            "是" if expected_review else "否"
-        )
-        summary_book.close()
-
-    yes_records = json.loads(
-        (tmp_path / "final-yes" / "boiling_records.json").read_text(encoding="utf-8")
-    )
-    yes_record = yes_records["records"][0]
-    assert yes_record["crack_inspection_status"] == "已检查且符合对应等级"
-    assert "需结合开裂" not in yes_record["rule_observations"]["expansion"]
-    assert "核对开裂" not in yes_record["rule_observations"]["expansion"]
-    yes_analysis = openpyxl.load_workbook(
-        tmp_path / "final-yes" / "boiling_analysis.xlsx"
-    )
-    overview = yes_analysis["分析报告"]
-    overview_headers = [cell.value for cell in overview[9]]
-    review_column = overview_headers.index("需人工复核") + 1
-    hint_column = overview_headers.index("阅读提示") + 1
-    assert overview.cell(10, review_column).value == "否"
-    assert "膨胀率需人工复核" not in overview.cell(10, hint_column).value
-    yes_analysis.close()
-    yes_markdown = (
-        tmp_path / "final-yes" / "boiling_analysis.md"
-    ).read_text(encoding="utf-8")
-    assert "本批次存在需要结合开裂观察确认" not in yes_markdown
-    assert "膨胀率需人工复核" not in yes_markdown
-    no_records = json.loads(
-        (tmp_path / "final-no" / "boiling_records.json").read_text(encoding="utf-8")
-    )
-    assert (
-        no_records["records"][0]["crack_inspection_status"]
-        == "已确认尚未完成或不符合对应等级"
-    )
+    assert boiling_module.run_job(job_path) == 0
+    result = load_result(output)
+    assert result["status"] == "success"
+    assert result["confirmations"] == []
+    records = json.loads((output / "boiling_records.json").read_text(encoding="utf-8"))
+    record = records["records"][0]
+    assert record["expansion_grade"] == "绿色优等"
+    assert record["expansion_human_review_required"] is False
+    assert "crack_inspection_confirmed" not in record
+    assert "expansion_crack_review_applicable" not in record
+    assert "开裂" not in record["rule_observations"]["expansion"]
+    summary_book = openpyxl.load_workbook(output / "boiling_summary.xlsx")
+    summary_sheet = summary_book["水煮检测汇总"]
+    headers = [cell.value for cell in summary_sheet[1]]
+    review_column = headers.index("需人工复核") + 1
+    assert summary_sheet.cell(2, review_column).value == "否"
+    summary_book.close()
 
 
-def test_crack_confirmation_does_not_clear_wall_railing_rule_gap(tmp_path):
+def test_wall_railing_rule_gap_keeps_generic_review_without_crack_wording(tmp_path):
     sample = tmp_path / "rule-gap.xlsx"
     make_labeled_sample(sample, product_usage="墙板", expansion=0.07)
     record = boiling_module.extract_file(sample)
@@ -661,12 +634,18 @@ def test_crack_confirmation_does_not_clear_wall_railing_rule_gap(tmp_path):
         record,
         boiling_module.load_rules(),
         digest(sample),
-        crack_inspection_confirmed=True,
     )
-    assert record["expansion_crack_review_applicable"] is False
-    assert record["crack_inspection_status"] == "已检查且符合对应等级"
     assert record["expansion_human_review_required"] is True
-    assert any(item["field"] == "expansion_review" for item in confirmations)
+    expansion_reviews = [
+        item for item in confirmations if item["field"] == "expansion_review"
+    ]
+    assert len(expansion_reviews) == 1
+    assert expansion_reviews[0]["options"] == [
+        "按合格处理",
+        "按不合格处理",
+        "继续待复核",
+    ]
+    assert "开裂" not in json.dumps(expansion_reviews, ensure_ascii=False)
 
 
 def test_ai_enabled_draft_builds_consent_required_privacy_minimal_request(tmp_path):
@@ -711,6 +690,131 @@ def test_ai_enabled_draft_builds_consent_required_privacy_minimal_request(tmp_pa
     assert workbook.sheetnames[-1] == "AI辅助建议"
     assert workbook["AI辅助建议"]["B4"].value == "pending"
     workbook.close()
+
+
+def test_multi_month_summary_builds_deterministic_trend_and_independent_ai_request(
+    tmp_path,
+):
+    sample = tmp_path / "multi-month-summary.xlsx"
+    output = tmp_path / "output"
+    job_path = tmp_path / "job.json"
+    make_multi_month_summary(sample)
+    job = make_job(
+        sample,
+        output,
+        ai_enabled=False,
+        allowed_knowledge_scopes=["shared", "boiling"],
+    )
+    job["job_id"] = "TREND-DRAFT-001"
+    job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+
+    assert boiling_module.run_job(job_path) == 0
+    result = load_result(output)
+    requests = {item["service"]: item for item in result["service_requests"]}
+    assert set(requests) == {"knowledge", "ai"}
+    assert requests["knowledge"]["scope"] == "boiling"
+    assert requests["knowledge"]["requires_user_consent"] is False
+    assert requests["ai"]["requires_user_consent"] is True
+    assert len(requests["ai"]["payload"]["candidates"]) == 1
+    trend_candidate = requests["ai"]["payload"]["candidates"][0]
+    assert trend_candidate["candidate_type"] == "multi_month_trend"
+    assert trend_candidate["evidence_refs"] == ["trend:2026-05", "trend:2026-06"]
+    assert sample.name not in json.dumps(requests["ai"]["payload"], ensure_ascii=False)
+
+    records = json.loads((output / "boiling_records.json").read_text(encoding="utf-8"))
+    trend = records["trend_analysis"]
+    assert trend["available"] is True
+    assert trend["month_count"] == 2
+    assert trend["monthly"][0]["average_density_g_cm3"] == pytest.approx(1.10)
+    assert trend["monthly"][1]["average_density_g_cm3_change"] == pytest.approx(0.10)
+    assert trend["monthly"][1]["average_expansion_ratio_change"] == pytest.approx(0.015)
+    workbook = openpyxl.load_workbook(output / "boiling_analysis.xlsx")
+    assert "多月趋势" in workbook.sheetnames
+    assert workbook["多月趋势"]["A2"].value == "2026-05"
+    assert workbook["多月趋势"]["A3"].value == "2026-06"
+    workbook.close()
+    markdown = (output / "boiling_analysis.md").read_text(encoding="utf-8")
+    assert "多月趋势分析" in markdown
+    assert "规格构成可能不同" in markdown
+
+
+def test_single_month_summary_keeps_ai_and_knowledge_requests_empty(tmp_path):
+    sample = tmp_path / "single-month-summary.xlsx"
+    make_multi_month_summary(sample)
+    workbook = openpyxl.load_workbook(sample)
+    sheet = workbook["水煮检测汇总"]
+    sheet.delete_rows(3)
+    workbook.save(sample)
+    workbook.close()
+    output = tmp_path / "output"
+    job_path = tmp_path / "job.json"
+    job = make_job(
+        sample,
+        output,
+        allowed_knowledge_scopes=["shared", "boiling"],
+    )
+    job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+
+    assert boiling_module.run_job(job_path) == 0
+    result = load_result(output)
+    assert result["service_requests"] == []
+    records = json.loads((output / "boiling_records.json").read_text(encoding="utf-8"))
+    assert records["trend_analysis"]["available"] is False
+    assert records["trend_analysis"]["month_count"] == 1
+
+
+def test_ai_request_caps_payload_and_prioritizes_trend_and_risk(monkeypatch, tmp_path):
+    records = []
+    for index in range(10):
+        candidate = {
+            "candidate_id": f"candidate-{index:02d}",
+            "observations": [
+                {
+                    "severity": "critical" if index == 9 else "warning",
+                    "evidence_refs": [f"rule:R-{index:02d}"],
+                }
+            ],
+            "calculation_conflict_count": index % 2,
+            "conclusion_conflict_count": 1 if index == 8 else 0,
+            "immersion_peel_result": "不合格" if index == 7 else "合格",
+            "manual_review_required": False,
+            "evidence_refs": [f"rule:R-{index:02d}"],
+        }
+        records.append({"candidate": candidate})
+    monkeypatch.setattr(
+        boiling_module,
+        "ai_record_summary",
+        lambda record, _anomalies: record["candidate"],
+    )
+    trend_analysis = {
+        "available": True,
+        "monthly": [
+            {"month": "2026-05", "evidence_ref": "trend:2026-05"},
+            {"month": "2026-06", "evidence_ref": "trend:2026-06"},
+        ],
+    }
+    source = tmp_path / "source.xlsx"
+    source.touch()
+    job = make_job(source, tmp_path / "output")
+
+    request = boiling_module.build_ai_service_request(
+        job,
+        records,
+        [],
+        boiling_module.load_rules(),
+        trend_analysis,
+    )
+
+    assert request is not None
+    payload = request["payload"]
+    assert payload["candidate_total"] == 11
+    assert payload["candidate_sent"] == boiling_module.MAX_AI_RECORDS == 1
+    assert payload["candidate_omitted"] == 10
+    assert payload["candidates"][0]["candidate_type"] == "multi_month_trend"
+    assert boiling_module.select_ai_candidates(
+        [record["candidate"] for record in records]
+    )[0]["candidate_id"] == "candidate-09"
+    assert boiling_module.ai_payload_size(payload) <= boiling_module.MAX_AI_PAYLOAD_BYTES
 
 
 def test_ai_response_is_report_only_and_sanitized(tmp_path):
@@ -810,6 +914,94 @@ def test_ai_response_is_report_only_and_sanitized(tmp_path):
     assert (final_output / "boiling_records.json").read_text(encoding="utf-8") == (
         offline_output / "boiling_records.json"
     ).read_text(encoding="utf-8")
+
+
+def test_finalize_retains_valid_draft_ai_response_after_candidate_reorder(tmp_path):
+    draft_candidate = {
+        "candidate_id": "candidate-draft",
+        "evidence_refs": ["anomaly:A-DRAFT", "rule:R-DRAFT"],
+    }
+    current_candidate = {
+        "candidate_id": "candidate-current",
+        "evidence_refs": ["anomaly:A-CURRENT", "rule:R-CURRENT"],
+    }
+    current_request = {
+        "request_id": "boiling-ai-reordered",
+        "payload": {"candidates": [current_candidate]},
+    }
+    draft_request = {
+        "request_id": current_request["request_id"],
+        "payload": {"candidates": [draft_candidate]},
+    }
+    response_path = write_ai_service_response(
+        tmp_path / "service-response.json",
+        task_id="AI-REORDER-001",
+        request_id=current_request["request_id"],
+        text=json.dumps(
+            make_ai_response_payload(draft_request),
+            ensure_ascii=False,
+        ),
+    )
+    job = {
+        "phase": "finalize",
+        "job_id": "AI-REORDER-FINAL",
+        "parent_job_id": "AI-REORDER-001",
+        "service_response_file": str(response_path),
+    }
+
+    review = boiling_module.read_ai_service_response(
+        job,
+        current_request,
+        eligible_candidates=[draft_candidate, current_candidate],
+    )
+
+    assert review["status"] == "ok"
+    assert review["validation_basis"] == "draft_candidate_revalidated"
+    assert review["items"][0]["candidate_id"] == "candidate-draft"
+    assert "人工确认改变了候选优先级" in review["text"]
+
+
+def test_candidate_reorder_fallback_still_rejects_unknown_evidence(tmp_path):
+    draft_candidate = {
+        "candidate_id": "candidate-draft",
+        "evidence_refs": ["anomaly:A-DRAFT", "rule:R-DRAFT"],
+    }
+    current_candidate = {
+        "candidate_id": "candidate-current",
+        "evidence_refs": ["anomaly:A-CURRENT", "rule:R-CURRENT"],
+    }
+    current_request = {
+        "request_id": "boiling-ai-reordered-invalid",
+        "payload": {"candidates": [current_candidate]},
+    }
+    draft_request = {
+        "request_id": current_request["request_id"],
+        "payload": {"candidates": [draft_candidate]},
+    }
+    response_path = write_ai_service_response(
+        tmp_path / "service-response-invalid.json",
+        task_id="AI-REORDER-INVALID",
+        request_id=current_request["request_id"],
+        text=json.dumps(
+            make_ai_response_payload(draft_request, evidence_refs=["rule:FORGED"]),
+            ensure_ascii=False,
+        ),
+    )
+    job = {
+        "phase": "finalize",
+        "job_id": "AI-REORDER-INVALID-FINAL",
+        "parent_job_id": "AI-REORDER-INVALID",
+        "service_response_file": str(response_path),
+    }
+
+    review = boiling_module.read_ai_service_response(
+        job,
+        current_request,
+        eligible_candidates=[draft_candidate, current_candidate],
+    )
+
+    assert review["status"] == "invalid"
+    assert "证据引用不匹配" in review["text"]
 
 
 def test_denied_ai_response_degrades_to_offline_report(tmp_path):
@@ -932,7 +1124,7 @@ def test_batch_mode_isolates_bad_file_and_skips_duplicate(tmp_path):
     job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
     assert boiling_module.run_job(job_path) == 0
     result = load_result(output)
-    assert result["status"] == "needs_confirmation"
+    assert result["status"] == "partial_success"
     assert result["summary"]["processed_count"] == 1
     assert result["summary"]["skipped_count"] == 1
     assert result["summary"]["failed_count"] == 1
@@ -1140,7 +1332,7 @@ def test_summary_lists_five_fixed_position_density_and_expansion_values(tmp_path
     analysis_sheet = analysis_workbook["分析报告"]
     assert analysis_sheet["A1"].value == "水煮实验分析报告"
     assert analysis_sheet["A5"].value == "整体状态"
-    assert analysis_sheet["A6"].value == "待人工确认"
+    assert analysis_sheet["A6"].value == "本批次未发现异常"
     assert [cell.value for cell in analysis_sheet[9]] == [
         "来源文件",
         "批号",
@@ -1156,8 +1348,8 @@ def test_summary_lists_five_fixed_position_density_and_expansion_values(tmp_path
         "阅读提示",
     ]
     attention_sheet = analysis_workbook["需要关注"]
-    assert attention_sheet["A2"].value == "人工确认"
-    assert attention_sheet["F2"].value == "人工开裂检查"
+    assert attention_sheet["A2"].value == "无"
+    assert attention_sheet["F2"].value is None
     analysis_workbook.close()
 
 
@@ -1180,7 +1372,7 @@ def test_density_boundaries_and_difference_are_inclusive(tmp_path):
 def test_expansion_usage_boundaries_and_wall_review_gap(tmp_path):
     rules = boiling_module.load_rules()
     cases = [
-        ("floor-green.xlsx", "地板", 0.065, True, "绿色优等候选", False),
+        ("floor-green.xlsx", "地板", 0.065, True, "绿色优等", False),
         ("furniture-blue.xlsx", "家具", 0.08, True, "蓝色合格", False),
         ("floor-red.xlsx", "地板", 0.08001, False, "红色不合格", False),
         ("wall-blue.xlsx", "墙板", 0.12, True, "蓝色合格", False),
@@ -1213,11 +1405,7 @@ def test_product_usage_confirmation_is_created_once_and_applied_to_batch(tmp_pat
     draft_result = load_result(draft_output)
     prompts = [item for item in draft_result["confirmations"] if item["field"] == "product_usage"]
     assert len(prompts) == 1
-    crack_prompt = next(
-        item
-        for item in draft_result["confirmations"]
-        if item["field"] == "人工开裂检查"
-    )
+    assert [item["field"] for item in draft_result["confirmations"]] == ["product_usage"]
 
     answer_path = tmp_path / "answer.json"
     answer_path.write_text(
@@ -1227,11 +1415,6 @@ def test_product_usage_confirmation_is_created_once_and_applied_to_batch(tmp_pat
                     {
                         "confirmation_id": prompts[0]["confirmation_id"],
                         "value": "家具",
-                        "apply_to_batch": True,
-                    },
-                    {
-                        "confirmation_id": crack_prompt["confirmation_id"],
-                        "value": "是（已检查且符合对应等级）",
                         "apply_to_batch": True,
                     }
                 ]
@@ -1331,7 +1514,7 @@ def test_41_file_sanitized_history_regression_and_source_hashes(tmp_path):
     job_path.write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
     assert boiling_module.run_job(job_path) == 0
     result = load_result(output)
-    assert result["status"] == "needs_confirmation"
+    assert result["status"] == "success"
     assert result["summary"]["input_count"] == 41
     assert len(result["file_results"]) == 41
     assert {item["status"] for item in result["file_results"]} == {"success"}
@@ -1347,7 +1530,7 @@ def test_41_file_sanitized_history_regression_and_source_hashes(tmp_path):
     assert "## 一、运行概况" in report
     assert "## 四、异常与待复核明细" in report
     assert "## 五、数据风险（按类别汇总）" in report
-    assert report.count("FIVE-00.xlsx") == 1
+    assert "FIVE-00.xlsx" not in report
     assert "FIVE-01.xlsx" not in report
     assert "INCOMPLETE-1.xlsx" in report
     assert "Traceback (most recent call last)" not in report
@@ -1647,8 +1830,12 @@ class StrictBoilingTestProvider:
         )
 
 
-def make_real_boiling_task_services(root):
-    paths = AppPaths.for_root(root / "app-data")
+def make_real_boiling_task_services(root, *, ai_allowed=False):
+    short_id = hashlib.sha256(str(root).encode("utf-8")).hexdigest()[:16]
+    root = MODULE_ROOT.parents[1] / ".r" / short_id[:8]
+    if root.exists():
+        shutil.rmtree(root)
+    paths = AppPaths.for_root(root)
     database = Database.open(paths)
     database.migrate()
     task_repository = TaskRepository(database)
@@ -1674,12 +1861,27 @@ def make_real_boiling_task_services(root):
         provider_id=StrictBoilingTestProvider.provider_id,
         model="boiling-test-model",
     )
+    settings = SettingsStore(database)
+    settings.set("ai_network_enabled", "true" if ai_allowed else "false")
+    output_roots = OutputRootRepository(database, paths)
+    output_roots.initialize_default()
+    monthly_service = MonthlyRollupService(
+        paths,
+        registry,
+        task_repository,
+        confirmation_repository,
+        MonthlyRepository(database),
+        LearningEvidenceRepository(database),
+        output_roots,
+    )
     service = TaskService(
         paths=paths,
         registry=registry,
         task_repository=task_repository,
         confirmation_repository=confirmation_repository,
         service_orchestrator=orchestrator,
+        settings=settings,
+        monthly_rollup_service=monthly_service,
     )
     confirmation_service = ConfirmationService(
         paths,
@@ -1720,7 +1922,7 @@ def task_confirmation_answers(pending_result, ai_decision):
 
 
 def run_real_density_candidate_flow(qtbot, root, ai_decision):
-    services = make_real_boiling_task_services(root)
+    services = make_real_boiling_task_services(root, ai_allowed=ai_decision == "允许")
     service = services["service"]
     sample = (
         MODULE_ROOT
@@ -1732,17 +1934,22 @@ def run_real_density_candidate_flow(qtbot, root, ai_decision):
     )
     try:
         with qtbot.waitSignal(service.needs_confirmation, timeout=30_000) as waiting:
-            job_id = service.create_and_start(ModuleId.BOILING, [sample])
+            job_id = service.create_and_start(
+                ModuleId.BOILING,
+                [sample],
+                task_name="水煮月度测试-2026年07月",
+                period_year=2026,
+                period_month=7,
+            )
         draft_result = waiting.args[1]
         assert draft_result.service_requests
-        request = draft_result.service_requests[0]
-        assert any(
-            prompt.confirmation_id == f"service-consent:{request.request_id}"
+        assert all(
+            not prompt.confirmation_id.startswith("service-consent:")
             for prompt in draft_result.confirmations
         )
         task_dir = services["paths"].tasks / job_id
         draft_job = json.loads((task_dir / "job-draft.json").read_text(encoding="utf-8"))
-        assert draft_job["ai_enabled"] is False
+        assert draft_job["ai_enabled"] is (ai_decision == "允许")
         bundle_path = services["confirmation_service"].submit(
             job_id,
             task_confirmation_answers(draft_result, ai_decision),
@@ -1759,6 +1966,7 @@ def run_real_density_candidate_flow(qtbot, root, ai_decision):
             "analysis_report_markdown",
             "business_records",
         }
+        assert final_result.monthly_snapshot is not None
         service_response = json.loads(
             (task_dir / "protocol" / "service-response.json").read_text(encoding="utf-8")
         )

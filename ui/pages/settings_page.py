@@ -1,4 +1,6 @@
-from PySide6.QtCore import QUrl, Signal
+from pathlib import Path
+
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -8,8 +10,10 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -17,6 +21,8 @@ from PySide6.QtWidgets import (
 from app import __version__
 from core.platform.paths import AppPaths
 from core.security.credentials import CredentialStore
+from core.storage.repositories.credential_state import CredentialStateRepository
+from core.storage.repositories.output_roots import OutputRootRepository
 from core.storage.settings import SettingsStore
 
 PROVIDERS = {
@@ -42,17 +48,34 @@ class SettingsPage(QWidget):
         settings: SettingsStore,
         paths: AppPaths,
         credential_store: CredentialStore,
+        credential_state: CredentialStateRepository | None = None,
+        output_roots: OutputRootRepository | None = None,
     ) -> None:
         super().__init__()
         self.settings = settings
         self.paths = paths
         self.credential_store = credential_store
+        self.credential_state = credential_state
+        self.output_roots = output_roots
         self.setObjectName("page-settings")
         self.setAccessibleName("系统设置")
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 24, 30, 28)
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(30, 24, 30, 28)
+        page_layout.setSpacing(0)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setObjectName("settingsScrollArea")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.scroll_content = QWidget()
+        self.scroll_content.setObjectName("settingsScrollContent")
+        layout = QVBoxLayout(self.scroll_content)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         title = QLabel("系统设置")
         title.setProperty("pageTitle", True)
         subtitle = QLabel("管理本地输出、AI 接口与数据保护选项。设置只保存在当前电脑。")
@@ -70,7 +93,7 @@ class SettingsPage(QWidget):
 
         self.output_dir_edit = QLineEdit(settings.get("output_dir", "") or "")
         self.output_dir_edit.setAccessibleName("输出目录")
-        self.output_dir_edit.setPlaceholderText("留空则仅保存在本机任务数据目录")
+        self.output_dir_edit.setPlaceholderText(str(paths.output))
         output_row = QWidget()
         output_layout = QHBoxLayout(output_row)
         output_layout.setContentsMargins(0, 0, 0, 0)
@@ -82,8 +105,8 @@ class SettingsPage(QWidget):
         output_layout.addWidget(self.output_browse_button)
         form.addRow("输出目录", output_row)
         output_hint = QLabel(
-            "留空时，成果只保存在竹简工作台的本机任务目录；选择目录后，"
-            "每个完成任务会自动复制到独立文件夹，原始任务结果仍保留。"
+            "默认保存在安装根目录的 output；修改后只影响新成果的根目录，"
+            "任务名称和时间构成的独立文件夹结构保持不变。"
         )
         output_hint.setWordWrap(True)
         output_hint.setProperty("caption", True)
@@ -116,21 +139,24 @@ class SettingsPage(QWidget):
         self.api_key_edit.setPlaceholderText("仅保存到 Windows 安全凭据")
         form.addRow("API密钥", self.api_key_edit)
 
-        self.network_checkbox = QCheckBox("允许在逐次确认后联网")
+        self.network_checkbox = QCheckBox("默认允许 AI 联网")
         self.network_checkbox.setAccessibleName("AI联网开关")
         self.network_checkbox.setChecked(settings.get("ai_network_enabled", "false") == "true")
         form.addRow("联网", self.network_checkbox)
 
-        self.redaction_checkbox = QCheckBox("发送前必须显示脱敏预览")
-        self.redaction_checkbox.setAccessibleName("脱敏确认开关")
-        self.redaction_checkbox.setChecked(
-            settings.get("ai_redaction_confirm", "true") != "false"
-        )
+        self.redaction_checkbox = QCheckBox("始终执行脱敏并记录授权审计（不可关闭）")
+        self.redaction_checkbox.setAccessibleName("强制脱敏与授权审计")
+        self.redaction_checkbox.setChecked(True)
+        self.redaction_checkbox.setEnabled(False)
         form.addRow("数据保护", self.redaction_checkbox)
 
         self.credential_status_label = QLabel(self._credential_status())
         self.credential_status_label.setAccessibleName("API密钥保存状态")
         form.addRow("密钥状态", self.credential_status_label)
+        self.delete_ai_key_button = QPushButton("删除当前 Provider 密钥")
+        self.delete_ai_key_button.setProperty("secondary", True)
+        self.delete_ai_key_button.clicked.connect(self.delete_current_provider_key)
+        form.addRow("密钥管理", self.delete_ai_key_button)
 
         self.version_label = QLabel(__version__)
         self.version_label.setAccessibleName("软件版本")
@@ -184,6 +210,10 @@ class SettingsPage(QWidget):
         self.update_credential_label.setAccessibleName("更新令牌保存状态")
         update_form.addRow("团队测试令牌", self.update_token_edit)
         update_form.addRow("令牌状态", self.update_credential_label)
+        self.delete_update_token_button = QPushButton("删除 GitHub 更新令牌")
+        self.delete_update_token_button.setProperty("secondary", True)
+        self.delete_update_token_button.clicked.connect(self.delete_update_token)
+        update_form.addRow("令牌管理", self.delete_update_token_button)
         private_hint = QLabel(
             "当前源码仓库为私有仓库：团队成员可保存仅有 Contents: read 权限的细粒度令牌；"
             "不要把令牌交给客户。客户自动更新需在正式发布前配置独立的公开二进制更新源。"
@@ -207,6 +237,8 @@ class SettingsPage(QWidget):
         update_layout.addLayout(update_actions)
         layout.addWidget(update_card)
         layout.addStretch()
+        self.scroll_area.setWidget(self.scroll_content)
+        page_layout.addWidget(self.scroll_area)
 
     def save(self) -> None:
         provider_id = str(self.provider_combo.currentData())
@@ -214,7 +246,15 @@ class SettingsPage(QWidget):
             secret = self.api_key_edit.text()
             if secret and provider_id != "mock":
                 self.credential_store.set_secret(provider_id, secret)
-            self.settings.set("output_dir", self.output_dir_edit.text().strip())
+                if self.credential_state is not None:
+                    self.credential_state.rotate_revision(provider_id)
+            output_directory = self.output_dir_edit.text().strip() or str(self.paths.output)
+            if self.output_roots is not None:
+                self.output_roots.set_current(
+                    Path(output_directory),
+                    is_default=Path(output_directory).resolve() == self.paths.output,
+                )
+            self.settings.set("output_dir", output_directory)
             self.settings.set("ai_provider", provider_id)
             self.settings.set("ai_base_url", self.base_url_edit.text().strip())
             self.settings.set("ai_model", self.model_edit.text().strip() or "mock-model")
@@ -224,7 +264,7 @@ class SettingsPage(QWidget):
             )
             self.settings.set(
                 "ai_redaction_confirm",
-                "true" if self.redaction_checkbox.isChecked() else "false",
+                "true",
             )
             self.settings.set(
                 "update_auto_check",
@@ -241,6 +281,31 @@ class SettingsPage(QWidget):
         self.credential_status_label.setText(self._credential_status())
         self.update_credential_label.setText(self._update_credential_status())
         self.settings_saved.emit()
+
+    def delete_current_provider_key(self) -> None:
+        provider_id = str(self.provider_combo.currentData())
+        if provider_id == "mock":
+            self.action_failed.emit("离线模拟 Provider 没有可删除的 API 密钥")
+            return
+        try:
+            self.credential_store.delete_secret(provider_id)
+            if self.credential_state is not None:
+                self.credential_state.invalidate(provider_id)
+        except Exception as error:
+            self.action_failed.emit(f"删除 AI 密钥失败：{error}")
+            return
+        self.api_key_edit.clear()
+        self.credential_status_label.setText(self._credential_status())
+        self.settings_saved.emit()
+
+    def delete_update_token(self) -> None:
+        try:
+            self.credential_store.delete_secret("github-updates")
+        except Exception as error:
+            self.action_failed.emit(f"删除更新令牌失败：{error}")
+            return
+        self.update_token_edit.clear()
+        self.update_credential_label.setText(self._update_credential_status())
 
     def set_update_status(self, message: str) -> None:
         self.update_status_label.setText(message)

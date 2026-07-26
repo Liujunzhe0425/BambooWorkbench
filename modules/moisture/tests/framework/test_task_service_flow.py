@@ -18,12 +18,16 @@ sys.path.insert(0, str(MODULE_ROOT / "tests"))
 from core.confirmations.service import ConfirmationService
 from core.contracts.confirmation import ConfirmationAnswer
 from core.contracts.enums import ModuleId
+from core.knowledge.learning import LearningEvidenceRepository
 from core.modules.registry import ModuleRegistry
 from core.platform.paths import AppPaths
 from core.storage.database import Database
 from core.storage.repositories.confirmations import ConfirmationRepository
 from core.storage.repositories.modules import ModuleRepository
+from core.storage.repositories.monthly import MonthlyRepository
+from core.storage.repositories.output_roots import OutputRootRepository
 from core.storage.repositories.tasks import TaskRepository
+from core.tasks.monthly_service import MonthlyRollupService
 from core.tasks.service import TaskService
 from moisture.adapters.history.summary_reader import StandardSummaryReader
 from moisture.application.draft_orchestrator import run_draft
@@ -51,11 +55,23 @@ def _service(tmp_path: Path):
         repository=ModuleRepository(database),
     )
     registry.scan()
+    output_roots = OutputRootRepository(database, paths)
+    output_roots.initialize_default()
+    monthly_service = MonthlyRollupService(
+        paths,
+        registry,
+        task_repository,
+        confirmation_repository,
+        MonthlyRepository(database),
+        LearningEvidenceRepository(database),
+        output_roots,
+    )
     service = TaskService(
         paths=paths,
         registry=registry,
         task_repository=task_repository,
         confirmation_repository=confirmation_repository,
+        monthly_rollup_service=monthly_service,
     )
     return paths, database, task_repository, confirmation_repository, service
 
@@ -103,6 +119,7 @@ def test_real_task_service_snapshots_and_registers_formal_outputs(
         assert source.read_bytes() == before
         assert service.runners == {}
     finally:
+        service.shutdown()
         database.close()
 
 
@@ -158,6 +175,8 @@ def test_real_task_service_append_summary_conflict_finalize_and_isolation(
             ModuleId.MOISTURE,
             inputs,
             module_config=config,
+            period_year=2026,
+            period_month=4,
         )
         qtbot.waitUntil(
             lambda: needs_confirmation.count() + failed.count() == 1,
@@ -233,13 +252,20 @@ def test_real_task_service_append_summary_conflict_finalize_and_isolation(
         snapshots = task_repository.list_files(job_id)
         assert len(snapshots) == len(inputs)
         assert all(Path(str(item["snapshot_path"])).is_file() for item in snapshots)
-        assert {Path(str(item["path"])).name for item in task_repository.list_outputs(job_id)} == {
+        formal_outputs = {
+            Path(str(item["path"])).name
+            for item in task_repository.list_outputs(job_id)
+        }
+        assert formal_outputs == {
             "moisture_summary.xlsx",
             "analysis_report.md",
+            "moisture_business_records.json",
         }
+        assert Path(final["monthly_snapshot"]["path"]).name not in formal_outputs
         assert task_repository.get(job_id)["status"] == "partial_success"
         assert service.runners == {}
     finally:
+        service.shutdown()
         database.close()
 
 
@@ -260,7 +286,12 @@ def test_real_task_service_year_confirmation_does_not_request_ai(
         finished = QSignalSpy(service.finished)
         failed = QSignalSpy(service.failed)
 
-        job_id = service.create_and_start(ModuleId.MOISTURE, [source])
+        job_id = service.create_and_start(
+            ModuleId.MOISTURE,
+            [source],
+            period_year=2026,
+            period_month=4,
+        )
         qtbot.waitUntil(
             lambda: needs_confirmation.count() + failed.count() == 1,
             timeout=30_000,
@@ -296,7 +327,18 @@ def test_real_task_service_year_confirmation_does_not_request_ai(
             "moisture_summary.xlsx",
             "analysis_report.md",
         }
+        formal_outputs = {
+            Path(str(item["path"])).name
+            for item in task_repository.list_outputs(job_id)
+        }
+        assert formal_outputs == {
+            "moisture_summary.xlsx",
+            "analysis_report.md",
+            "moisture_business_records.json",
+        }
+        assert Path(final["monthly_snapshot"]["path"]).name not in formal_outputs
         assert source.read_bytes() == before
         assert service.runners == {}
     finally:
+        service.shutdown()
         database.close()

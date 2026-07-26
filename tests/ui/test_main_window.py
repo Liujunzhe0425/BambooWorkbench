@@ -14,7 +14,7 @@ def test_main_window_has_canonical_navigation(qtbot, app_context) -> None:
     assert window.windowFlags() & Qt.WindowType.FramelessWindowHint
     assert window.windowIcon().isNull() is False
     assert window.title_bar.objectName() == "windowTitleBar"
-    assert window.title_bar.version_label.text() == "BambooWorkbench v1.2.0"
+    assert window.title_bar.version_label.text() == "BambooWorkbench v1.3.0"
     assert window.title_bar.layout().spacing() == 10
     assert window.title_bar.layout().itemAt(0).alignment() & Qt.AlignmentFlag.AlignVCenter
     assert window.title_bar.layout().itemAt(1).alignment() & Qt.AlignmentFlag.AlignVCenter
@@ -23,6 +23,7 @@ def test_main_window_has_canonical_navigation(qtbot, app_context) -> None:
     assert list(window.pages) == [
         PageId.WORKBENCH,
         PageId.HISTORY,
+        PageId.MONTHLY_HISTORY,
         PageId.CONFIRMATIONS,
         PageId.KNOWLEDGE,
         PageId.SETTINGS,

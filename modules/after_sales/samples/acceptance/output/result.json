@@ -2,7 +2,7 @@
   "schema_version": "1.0",
   "job_id": "pr16-artifact-tool-sanitized",
   "module_id": "after_sales",
-  "module_version": "1.2.0",
+  "module_version": "1.3.0",
   "status": "success",
   "rule_version": "2026.07",
   "summary": {

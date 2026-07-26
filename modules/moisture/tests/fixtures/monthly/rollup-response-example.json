@@ -1,0 +1,35 @@
+{
+  "schema_version": "1.0",
+  "module_id": "moisture",
+  "status": "success",
+  "target_period": {"year": 2026, "month": 3},
+  "used_months": [1, 3],
+  "snapshot_hashes": [
+    {"month": 1, "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+    {"month": 3, "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+  ],
+  "record_count": 2,
+  "artifacts": [
+    {
+      "path": "moisture_summary.xlsx",
+      "type": "excel",
+      "label": "四表汇总工作簿",
+      "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    },
+    {
+      "path": "analysis_report.md",
+      "type": "markdown",
+      "label": "确定性分析报告",
+      "mime_type": "text/markdown",
+      "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    },
+    {
+      "path": "moisture_business_records.json",
+      "type": "json",
+      "label": "累计业务记录",
+      "mime_type": "application/json",
+      "sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+  ]
+}

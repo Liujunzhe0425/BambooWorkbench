@@ -30,6 +30,10 @@ def main(
         return smoke_test(use_mocks=False)
     if command_arguments == ["--demo-smoke-test"]:
         return smoke_test(use_mocks=True)
+    if command_arguments == ["--initialize-install"]:
+        context = build_context(None, use_mocks=False)
+        context.close()
+        return 0
     application_arguments = list(sys.argv if argv is None else argv)
     demo_requested = "--demo" in command_arguments
     application_arguments = [

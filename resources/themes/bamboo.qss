@@ -442,6 +442,13 @@ QScrollArea#confirmationScrollArea > QWidget > QWidget,
     border: 0;
 }
 
+QScrollArea#settingsScrollArea,
+QScrollArea#settingsScrollArea > QWidget > QWidget,
+#settingsScrollContent {
+    background: transparent;
+    border: 0;
+}
+
 QProgressBar {
     color: transparent;
     background: #E4EAE1;

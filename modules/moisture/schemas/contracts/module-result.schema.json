@@ -91,6 +91,17 @@
           "title": "Field",
           "type": "string"
         },
+        "learning": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LearningDescriptor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "options": {
           "items": {},
           "title": "Options",
@@ -185,6 +196,114 @@
       "title": "FileResult",
       "type": "object"
     },
+    "LearningCandidate": {
+      "additionalProperties": false,
+      "properties": {
+        "candidate_id": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "label"
+      ],
+      "title": "LearningCandidate",
+      "type": "object"
+    },
+    "LearningDescriptor": {
+      "additionalProperties": false,
+      "description": "Module-owned, structured and redacted preference-learning description.",
+      "properties": {
+        "base_suggestion_id": {
+          "title": "Base Suggestion Id",
+          "type": "string"
+        },
+        "candidates": {
+          "items": {
+            "$ref": "#/$defs/LearningCandidate"
+          },
+          "maxItems": 64,
+          "minItems": 1,
+          "title": "Candidates",
+          "type": "array"
+        },
+        "context": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": "Context",
+          "type": "object"
+        },
+        "context_levels": {
+          "items": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Context Levels",
+          "type": "array"
+        },
+        "field": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Field",
+          "type": "string"
+        },
+        "learning_key": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Learning Key",
+          "type": "string"
+        },
+        "preference_adjustable": {
+          "default": true,
+          "title": "Preference Adjustable",
+          "type": "boolean"
+        },
+        "schema_version": {
+          "pattern": "^1\\.0$",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "learning_key",
+        "field",
+        "context",
+        "context_levels",
+        "candidates",
+        "base_suggestion_id"
+      ],
+      "title": "LearningDescriptor",
+      "type": "object"
+    },
     "ModuleId": {
       "enum": [
         "moisture",
@@ -193,6 +312,47 @@
       ],
       "title": "ModuleId",
       "type": "string"
+    },
+    "MonthlySnapshotArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "month": {
+          "maximum": 12,
+          "minimum": 1,
+          "title": "Month",
+          "type": "integer"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "schema_version": {
+          "pattern": "^1\\.0$",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "snapshot_format": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Snapshot Format",
+          "type": "string"
+        },
+        "year": {
+          "maximum": 9999,
+          "minimum": 2000,
+          "title": "Year",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "schema_version",
+        "path",
+        "snapshot_format",
+        "year",
+        "month"
+      ],
+      "title": "MonthlySnapshotArtifact",
+      "type": "object"
     },
     "OutputArtifact": {
       "additionalProperties": false,
@@ -446,6 +606,17 @@
     "module_version": {
       "title": "Module Version",
       "type": "string"
+    },
+    "monthly_snapshot": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MonthlySnapshotArtifact"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "outputs": {
       "items": {

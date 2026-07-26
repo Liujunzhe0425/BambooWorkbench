@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from pathlib import Path
 
+from moisture import __version__
 from moisture.application.confirmation_applier import (
     ConfirmationApplicationError,
     apply_confirmations,
@@ -34,10 +35,12 @@ from moisture.application.module_config import (
     ModuleOperation,
     load_module_config,
 )
+from moisture.application.monthly_snapshot import build_monthly_snapshot
 from moisture.application.run_result import InternalMoistureRunResult, InternalOutput
 from moisture.contract.confirmation_reader import read_confirmation_bundle
 from moisture.contract.job_models import JobRequest
 from moisture.contract.mapper import map_run_result
+from moisture.contract.monthly_snapshot import write_monthly_snapshot
 from moisture.contract.service_response_reader import read_service_responses
 from moisture.infrastructure.atomic_write import AtomicResultWriter
 from moisture.ports.writers import KnowledgeCitation, WorkbookReport
@@ -136,6 +139,7 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
                 rebuilt_standard = build_confirmations(
                     job.root_job_id,
                     _confirmation_issues(getattr(outcome, "new_outcome", outcome)),
+                    learning_enabled=job.learning_enabled,
                 )
                 previous_standard = tuple(
                     prompt
@@ -217,6 +221,7 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
             except KnowledgeResponseValidationError:
                 errors = (*errors, "KNOWLEDGE_RESPONSE_DEGRADED")
     outputs: tuple[InternalOutput, ...] = ()
+    monthly_snapshot: dict[str, object] | None = None
     if batches:
         completed_artifacts: list[Path] = []
         try:
@@ -248,6 +253,28 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
                 job.output_dir,
             ).resolve()
             completed_artifacts.append(markdown_path)
+            if job.period_year is not None and job.period_month is not None:
+                snapshot = build_monthly_snapshot(
+                    phase="finalize",
+                    module_version=__version__,
+                    year=job.period_year,
+                    month=job.period_month,
+                    rule_version=outcome.rule_package.rule_version,
+                    rule_sha256=outcome.rule_package.rules_sha256,
+                    batches=tuple(batches),
+                )
+                snapshot_path = write_monthly_snapshot(
+                    snapshot,
+                    job.output_dir,
+                ).resolve()
+                completed_artifacts.append(snapshot_path)
+                monthly_snapshot = {
+                    "schema_version": "1.0",
+                    "path": str(snapshot_path),
+                    "snapshot_format": "moisture-v1",
+                    "year": job.period_year,
+                    "month": job.period_month,
+                }
             outputs = (
                 InternalOutput(
                     type="xlsx",
@@ -279,6 +306,7 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
         rule_version=outcome.rule_package.rule_version,
         anomalies=anomalies,
         outputs=outputs,
+        monthly_snapshot=monthly_snapshot,
         file_results=outcome.file_results,
         confirmations=(),
         service_requests=(),

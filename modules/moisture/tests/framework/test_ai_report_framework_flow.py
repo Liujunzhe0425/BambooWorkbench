@@ -17,8 +17,6 @@ sys.path.insert(0, str(MODULE_ROOT / "tests"))
 from core.ai.audit import ConsentAuditRepository
 from core.ai.gateway import AIGateway
 from core.ai.providers import AIResponse, ProviderResponseError
-from core.confirmations.service import ConfirmationService
-from core.contracts.confirmation import ConfirmationAnswer
 from core.contracts.enums import ModuleId
 from core.contracts.management import ModuleManagementOperation
 from core.knowledge.repository import KnowledgeRepository
@@ -31,6 +29,7 @@ from core.storage.database import Database
 from core.storage.repositories.confirmations import ConfirmationRepository
 from core.storage.repositories.modules import ModuleRepository
 from core.storage.repositories.tasks import TaskRepository
+from core.storage.settings import SettingsStore
 from core.tasks.service import TaskService
 
 pytest_plugins = ("fixtures.workbooks.workbook_factory",)
@@ -76,6 +75,7 @@ def _context(tmp_path: Path, provider: _ValidReportProvider):
     database.migrate()
     tasks = TaskRepository(database)
     confirmations = ConfirmationRepository(database)
+    settings = SettingsStore(database)
     registry = ModuleRegistry(
         REPO_ROOT / "modules",
         REPO_ROOT / "mock_modules",
@@ -100,8 +100,9 @@ def _context(tmp_path: Path, provider: _ValidReportProvider):
         task_repository=tasks,
         confirmation_repository=confirmations,
         service_orchestrator=orchestrator,
+        settings=settings,
     )
-    return paths, database, tasks, confirmations, registry, task_service
+    return paths, database, tasks, confirmations, registry, settings, task_service
 
 
 def _wait(qtbot, success: QSignalSpy, failure: QSignalSpy) -> None:
@@ -139,7 +140,9 @@ def test_real_task_service_ai_report_allow_and_deny(
     qtbot, tmp_path: Path, workbook_factory
 ) -> None:
     provider = _ValidReportProvider()
-    paths, database, tasks, confirmations, registry, service = _context(tmp_path, provider)
+    paths, database, tasks, confirmations, registry, settings, service = _context(
+        tmp_path, provider
+    )
     try:
         contract = registry.get(ModuleId.MOISTURE).manifest.management_contract
         assert contract is not None
@@ -155,41 +158,35 @@ def test_real_task_service_ai_report_allow_and_deny(
             "question": "请概括本期情况并提出人工复核建议。",
         }
 
+        settings.set("ai_network_enabled", "true")
         waiting = QSignalSpy(service.needs_confirmation)
+        finished = QSignalSpy(service.finished)
         failed = QSignalSpy(service.failed)
         allowed_job = service.create_and_start(
             ModuleId.MOISTURE,
             [summary],
             module_config=config,
         )
-        _wait(qtbot, waiting, failed)
+        _wait(qtbot, finished, failed)
+        assert waiting.count() == 0
         task_dir = paths.tasks / allowed_job
         draft_config = json.loads(
             (task_dir / "module-config.json").read_text(encoding="utf-8")
         )
         rule_snapshot = draft_config["rule_selection"]
         assert set(rule_snapshot) == {"version", "sha256"}
-        draft = json.loads((task_dir / "output-draft" / "result.json").read_text(encoding="utf-8"))
-        request_id = draft["service_requests"][0]["request_id"]
-        records = confirmations.list_for_job(allowed_job)
-        consent_id = str(records[0]["confirmation_id"])
-        bundle = ConfirmationService(paths, confirmations, tasks).submit(
-            allowed_job,
-            [ConfirmationAnswer(confirmation_id=consent_id, value="允许")],
-        )
-        finished = QSignalSpy(service.finished)
-        failed = QSignalSpy(service.failed)
-        service.finalize(allowed_job, bundle)
-        _wait(qtbot, finished, failed)
+        assert confirmations.list_for_job(allowed_job) == []
 
         final_config = json.loads(
             (task_dir / "module-config.json").read_text(encoding="utf-8")
         )
         assert final_config["rule_selection"] == rule_snapshot
-        final = json.loads((task_dir / "output-final" / "result.json").read_text(encoding="utf-8"))
+        result_path = Path(str(tasks.get(allowed_job)["result_path"]))
+        final = json.loads(result_path.read_text(encoding="utf-8"))
         assert final["job_id"] == allowed_job
         assert final["confirmations"] == []
         assert final["service_requests"] == []
+        assert final["monthly_snapshot"] is None
         assert {Path(item["path"]).name for item in final["outputs"]} == {
             "ai_analysis_report.md",
             "ai_analysis_result.json",
@@ -197,41 +194,44 @@ def test_real_task_service_ai_report_allow_and_deny(
         protocol = json.loads(
             (task_dir / "protocol" / "service-response.json").read_text(encoding="utf-8")
         )
-        assert protocol["responses"][0]["request_id"] == request_id
+        assert protocol["responses"][0]["status"] == "ok"
+        assert protocol["responses"][0]["request_id"]
         assert provider.call_count == 1
+        allowed_task = tasks.get(allowed_job)
+        assert allowed_task["period_year"] is None
+        assert allowed_task["period_month"] is None
         assert summary.read_bytes() == before
 
+        settings.set("ai_network_enabled", "false")
         waiting = QSignalSpy(service.needs_confirmation)
+        finished = QSignalSpy(service.finished)
         failed = QSignalSpy(service.failed)
         denied_job = service.create_and_start(
             ModuleId.MOISTURE,
             [summary],
             module_config=config,
         )
-        _wait(qtbot, waiting, failed)
-        denied_dir = paths.tasks / denied_job
-        records = confirmations.list_for_job(denied_job)
-        bundle = ConfirmationService(paths, confirmations, tasks).submit(
-            denied_job,
-            [
-                ConfirmationAnswer(
-                    confirmation_id=str(records[0]["confirmation_id"]),
-                    value="拒绝",
-                )
-            ],
-        )
-        finished = QSignalSpy(service.finished)
-        failed = QSignalSpy(service.failed)
-        service.finalize(denied_job, bundle)
         _wait(qtbot, finished, failed)
-        denied = json.loads(
-            (denied_dir / "output-final" / "result.json").read_text(encoding="utf-8")
-        )
+        assert waiting.count() == 0
+        denied_dir = paths.tasks / denied_job
+        assert confirmations.list_for_job(denied_job) == []
+        denied_result_path = Path(str(tasks.get(denied_job)["result_path"]))
+        denied = json.loads(denied_result_path.read_text(encoding="utf-8"))
+        assert denied["monthly_snapshot"] is None
         assert {Path(item["path"]).name for item in denied["outputs"]} == {
             "ai_analysis_result.json"
         }
-        assert not (denied_dir / "output-final" / "ai_analysis_report.md").exists()
+        assert not (denied_result_path.parent / "ai_analysis_report.md").exists()
+        denied_protocol = json.loads(
+            (denied_dir / "protocol" / "service-response.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert denied_protocol["responses"][0]["status"] == "denied"
         assert provider.call_count == 1
+        denied_task = tasks.get(denied_job)
+        assert denied_task["period_year"] is None
+        assert denied_task["period_month"] is None
         assert summary.read_bytes() == before
     finally:
         service.shutdown()
@@ -242,7 +242,7 @@ def test_real_management_service_imports_and_lists_module_data(
     qtbot, tmp_path: Path, workbook_factory
 ) -> None:
     provider = _ValidReportProvider()
-    paths, database, tasks, _, registry, task_service = _context(tmp_path, provider)
+    paths, database, tasks, _, registry, _, task_service = _context(tmp_path, provider)
     management = ModuleManagementService(paths, registry)
     try:
         summary = _make_summary(qtbot, tmp_path, workbook_factory, tasks, task_service)
@@ -285,7 +285,9 @@ def test_real_task_service_provider_failures_do_not_create_fake_report(
     qtbot, tmp_path: Path, workbook_factory
 ) -> None:
     provider = _ValidReportProvider()
-    paths, database, tasks, confirmations, _, service = _context(tmp_path, provider)
+    paths, database, tasks, confirmations, _, settings, service = _context(
+        tmp_path, provider
+    )
     try:
         summary = _make_summary(qtbot, tmp_path, workbook_factory, tasks, service)
         before = summary.read_bytes()
@@ -297,39 +299,40 @@ def test_real_task_service_provider_failures_do_not_create_fake_report(
             "experience_selections": [],
             "question": "请生成辅助分析。",
         }
-        for mode, expected_status in (
+        settings.set("ai_network_enabled", "true")
+        for expected_call_count, (mode, expected_status) in enumerate(
+            (
             ("error", "error"),
             ("timeout", "timeout"),
             ("invalid", "invalid_response"),
+            ),
+            start=1,
         ):
             provider.mode = mode
             waiting = QSignalSpy(service.needs_confirmation)
+            finished = QSignalSpy(service.finished)
             failed = QSignalSpy(service.failed)
             job_id = service.create_and_start(
                 ModuleId.MOISTURE,
                 [summary],
                 module_config=config,
             )
-            _wait(qtbot, waiting, failed)
-            records = confirmations.list_for_job(job_id)
-            bundle = ConfirmationService(paths, confirmations, tasks).submit(
-                job_id,
-                [
-                    ConfirmationAnswer(
-                        confirmation_id=str(records[0]["confirmation_id"]),
-                        value="允许",
-                    )
-                ],
-            )
-            finished = QSignalSpy(service.finished)
-            failed = QSignalSpy(service.failed)
-            service.finalize(job_id, bundle)
             _wait(qtbot, finished, failed)
-            final_dir = paths.tasks / job_id / "output-final"
+            assert waiting.count() == 0
+            assert confirmations.list_for_job(job_id) == []
+            final_dir = Path(str(tasks.get(job_id)["result_path"])).parent
+            module_result = json.loads(
+                (final_dir / "result.json").read_text(encoding="utf-8")
+            )
+            assert module_result["monthly_snapshot"] is None
             result = json.loads((final_dir / "ai_analysis_result.json").read_text(encoding="utf-8"))
             assert result["status"] == expected_status
             assert result["report_file"] is None
             assert not (final_dir / "ai_analysis_report.md").exists()
+            assert provider.call_count == expected_call_count
+            task = tasks.get(job_id)
+            assert task["period_year"] is None
+            assert task["period_month"] is None
             assert summary.read_bytes() == before
     finally:
         service.shutdown()

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bamboo:moisture:monthly-rollup-response:1.0",
+  "title": "Moisture Monthly Rollup Result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "module_id", "status",
+    "target_period", "used_months", "snapshot_hashes",
+    "record_count", "artifacts"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "module_id": {"const": "moisture"},
+    "status": {"const": "success"},
+    "target_period": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["year", "month"],
+      "properties": {
+        "year": {"type": "integer", "minimum": 1000, "maximum": 9999},
+        "month": {"type": "integer", "minimum": 1, "maximum": 12}
+      }
+    },
+    "used_months": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": {"type": "integer", "minimum": 1, "maximum": 12}
+    },
+    "snapshot_hashes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 12,
+      "items": {"$ref": "#/$defs/snapshot_hash"}
+    },
+    "record_count": {"type": "integer", "minimum": 1},
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/artifact"}
+    }
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "snapshot_hash": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["month", "sha256"],
+      "properties": {
+        "month": {"type": "integer", "minimum": 1, "maximum": 12},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "type", "label", "mime_type", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "type": {"type": "string", "minLength": 1},
+        "label": {"type": "string"},
+        "mime_type": {"type": "string"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

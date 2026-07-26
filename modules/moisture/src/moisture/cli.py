@@ -35,6 +35,9 @@ def build_parser() -> argparse.ArgumentParser:
     manage_parser = commands.add_parser("manage", add_help=False)
     manage_parser.add_argument("--request", required=True)
     manage_parser.add_argument("--response", required=True)
+    rollup_parser = commands.add_parser("rollup", add_help=False)
+    rollup_parser.add_argument("--request", required=True)
+    rollup_parser.add_argument("--response", required=True)
     return parser
 
 
@@ -108,6 +111,15 @@ def main(arguments: Sequence[str] | None = None) -> int:
     if parsed.command == "manage":
         management_cli = importlib.import_module("moisture.management_cli")
         return management_cli.run_management(Path(parsed.request), Path(parsed.response))
+    if parsed.command == "rollup":
+        from moisture.application.monthly_public_adapter import (
+            run_public_monthly_rollup,
+        )
+
+        return run_public_monthly_rollup(
+            Path(parsed.request),
+            Path(parsed.response),
+        )
 
     issues = (*collect_runtime_issues(), *collect_schema_lock_issues())
     if issues:

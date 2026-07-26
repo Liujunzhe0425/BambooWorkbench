@@ -1,0 +1,297 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:bamboo:moisture:monthly-snapshot:1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "module_id",
+    "module_version",
+    "period",
+    "rule_snapshot",
+    "records"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "module_id": {"const": "moisture"},
+    "module_version": {"$ref": "#/$defs/version"},
+    "period": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["year", "month"],
+      "properties": {
+        "year": {"type": "integer", "minimum": 1000, "maximum": 9999},
+        "month": {"type": "integer", "minimum": 1, "maximum": 12}
+      }
+    },
+    "rule_snapshot": {"$ref": "#/$defs/rule_identity"},
+    "records": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100000,
+      "items": {"$ref": "#/$defs/record"}
+    }
+  },
+  "$defs": {
+    "version": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "decimal": {
+      "type": ["string", "null"],
+      "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+    },
+    "date": {
+      "type": ["string", "null"],
+      "format": "date"
+    },
+    "short_text": {
+      "type": ["string", "null"],
+      "maxLength": 500
+    },
+    "rule_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "sha256"],
+      "properties": {
+        "version": {"$ref": "#/$defs/version"},
+        "sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "rule_hit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rule_id", "message", "display_color", "target_field"],
+      "properties": {
+        "rule_id": {"$ref": "#/$defs/version"},
+        "message": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "display_color": {
+          "enum": ["none", "orange", "green", "red", "blue"]
+        },
+        "target_field": {
+          "type": ["string", "null"],
+          "maxLength": 100
+        }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "display_color", "target_field", "reason", "rule_hits"],
+      "properties": {
+        "status": {"enum": ["normal", "high", "low", "data_quality"]},
+        "display_color": {
+          "enum": ["none", "orange", "green", "red", "blue"]
+        },
+        "target_field": {
+          "type": ["string", "null"],
+          "maxLength": 100
+        },
+        "reason": {"$ref": "#/$defs/short_text"},
+        "rule_hits": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {"$ref": "#/$defs/rule_hit"}
+        }
+      }
+    },
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sample_index", "department", "source_row", "value"],
+      "properties": {
+        "sample_index": {"type": "integer", "minimum": 1, "maximum": 10},
+        "department": {"type": "string", "minLength": 1, "maxLength": 200},
+        "source_row": {"type": "integer", "minimum": 1},
+        "value": {
+          "type": "string",
+          "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+        }
+      }
+    },
+    "department_average": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["department", "value"],
+      "properties": {
+        "department": {"type": "string", "minLength": 1, "maxLength": 200},
+        "value": {
+          "type": "string",
+          "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+        }
+      }
+    },
+    "statistics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sample_count",
+        "mean",
+        "total_average",
+        "standard_deviation",
+        "minimum",
+        "maximum",
+        "range_value",
+        "median",
+        "first_quartile",
+        "third_quartile",
+        "interquartile_range",
+        "department_averages",
+        "maximum_department_average_difference"
+      ],
+      "properties": {
+        "sample_count": {"type": "integer", "minimum": 1, "maximum": 10},
+        "mean": {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"},
+        "total_average": {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"},
+        "standard_deviation": {"$ref": "#/$defs/decimal"},
+        "minimum": {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"},
+        "maximum": {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"},
+        "range_value": {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"},
+        "median": {"$ref": "#/$defs/decimal"},
+        "first_quartile": {"$ref": "#/$defs/decimal"},
+        "third_quartile": {"$ref": "#/$defs/decimal"},
+        "interquartile_range": {"$ref": "#/$defs/decimal"},
+        "department_averages": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {"$ref": "#/$defs/department_average"}
+        },
+        "maximum_department_average_difference": {"$ref": "#/$defs/decimal"}
+      }
+    },
+    "experience_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entry_id", "version", "title", "sha256"],
+      "properties": {
+        "entry_id": {"$ref": "#/$defs/version"},
+        "version": {"$ref": "#/$defs/version"},
+        "title": {"type": "string", "minLength": 1, "maxLength": 300},
+        "sha256": {
+          "oneOf": [
+            {"$ref": "#/$defs/sha256"},
+            {"type": "null"}
+          ]
+        }
+      }
+    },
+    "screening": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary",
+        "decisions",
+        "final_display_color",
+        "confirmation_state",
+        "review_suggestion",
+        "lower_threshold",
+        "upper_threshold"
+      ],
+      "properties": {
+        "primary": {"$ref": "#/$defs/decision"},
+        "decisions": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {"$ref": "#/$defs/decision"}
+        },
+        "final_display_color": {
+          "enum": ["none", "orange", "green", "red", "blue"]
+        },
+        "confirmation_state": {
+          "enum": [
+            "not_required",
+            "pending_human_review",
+            "confirmed_normal",
+            "confirmed_anomaly"
+          ]
+        },
+        "review_suggestion": {"type": "string", "maxLength": 1000},
+        "lower_threshold": {"$ref": "#/$defs/decimal"},
+        "upper_threshold": {"$ref": "#/$defs/decimal"}
+      }
+    },
+    "traceability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_display_name",
+        "source_file_hash",
+        "source_sheet",
+        "rule_version",
+        "rule_sha256",
+        "rule_applicable_scope",
+        "rule_confirmation_status",
+        "experience_references"
+      ],
+      "properties": {
+        "source_display_name": {
+          "type": ["string", "null"],
+          "minLength": 1,
+          "maxLength": 240,
+          "pattern": "^[^/\\\\\\u0000-\\u001f]+$"
+        },
+        "source_file_hash": {
+          "oneOf": [
+            {"$ref": "#/$defs/sha256"},
+            {"type": "null"}
+          ]
+        },
+        "source_sheet": {"type": ["string", "null"], "maxLength": 200},
+        "rule_version": {"$ref": "#/$defs/version"},
+        "rule_sha256": {"$ref": "#/$defs/sha256"},
+        "rule_applicable_scope": {"type": "string", "maxLength": 1000},
+        "rule_confirmation_status": {"type": "string", "maxLength": 100},
+        "experience_references": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {"$ref": "#/$defs/experience_reference"}
+        }
+      }
+    },
+    "record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "record_id",
+        "business_fingerprint",
+        "supplier",
+        "material_type",
+        "arrival_date",
+        "test_date",
+        "total_weight_kg",
+        "samples",
+        "statistics",
+        "screening",
+        "anomalies",
+        "traceability"
+      ],
+      "properties": {
+        "record_id": {"$ref": "#/$defs/version"},
+        "business_fingerprint": {"$ref": "#/$defs/sha256"},
+        "supplier": {"$ref": "#/$defs/short_text"},
+        "material_type": {"$ref": "#/$defs/short_text"},
+        "arrival_date": {"$ref": "#/$defs/date"},
+        "test_date": {"$ref": "#/$defs/date"},
+        "total_weight_kg": {"$ref": "#/$defs/decimal"},
+        "samples": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": {"$ref": "#/$defs/sample"}
+        },
+        "statistics": {"$ref": "#/$defs/statistics"},
+        "screening": {"$ref": "#/$defs/screening"},
+        "anomalies": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {"$ref": "#/$defs/decision"}
+        },
+        "traceability": {"$ref": "#/$defs/traceability"}
+      }
+    }
+  }
+}

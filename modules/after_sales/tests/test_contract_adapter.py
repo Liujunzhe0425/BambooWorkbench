@@ -5,12 +5,17 @@ import sys
 from pathlib import Path
 
 import openpyxl
+import pytest
 from docx import Document
 
 MODULE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MODULE_ROOT / "src"))
 
-from after_sales_agent.cli import _create_sample_workbook, run_job  # noqa: E402
+from after_sales_agent.cli import (  # noqa: E402
+    _create_sample_workbook,
+    _validate_job,
+    run_job,
+)
 from framework_ai_helpers import write_service_response  # noqa: E402
 
 from core.contracts.result import ModuleResult  # noqa: E402
@@ -76,6 +81,39 @@ def _bind_framework_response(
     result = json.loads((output_dir / "result.json").read_text(encoding="utf-8"))
     ModuleResult.model_validate(result)
     return result, response_path
+
+
+def test_job_request_accepts_central_monthly_fields(tmp_path: Path) -> None:
+    payload = _job(
+        tmp_path / "input.xlsx",
+        tmp_path / "output",
+        task_name="售后合同适配测试",
+        period_year=2026,
+        period_month=5,
+        learning_enabled=True,
+    )
+
+    _validate_job(payload)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"period_year": 2026, "period_month": None},
+        {"period_year": 1999, "period_month": 1},
+        {"period_year": 2026, "period_month": 13},
+        {"learning_enabled": "yes"},
+        {"task_name": ""},
+    ],
+)
+def test_job_request_rejects_invalid_central_monthly_fields(
+    tmp_path: Path,
+    overrides: dict[str, object],
+) -> None:
+    payload = _job(tmp_path / "input.xlsx", tmp_path / "output", **overrides)
+
+    with pytest.raises(ValueError):
+        _validate_job(payload)
 
 
 def test_draft_and_finalize_write_manual_fee_to_final_excel(tmp_path):
@@ -183,6 +221,10 @@ def test_required_business_review_updates_fee_factory_and_complaint_type(tmp_pat
     assert prompts["售后费用"]["suggested_value"] == 1000
     assert prompts["责任工厂"]["suggested_value"] == "二厂"
     assert prompts["投诉类型"]["options"] == ["性能", "外观", "加工", "其他"]
+    assert prompts["投诉类型"]["learning"]["learning_key"] == (
+        "after_sales.complaint_type.v1"
+    )
+    assert prompts["投诉类型"]["learning"]["base_suggestion_id"] == "processing"
     assert all(prompts[field]["blocking"] for field in ("售后费用", "责任工厂", "投诉类型"))
 
     reviewed_values = {"售后费用": "3200", "责任工厂": "成品厂", "投诉类型": "加工"}

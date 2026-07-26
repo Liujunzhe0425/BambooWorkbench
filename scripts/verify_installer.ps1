@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $Root = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
-$Installer = Join-Path $Root 'installer-output\BambooWorkbench-Setup-1.2.0.exe'
+$Installer = Join-Path $Root 'installer-output\BambooWorkbench-Setup-1.3.0.exe'
 if (-not (Test-Path -LiteralPath $Installer -PathType Leaf)) {
     throw 'Installer does not exist. Run build_installer.ps1 first.'
 }
@@ -45,20 +45,35 @@ try {
     if (-not (Test-Path -LiteralPath $Executable -PathType Leaf)) {
         throw 'Silent installation did not create the application executable'
     }
+    Invoke-HiddenAndWait $Executable @('--initialize-install') 90
     Invoke-HiddenAndWait $Executable @('--smoke-test') 90
     Invoke-HiddenAndWait $Executable @('--demo-smoke-test') 90
 
-    $DataDirectory = Join-Path $FakeLocalAppData 'BambooWorkbench'
-    New-Item -ItemType Directory -Path $DataDirectory -Force | Out-Null
-    $Sentinel = Join-Path $DataDirectory 'preserve-on-uninstall.txt'
-    Set-Content -LiteralPath $Sentinel -Value 'preserve' -Encoding UTF8
+    $PreservedDirectories = @('source', 'output', 'data', 'tasks', 'knowledge', 'module-data')
+    $Sentinels = @()
+    foreach ($DirectoryName in $PreservedDirectories) {
+        $Directory = Join-Path $InstallDir $DirectoryName
+        New-Item -ItemType Directory -Path $Directory -Force | Out-Null
+        $Sentinel = Join-Path $Directory 'preserve-on-uninstall.txt'
+        Set-Content -LiteralPath $Sentinel -Value 'preserve' -Encoding UTF8
+        $Sentinels += $Sentinel
+    }
+    $Marker = Join-Path $InstallDir '.bamboo-install.json'
+    if (-not (Test-Path -LiteralPath $Marker -PathType Leaf)) {
+        throw 'Installed smoke test did not create the installation marker'
+    }
 
     $Uninstaller = Join-Path $InstallDir 'unins000.exe'
     Invoke-HiddenAndWait $Uninstaller @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') 120
-    if (-not (Test-Path -LiteralPath $Sentinel -PathType Leaf)) {
-        throw 'Uninstall removed local application data'
+    foreach ($Sentinel in $Sentinels) {
+        if (-not (Test-Path -LiteralPath $Sentinel -PathType Leaf)) {
+            throw "Uninstall removed preserved application data: $Sentinel"
+        }
     }
-    Write-Host 'Installer install/smoke/uninstall/data-preservation verification passed.' `
+    if (-not (Test-Path -LiteralPath $Marker -PathType Leaf)) {
+        throw 'Uninstall removed the installation marker'
+    }
+    Write-Host 'Installer install/smoke/uninstall/install-root preservation verification passed.' `
         -ForegroundColor Green
 } finally {
     $env:LOCALAPPDATA = $PriorLocalAppData

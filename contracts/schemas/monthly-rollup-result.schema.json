@@ -1,0 +1,196 @@
+{
+  "$defs": {
+    "ModuleId": {
+      "enum": [
+        "moisture",
+        "boiling",
+        "after_sales"
+      ],
+      "title": "ModuleId",
+      "type": "string"
+    },
+    "MonthlyRollupError": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "pattern": "^[a-z][a-z0-9_]{2,63}$",
+          "title": "Code",
+          "type": "string"
+        },
+        "message": {
+          "maxLength": 300,
+          "minLength": 1,
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "title": "MonthlyRollupError",
+      "type": "object"
+    },
+    "RollupOutputArtifact": {
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "title": "Label",
+          "type": "string"
+        },
+        "mime_type": {
+          "title": "Mime Type",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "path",
+        "label",
+        "mime_type",
+        "sha256"
+      ],
+      "title": "RollupOutputArtifact",
+      "type": "object"
+    },
+    "RollupSnapshotHash": {
+      "additionalProperties": false,
+      "properties": {
+        "month": {
+          "maximum": 12,
+          "minimum": 1,
+          "title": "Month",
+          "type": "integer"
+        },
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "snapshot_id": {
+          "pattern": "^[A-Za-z0-9-]{6,64}$",
+          "title": "Snapshot Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "snapshot_id",
+        "month",
+        "sha256"
+      ],
+      "title": "RollupSnapshotHash",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MonthlyRollupError"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "module_id": {
+      "$ref": "#/$defs/ModuleId"
+    },
+    "module_version": {
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "title": "Module Version",
+      "type": "string"
+    },
+    "network_call_count": {
+      "const": 0,
+      "default": 0,
+      "title": "Network Call Count",
+      "type": "integer"
+    },
+    "outputs": {
+      "items": {
+        "$ref": "#/$defs/RollupOutputArtifact"
+      },
+      "title": "Outputs",
+      "type": "array"
+    },
+    "record_count": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Record Count",
+      "type": "integer"
+    },
+    "schema_version": {
+      "pattern": "^1\\.0$",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "snapshot_hashes": {
+      "items": {
+        "$ref": "#/$defs/RollupSnapshotHash"
+      },
+      "maxItems": 12,
+      "title": "Snapshot Hashes",
+      "type": "array"
+    },
+    "status": {
+      "enum": [
+        "success",
+        "failed"
+      ],
+      "title": "Status",
+      "type": "string"
+    },
+    "target_month": {
+      "maximum": 12,
+      "minimum": 1,
+      "title": "Target Month",
+      "type": "integer"
+    },
+    "transaction_id": {
+      "pattern": "^[A-Za-z0-9-]{6,64}$",
+      "title": "Transaction Id",
+      "type": "string"
+    },
+    "used_months": {
+      "items": {
+        "type": "integer"
+      },
+      "maxItems": 12,
+      "title": "Used Months",
+      "type": "array"
+    },
+    "year": {
+      "maximum": 9999,
+      "minimum": 2000,
+      "title": "Year",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "schema_version",
+    "transaction_id",
+    "module_id",
+    "module_version",
+    "year",
+    "target_month",
+    "status"
+  ],
+  "title": "MonthlyRollupResult",
+  "type": "object"
+}
