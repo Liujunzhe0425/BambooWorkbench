@@ -1,4 +1,4 @@
-from PySide6.QtCore import QUrl, Signal
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -8,8 +8,10 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -50,9 +52,22 @@ class SettingsPage(QWidget):
         self.setObjectName("page-settings")
         self.setAccessibleName("系统设置")
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 24, 30, 28)
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(30, 24, 30, 28)
+        page_layout.setSpacing(0)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setObjectName("settingsScrollArea")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.scroll_content = QWidget()
+        self.scroll_content.setObjectName("settingsScrollContent")
+        layout = QVBoxLayout(self.scroll_content)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         title = QLabel("系统设置")
         title.setProperty("pageTitle", True)
         subtitle = QLabel("管理本地输出、AI 接口与数据保护选项。设置只保存在当前电脑。")
@@ -207,6 +222,8 @@ class SettingsPage(QWidget):
         update_layout.addLayout(update_actions)
         layout.addWidget(update_card)
         layout.addStretch()
+        self.scroll_area.setWidget(self.scroll_content)
+        page_layout.addWidget(self.scroll_area)
 
     def save(self) -> None:
         provider_id = str(self.provider_combo.currentData())
