@@ -3107,12 +3107,7 @@ def ai_payload_size(payload):
     )
 
 
-def build_ai_service_request(job, records, anomalies, rules, trend_analysis=None):
-    root_job_id = ai_root_job_id(job)
-    scope_id = stable_input_scope(job["input_files"])
-    identity = hashlib.sha256(
-        f"{root_job_id}:boiling:ai:{scope_id}:{rules.get('rule_version', '')}".encode()
-    ).hexdigest()[:24]
+def build_ai_candidates(records, anomalies, trend_analysis=None):
     candidates = [
         candidate
         for record in records
@@ -3121,6 +3116,28 @@ def build_ai_service_request(job, records, anomalies, rules, trend_analysis=None
     multi_month_candidate = trend_candidate(trend_analysis or {})
     if multi_month_candidate:
         candidates.append(multi_month_candidate)
+    return candidates
+
+
+def build_ai_service_request(
+    job,
+    records,
+    anomalies,
+    rules,
+    trend_analysis=None,
+    *,
+    candidate_pool=None,
+):
+    root_job_id = ai_root_job_id(job)
+    scope_id = stable_input_scope(job["input_files"])
+    identity = hashlib.sha256(
+        f"{root_job_id}:boiling:ai:{scope_id}:{rules.get('rule_version', '')}".encode()
+    ).hexdigest()[:24]
+    candidates = (
+        list(candidate_pool)
+        if candidate_pool is not None
+        else build_ai_candidates(records, anomalies, trend_analysis)
+    )
     if not candidates:
         return None
     selected_candidates = select_ai_candidates(candidates)
@@ -3424,7 +3441,57 @@ def validate_and_render_ai_response(response_text, request):
     }
 
 
-def read_ai_service_response(job, request):
+def validate_ai_response_after_candidate_reorder(
+    response_text,
+    request,
+    eligible_candidates,
+):
+    """Safely retain a Draft response when confirmations only changed candidate order."""
+    try:
+        payload = json.loads(as_text(response_text))
+    except json.JSONDecodeError:
+        return None
+    items = payload.get("items") if isinstance(payload, dict) else None
+    if not isinstance(items, list) or not items:
+        return None
+    candidate_ids = [
+        item.get("candidate_id") for item in items if isinstance(item, dict)
+    ]
+    if (
+        len(candidate_ids) != len(items)
+        or not all(isinstance(candidate_id, str) for candidate_id in candidate_ids)
+        or len(candidate_ids) != len(set(candidate_ids))
+    ):
+        return None
+    eligible_by_id = {
+        candidate.get("candidate_id"): candidate
+        for candidate in eligible_candidates
+        if isinstance(candidate, dict) and candidate.get("candidate_id")
+    }
+    if not set(candidate_ids).issubset(eligible_by_id):
+        return None
+    compatibility_request = {
+        **request,
+        "payload": {
+            **request.get("payload", {}),
+            "candidates": [eligible_by_id[candidate_id] for candidate_id in candidate_ids],
+        },
+    }
+    validated = validate_and_render_ai_response(response_text, compatibility_request)
+    if validated is None:
+        return None
+    note = (
+        "说明：人工确认改变了候选优先级；本建议按授权时的 Draft 候选，"
+        "并使用当前仍有效的确定性证据复验后保留。"
+    )
+    return {
+        **validated,
+        "text": sanitize_ai_text(f"{note}\n\n{validated['text']}"),
+        "validation_basis": "draft_candidate_revalidated",
+    }
+
+
+def read_ai_service_response(job, request, eligible_candidates=None):
     if request is None:
         return None
     if job["phase"] == "draft":
@@ -3460,6 +3527,12 @@ def read_ai_service_response(job, request):
     status = response.get("status")
     if status == "ok":
         validated = validate_and_render_ai_response(response.get("text"), request)
+        if validated is None and eligible_candidates is not None:
+            validated = validate_ai_response_after_candidate_reorder(
+                response.get("text"),
+                request,
+                eligible_candidates,
+            )
         if validated:
             return {"status": "ok", **validated}
         return {
@@ -4013,12 +4086,18 @@ def run_job(job_path):
     ai_review = None
     knowledge_request = None
     knowledge_review = None
+    ai_candidates = build_ai_candidates(
+        records,
+        result["anomalies"],
+        trend_analysis,
+    )
     ai_request = build_ai_service_request(
         job,
         records,
         result["anomalies"],
         rules,
         trend_analysis,
+        candidate_pool=ai_candidates,
     )
     knowledge_request = build_knowledge_service_request(job, trend_analysis, rules)
     if knowledge_request is not None:
@@ -4029,7 +4108,11 @@ def run_job(job_path):
             knowledge_review = read_knowledge_service_response(job, knowledge_request)
     if ai_request is not None:
         if is_finalize:
-            ai_review = read_ai_service_response(job, ai_request)
+            ai_review = read_ai_service_response(
+                job,
+                ai_request,
+                eligible_candidates=ai_candidates,
+            )
         else:
             result["service_requests"].append(ai_request)
             ai_review = read_ai_service_response(job, ai_request)

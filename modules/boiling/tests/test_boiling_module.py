@@ -911,6 +911,94 @@ def test_ai_response_is_report_only_and_sanitized(tmp_path):
     ).read_text(encoding="utf-8")
 
 
+def test_finalize_retains_valid_draft_ai_response_after_candidate_reorder(tmp_path):
+    draft_candidate = {
+        "candidate_id": "candidate-draft",
+        "evidence_refs": ["anomaly:A-DRAFT", "rule:R-DRAFT"],
+    }
+    current_candidate = {
+        "candidate_id": "candidate-current",
+        "evidence_refs": ["anomaly:A-CURRENT", "rule:R-CURRENT"],
+    }
+    current_request = {
+        "request_id": "boiling-ai-reordered",
+        "payload": {"candidates": [current_candidate]},
+    }
+    draft_request = {
+        "request_id": current_request["request_id"],
+        "payload": {"candidates": [draft_candidate]},
+    }
+    response_path = write_ai_service_response(
+        tmp_path / "service-response.json",
+        task_id="AI-REORDER-001",
+        request_id=current_request["request_id"],
+        text=json.dumps(
+            make_ai_response_payload(draft_request),
+            ensure_ascii=False,
+        ),
+    )
+    job = {
+        "phase": "finalize",
+        "job_id": "AI-REORDER-FINAL",
+        "parent_job_id": "AI-REORDER-001",
+        "service_response_file": str(response_path),
+    }
+
+    review = boiling_module.read_ai_service_response(
+        job,
+        current_request,
+        eligible_candidates=[draft_candidate, current_candidate],
+    )
+
+    assert review["status"] == "ok"
+    assert review["validation_basis"] == "draft_candidate_revalidated"
+    assert review["items"][0]["candidate_id"] == "candidate-draft"
+    assert "人工确认改变了候选优先级" in review["text"]
+
+
+def test_candidate_reorder_fallback_still_rejects_unknown_evidence(tmp_path):
+    draft_candidate = {
+        "candidate_id": "candidate-draft",
+        "evidence_refs": ["anomaly:A-DRAFT", "rule:R-DRAFT"],
+    }
+    current_candidate = {
+        "candidate_id": "candidate-current",
+        "evidence_refs": ["anomaly:A-CURRENT", "rule:R-CURRENT"],
+    }
+    current_request = {
+        "request_id": "boiling-ai-reordered-invalid",
+        "payload": {"candidates": [current_candidate]},
+    }
+    draft_request = {
+        "request_id": current_request["request_id"],
+        "payload": {"candidates": [draft_candidate]},
+    }
+    response_path = write_ai_service_response(
+        tmp_path / "service-response-invalid.json",
+        task_id="AI-REORDER-INVALID",
+        request_id=current_request["request_id"],
+        text=json.dumps(
+            make_ai_response_payload(draft_request, evidence_refs=["rule:FORGED"]),
+            ensure_ascii=False,
+        ),
+    )
+    job = {
+        "phase": "finalize",
+        "job_id": "AI-REORDER-INVALID-FINAL",
+        "parent_job_id": "AI-REORDER-INVALID",
+        "service_response_file": str(response_path),
+    }
+
+    review = boiling_module.read_ai_service_response(
+        job,
+        current_request,
+        eligible_candidates=[draft_candidate, current_candidate],
+    )
+
+    assert review["status"] == "invalid"
+    assert "证据引用不匹配" in review["text"]
+
+
 def test_denied_ai_response_degrades_to_offline_report(tmp_path):
     sample = tmp_path / "source.xlsx"
     draft_output = tmp_path / "draft"
