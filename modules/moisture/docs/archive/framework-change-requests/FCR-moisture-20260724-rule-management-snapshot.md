@@ -1,3 +1,7 @@
+> 文档状态：历史归档
+> 不作为当前实现和验收依据。
+> 当前有效说明以 README 和三份主指导文档为准。
+
 ---
 request_id: FCR-moisture-20260724-rule-management-snapshot
 module_id: moisture

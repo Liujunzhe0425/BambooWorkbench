@@ -7,9 +7,9 @@ BambooWorkbench 竹丝水分检测模块 v1.2.0。模块提供两条相互隔离
 
 模块不直接访问网络、Provider、数据库或凭据，AI 结果不修改汇总表、规则颜色或确定性结论。
 
-> `module/moisture-test` 已将历史追加、轻量经验管理、轻量规则管理和规则身份查询接入
-> 模块公开进程入口。经验/规则 GUI 和 TaskService 自动写入规则快照仍需框架按统一 FCR
-> 复验；模块侧不得把尚未接入的框架页面描述为客户已交付功能。
+> v1.2.0 已将历史追加、经验/规则三栏管理和 TaskService 规则快照接入主框架。
+> 日常管理从“竹丝水分检测”页面进入“打开经验与规则管理”；发布前必须核对版本与完整
+> SHA-256。详细步骤见[经验与规则管理使用教程](docs/经验与规则管理使用教程.md)。
 
 ## 快速使用
 
@@ -51,7 +51,7 @@ BambooWorkbench 竹丝水分检测模块 v1.2.0。模块提供两条相互隔离
 - `analysis_report.md`：面向客户的确定性业务摘要；正常批次聚合展示，异常、失败和待复核批次详细展开，
   规则哈希、内部来源及完整引用集中在文末技术附录。
 
-v1.1.1 不再生成“模型分析记录”，普通汇总也不再声明 AI 辅助复判请求。橙色表示确定性偏高疑似，绿色表示确定性偏低疑似；区间值大于 13% 时按当前规则染橙色。`0.55/0.47` 均值阈值仍待业务批准，不得称为正式生产标准。
+当前 v1.2.0 不生成“模型分析记录”，普通汇总也不声明 AI 辅助复判请求。橙色表示确定性偏高疑似，绿色表示确定性偏低疑似；区间值大于 13% 时按当前规则染橙色。`0.55/0.47` 均值阈值仍待业务批准，不得称为正式生产标准。
 
 独立 AI 报告输出：
 
@@ -84,9 +84,12 @@ modules\moisture\run_management.bat manage --request C:\absolute\request.json --
 - 规则三栏：列出、查看、校验、预览、创建/更新草稿、发布、停用、恢复和历史复制；
 - 当前规则只读查询：返回严格的 `{version, sha256}`。
 
-新操作使用统一 v1.1 request/response Schema；旧 v1.0 四操作保留迁移兼容。完整操作名和
-字段见[统一公开管理合同](docs/framework-change-requests/FCR-moisture-20260724-public-management-contract.md)。
-AI 候选规则只能进入草稿，不能自动发布。
+新操作使用统一 v1.1 request/response Schema；旧 v1.0 四操作保留迁移兼容。完整操作名、
+参数和示例见[经验与规则管理使用教程](docs/经验与规则管理使用教程.md)及
+[`samples/management/`](samples/management/)。
+
+当前模块不提供 AI 候选规则生成功能。规则草稿由有权限的业务人员创建、校验并确认发布，
+AI 报告不会创建、修改或发布规则。
 
 不要把管理命令加入普通 draft/finalize。`run_module.bat` 和 `run_management.bat` 均优先使用显式冻结程序、已激活环境或仓库 `.venv`，不会从 PATH 盲选系统 Python。
 
@@ -119,31 +122,26 @@ powershell -ExecutionPolicy Bypass -File modules\moisture\build_portable_runtime
 - 模块公开版本：`1.2.0`；
 - 历史追加继续保持 `supports_incremental: true`；
 - 统一管理进程覆盖 27 个公开操作，并保留旧 v1.0 四操作；
-- 模块侧规则快照能够固定 `{version, sha256}`，draft/finalize 不重新选择 active；
-- 当前 Draft PR #52 指向 `integration`，尚未合并；
-- 中央 ManagementService/Runner 对 v1.1 通用请求及 TaskService 自动快照仍由框架负责人
-  按统一 FCR 复验，模块不得越界修改框架。
+- 主框架经验/规则管理页面通过 ManagementService/Runner 调用独立管理进程；
+- TaskService 创建任务时固定 `{version, sha256}`，draft/finalize 不重新选择 active；
+- 模块适配 PR #52 已合入 `integration`，v1.2.0 发布线已完成框架闭环复验。
 
 ## 当前指导文档
 
 | 文档 | 内容 |
 | --- | --- |
+| [经验与规则管理使用教程](docs/经验与规则管理使用教程.md) | GUI 入口、经验编辑、规则发布、停用、恢复和错误处理 |
 | [业务规则与数据说明](docs/业务规则与数据说明.md) | 字段、公式、统计、阈值、颜色、经验与 AI 边界 |
 | [架构与开发维护指南](docs/架构与开发维护指南.md) | 调用链、合同、管理入口、测试和禁止项 |
 | [验收标准与已知限制](docs/验收标准与已知限制.md) | 合同、业务、框架、安全、降级和限制 |
 
-## 设计、交接与记录
+## 状态、交接与记录
 
 | 文档 | 内容 |
 | --- | --- |
-| [三功能简化架构](docs/architecture/moisture-next-stage-architecture.md) | 汇总生产、独立 AI 报告和后续规则治理方向 |
-| [v1.0.1 独立 AI 报告计划](docs/architecture/moisture-v1.0.1-independent-ai-report-plan.md) | 本版本模块实施边界 |
-| [框架适配请求](docs/framework-change-requests/FCR-moisture-20260723-ai-report-context-selection.md) | 已由框架 PR #43 实施的最小适配 |
-| [历史追加FCR](docs/framework-change-requests/FCR-moisture-20260724-history-summary-append.md) | 已实现的历史追加入口边界 |
-| [统一管理合同FCR](docs/framework-change-requests/FCR-moisture-20260724-public-management-contract.md) | 经验、规则和规则快照的唯一公开合同及框架复验点 |
-| [经验管理FCR](docs/framework-change-requests/FCR-moisture-20260724-experience-management.md) | 已收敛到统一合同的经验三栏业务目标 |
-| [规则管理FCR](docs/framework-change-requests/FCR-moisture-20260724-rule-management-snapshot.md) | 已收敛到统一合同的规则治理业务目标 |
 | [框架事项状态](docs/framework-issues.md) | 尚待业务/发布负责人处理的事项 |
+| [框架适配请求模板](docs/框架适配请求模板.md) | 后续确需修改主框架时使用的请求模板 |
+| [主框架后续更新要求](../../docs/handoff/模块后续更新与兼容接入验收说明.md) | 分支、修改边界、测试和 PR 要求 |
 | [CHANGELOG](CHANGELOG.md) | 版本变更 |
 | [验收证据](docs/evidence/) | 测试和人工验收记录 |
-| [历史归档](docs/archive/) | 不作为当前实现依据的旧方案 |
+| [历史归档](docs/archive/) | 旧计划、已完成 FCR 和迁移记录；不作为当前实现依据 |
