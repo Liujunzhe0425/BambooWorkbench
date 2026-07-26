@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bambooworkbench.local/modules/boiling/monthly-rollup-response.schema.json",
+  "title": "BoilingMonthlyRollupResponse",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "module_id",
+    "status",
+    "year",
+    "target_month",
+    "used_months",
+    "snapshot_hashes",
+    "outputs",
+    "error",
+    "network_call_count"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "request_id": {"type": "string"},
+    "module_id": {"const": "boiling"},
+    "status": {"enum": ["success", "failed"]},
+    "year": {"type": ["integer", "null"]},
+    "target_month": {"type": ["integer", "null"]},
+    "used_months": {
+      "type": "array",
+      "items": {"type": "integer", "minimum": 1, "maximum": 12}
+    },
+    "snapshot_hashes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["month", "sha256"],
+        "properties": {
+          "month": {"type": "integer", "minimum": 1, "maximum": 12},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "path", "label", "mime_type", "sha256"],
+        "properties": {
+          "type": {"type": "string"},
+          "path": {"type": "string"},
+          "label": {"type": "string"},
+          "mime_type": {"type": "string"},
+          "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+        }
+      }
+    },
+    "error": {"type": ["string", "null"]},
+    "network_call_count": {"const": 0}
+  }
+}

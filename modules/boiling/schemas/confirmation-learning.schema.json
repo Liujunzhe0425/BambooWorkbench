@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bambooworkbench.local/modules/boiling/confirmation-learning.schema.json",
+  "title": "BoilingConfirmationLearning",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "module_id", "descriptions"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "module_id": {"const": "boiling"},
+    "descriptions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/LearningDescription"}
+    }
+  },
+  "$defs": {
+    "LearningDescription": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "confirmation_id",
+        "learning_key",
+        "field",
+        "context",
+        "context_levels",
+        "candidates",
+        "base_suggestion",
+        "preference_adjustable"
+      ],
+      "properties": {
+        "confirmation_id": {"type": "string", "minLength": 1},
+        "learning_key": {
+          "type": "string",
+          "pattern": "^boiling\\.[a-z0-9_.-]+\\.v\\d+$"
+        },
+        "field": {"type": "string", "minLength": 1},
+        "context": {
+          "type": "object",
+          "additionalProperties": {"type": "string"}
+        },
+        "context_levels": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string"}
+          }
+        },
+        "candidates": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["candidate_id", "display_text", "value"],
+            "properties": {
+              "candidate_id": {
+                "type": "string",
+                "pattern": "^[a-z0-9_.-]+$"
+              },
+              "display_text": {"type": "string", "minLength": 1},
+              "value": {}
+            }
+          }
+        },
+        "base_suggestion": {"type": ["string", "null"]},
+        "preference_adjustable": {"type": "boolean"}
+      }
+    }
+  }
+}

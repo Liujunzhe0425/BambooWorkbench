@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bambooworkbench.local/modules/boiling/monthly-rollup-request.schema.json",
+  "title": "BoilingMonthlyRollupRequest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "module_id",
+    "year",
+    "target_month",
+    "snapshot_root",
+    "output_dir",
+    "snapshots",
+    "candidate_snapshot",
+    "config_identity",
+    "forbid_network"
+  ],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "request_id": {"type": "string", "pattern": "^[A-Za-z0-9-]{6,64}$"},
+    "module_id": {"const": "boiling"},
+    "year": {"type": "integer", "minimum": 2000, "maximum": 9999},
+    "target_month": {"type": "integer", "minimum": 1, "maximum": 12},
+    "snapshot_root": {"type": "string", "minLength": 1},
+    "output_dir": {"type": "string", "minLength": 1},
+    "snapshots": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/SnapshotRef"},
+      "maxItems": 12
+    },
+    "candidate_snapshot": {"$ref": "#/$defs/SnapshotRef"},
+    "config_identity": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "forbid_network": {"const": true}
+  },
+  "$defs": {
+    "SnapshotRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["month", "path", "sha256"],
+      "properties": {
+        "month": {"type": "integer", "minimum": 1, "maximum": 12},
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

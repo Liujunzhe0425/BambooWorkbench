@@ -1,3 +1,5 @@
+# ruff: noqa: E402
+
 import argparse
 import datetime as dt
 import hashlib
@@ -6,8 +8,30 @@ import math
 import re
 import sys
 import tempfile
-from copy import copy
+from copy import copy, deepcopy
 from pathlib import Path
+
+MODULE_SRC = Path(__file__).resolve().parent
+if str(MODULE_SRC) not in sys.path:
+    sys.path.insert(0, str(MODULE_SRC))
+
+from boiling_rollup import (  # noqa: E402
+    RollupContractError,
+    build_snapshot,
+    resolve_rollup_snapshots,
+)
+from boiling_rollup import (
+    read_json as read_rollup_json,
+)
+from boiling_rollup import (
+    response_template as rollup_response_template,
+)
+from boiling_rollup import (
+    sha256_file as rollup_sha256_file,
+)
+from boiling_rollup import (
+    write_json as write_rollup_json,
+)
 
 
 def configure_protocol_streams():
@@ -31,9 +55,11 @@ except ImportError as exc:  # pragma: no cover - exercised in a clean environmen
 
 
 MODULE_ID = "boiling"
-MODULE_VERSION = "1.2.0"
-MAX_AI_RECORDS = 50
-MAX_AI_PAYLOAD_BYTES = 65_536
+MODULE_VERSION = "1.3.0"
+MAX_AI_RECORDS = 1
+MAX_AI_OBSERVATIONS_PER_RECORD = 6
+MAX_TREND_MONTHS = 60
+MAX_AI_PAYLOAD_BYTES = 12_288
 MAX_AI_RESPONSE_CHARS = 8_000
 
 
@@ -140,6 +166,76 @@ def sanitize_business_value(value, key=None):
     return value
 
 
+def sanitized_confirmation_answers(answers):
+    return [
+        {
+            "confirmation_id": as_text(confirmation_id),
+            "value": sanitize_business_value(value),
+        }
+        for confirmation_id, value in sorted(answers.items())
+        if as_text(confirmation_id)
+    ]
+
+
+def record_period(record):
+    date_text = as_date_text(record.get("test_date"))
+    match = re.fullmatch(r"(20\d{2})-(\d{2})-\d{2}", date_text)
+    if not match:
+        return None
+    year, month = (int(part) for part in match.groups())
+    return year, month
+
+
+def derive_snapshot_period(records):
+    periods = {period for record in records if (period := record_period(record))}
+    if not periods:
+        raise ValueError("无法从最终业务记录确定月度快照年月")
+    if len(periods) != 1:
+        raise ValueError("最终业务记录包含多个检测月份，不能生成单一月度快照")
+    return next(iter(periods))
+
+
+def learning_description_for_confirmation(confirmation, record):
+    confirmation_id = as_text(confirmation.get("confirmation_id"))
+    if not confirmation_id.startswith("C-EXPANSION-REVIEW-"):
+        return None
+    usage = as_text(record.get("product_usage"))
+    context = {
+        "decision_type": "expansion_rule_gap",
+        "product_usage": usage if usage in {"地板", "家具", "墙板", "栏杆"} else "其他",
+        "metric": "expansion_ratio",
+    }
+    return {
+        "confirmation_id": confirmation_id,
+        "learning_key": "boiling.expansion.rule-gap.v1",
+        "field": "expansion_review",
+        "context": context,
+        "context_levels": [
+            ["decision_type", "product_usage", "metric"],
+            ["decision_type", "metric"],
+        ],
+        "candidates": [
+            {
+                "candidate_id": "treat_as_pass",
+                "display_text": "按合格处理",
+                "value": "按合格处理",
+            },
+            {
+                "candidate_id": "treat_as_fail",
+                "display_text": "按不合格处理",
+                "value": "按不合格处理",
+            },
+            {
+                "candidate_id": "keep_review",
+                "display_text": "继续待复核",
+                "value": "继续待复核",
+            },
+        ],
+        "base_suggestion": "keep_review",
+        "preference_adjustable": True,
+    }
+
+
 def as_number(value):
     if value is None or value == "" or isinstance(value, bool):
         return None
@@ -159,7 +255,7 @@ def is_missing_value(value):
 
 
 def as_date_text(value):
-    if isinstance(value, (dt.date, dt.datetime)):
+    if isinstance(value, dt.date | dt.datetime):
         return value.strftime("%Y-%m-%d")
     text = as_text(value)
     if not text:
@@ -232,7 +328,7 @@ def values_conflict(source_value, calculated_value, number_format, percentage=Fa
 
 
 def display_cell_value(value):
-    if isinstance(value, (dt.date, dt.datetime)):
+    if isinstance(value, dt.date | dt.datetime):
         return value.strftime("%Y-%m-%d")
     return as_text(value)
 
@@ -241,7 +337,7 @@ def plausible_fixed_fallback(field, value):
     if value in (None, ""):
         return False
     if field.endswith("_date"):
-        if isinstance(value, (dt.date, dt.datetime)):
+        if isinstance(value, dt.date | dt.datetime):
             return True
         return bool(re.search(r"20\d{2}[./年-]\d{1,2}[./月-]\d{1,2}", as_text(value)))
     normalized = normalize_label(value)
@@ -703,6 +799,194 @@ def extract_file(path):
         value_book.close()
 
 
+def extract_summary_trend_rows(path):
+    """Return normalized rows when *path* is a generated water-boiling summary."""
+    workbook = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    try:
+        if "水煮检测汇总" not in workbook.sheetnames:
+            return None
+        sheet = workbook["水煮检测汇总"]
+        headers = {
+            as_text(cell.value).strip(): index
+            for index, cell in enumerate(next(sheet.iter_rows(min_row=1, max_row=1)), 1)
+            if as_text(cell.value).strip()
+        }
+
+        def column(*names):
+            return next((headers[name] for name in names if name in headers), None)
+
+        date_column = column("检测日期", "实验日期")
+        density_column = column("平均密度(g/cm³)", "平均密度", "平均密度（g/cm³）")
+        expansion_column = column("平均膨胀率", "平均厚度膨胀率")
+        if date_column is None or (density_column is None and expansion_column is None):
+            raise ValueError("水煮检测汇总缺少检测日期或平均密度/平均膨胀率列")
+        columns = {
+            "batch_no": column("批号", "批次号", "批次"),
+            "product": column("产品", "产品名称"),
+            "specification": column("规格", "规格型号", "型号规格"),
+            "test_date": date_column,
+            "average_density_g_cm3": density_column,
+            "average_expansion_ratio": expansion_column,
+            "automatic_grade": column("自动等级"),
+            "manual_review": column("需人工复核"),
+            "immersion_peel_result": column("浸渍剥离"),
+            "business_status": column("业务状态"),
+        }
+        rows = []
+        for row_number in range(2, sheet.max_row + 1):
+            values = {
+                key: sheet.cell(row_number, index).value if index else None
+                for key, index in columns.items()
+            }
+            if not any(value not in (None, "") for value in values.values()):
+                continue
+            month = trend_month(values["test_date"], Path(path).stem)
+            rows.append(
+                {
+                    "source_file": str(Path(path).resolve()),
+                    "source_sheet": sheet.title,
+                    "source_row": row_number,
+                    "month": month,
+                    "test_date": as_date_text(values["test_date"]),
+                    "batch_no": as_text(values["batch_no"]),
+                    "product": as_text(values["product"]),
+                    "specification": as_text(values["specification"]),
+                    "average_density_g_cm3": as_number(values["average_density_g_cm3"]),
+                    "average_expansion_ratio": normalize_ratio(
+                        values["average_expansion_ratio"]
+                    ),
+                    "automatic_grade": as_text(values["automatic_grade"]),
+                    "manual_review": as_text(values["manual_review"]),
+                    "immersion_peel_result": as_text(values["immersion_peel_result"]),
+                    "business_status": as_text(values["business_status"]),
+                }
+            )
+        return rows
+    finally:
+        workbook.close()
+
+
+def trend_month(value, filename_stem=""):
+    if isinstance(value, dt.datetime | dt.date):
+        return value.strftime("%Y-%m")
+    text = as_text(value).strip()
+    match = re.search(r"(20\d{2})[-/.年](0?[1-9]|1[0-2])", text)
+    if match:
+        return f"{match.group(1)}-{int(match.group(2)):02d}"
+    match = re.search(r"(20\d{2})[-_.年]?(0[1-9]|1[0-2])", filename_stem)
+    if match:
+        return f"{match.group(1)}-{int(match.group(2)):02d}"
+    return ""
+
+
+def build_trend_analysis(rows):
+    usable = []
+    duplicate_row_count = 0
+    seen_rows = set()
+    rows_with_month = [row for row in rows if row.get("month")]
+    for row in rows_with_month:
+        batch_no = row.get("batch_no")
+        identity = (
+            (
+                row.get("month"),
+                batch_no,
+                row.get("product"),
+                row.get("specification"),
+                row.get("test_date"),
+                row.get("average_density_g_cm3"),
+                row.get("average_expansion_ratio"),
+            )
+            if batch_no
+            else (row.get("source_file"), row.get("source_row"))
+        )
+        if identity in seen_rows:
+            duplicate_row_count += 1
+            continue
+        seen_rows.add(identity)
+        usable.append(row)
+    grouped = {}
+    for row in usable:
+        grouped.setdefault(row["month"], []).append(row)
+    monthly = []
+    previous = None
+    for month in sorted(grouped):
+        month_rows = grouped[month]
+        densities = [
+            row["average_density_g_cm3"]
+            for row in month_rows
+            if row.get("average_density_g_cm3") is not None
+        ]
+        expansions = [
+            row["average_expansion_ratio"]
+            for row in month_rows
+            if row.get("average_expansion_ratio") is not None
+        ]
+        point = {
+            "month": month,
+            "record_count": len(month_rows),
+            "average_density_g_cm3": mean(densities),
+            "average_expansion_ratio": mean(expansions),
+            "manual_review_count": sum(
+                1 for row in month_rows if row.get("manual_review") == "是"
+            ),
+            "abnormal_count": sum(
+                1 for row in month_rows if row.get("business_status") == "异常"
+            ),
+            "peel_attention_count": sum(
+                1
+                for row in month_rows
+                if row.get("immersion_peel_result")
+                and "合格" not in row["immersion_peel_result"]
+            ),
+            "specification_count": len(
+                {row["specification"] for row in month_rows if row.get("specification")}
+            ),
+            "evidence_ref": f"trend:{month}",
+        }
+        if previous:
+            for metric in ("average_density_g_cm3", "average_expansion_ratio"):
+                current_value = point.get(metric)
+                previous_value = previous.get(metric)
+                point[f"{metric}_change"] = (
+                    current_value - previous_value
+                    if current_value is not None and previous_value is not None
+                    else None
+                )
+        else:
+            point["average_density_g_cm3_change"] = None
+            point["average_expansion_ratio_change"] = None
+        monthly.append(point)
+        previous = point
+    return {
+        "schema_version": "1.0",
+        "available": len(monthly) >= 2,
+        "source_file_count": len({row.get("source_file") for row in rows}),
+        "source_row_count": len(rows),
+        "usable_row_count": len(usable),
+        "missing_month_row_count": len(rows) - len(rows_with_month),
+        "duplicate_row_count": duplicate_row_count,
+        "month_count": len(monthly),
+        "monthly": monthly,
+    }
+
+
+def trend_candidate(trend_analysis):
+    if not trend_analysis.get("available"):
+        return None
+    monthly = trend_analysis["monthly"][-MAX_TREND_MONTHS:]
+    return {
+        "candidate_id": "candidate-multi-month-trend",
+        "candidate_type": "multi_month_trend",
+        "month_count": len(monthly),
+        "monthly_metrics": monthly,
+        "comparison_note": (
+            "各月指标按汇总表记录做算术平均；月份间规格构成可能不同，"
+            "不得仅凭总体均值推断工艺原因。"
+        ),
+        "evidence_refs": [point["evidence_ref"] for point in monthly],
+    }
+
+
 def load_rules(config_file=None):
     rules_path = DEFAULT_RULES_FILE
     if config_file:
@@ -784,12 +1068,14 @@ def add_conclusion_rule_conflict(
         observed_detail = f"规则复核值 {observed_value:.2%}"
     else:
         observed_detail = "规则复核值缺失"
+    confirmation_id = f"C-CONCLUSION-RULE-{field}-{fingerprint[:12]}"
     conflict = {
         "field": field,
         "source_conclusion": source_text,
         "rule_observation": rule_text,
         "observed_value": observed_value,
         "rule_id": rule_id,
+        "confirmation_id": confirmation_id,
     }
     record["conclusion_rule_conflicts"].append(conflict)
     conflict_index = len(record["conclusion_rule_conflicts"])
@@ -812,7 +1098,7 @@ def add_conclusion_rule_conflict(
     )
     confirmations.append(
         {
-            "confirmation_id": f"C-CONCLUSION-RULE-{field}-{fingerprint[:12]}",
+            "confirmation_id": confirmation_id,
             "field": display_field,
             "reason": (
                 f"{source_name}：原表结论“{source_text}”与规则观察“{rule_text}”不一致；"
@@ -829,7 +1115,7 @@ def add_conclusion_rule_conflict(
     )
 
 
-def evaluate_record(record, rules, fingerprint, crack_inspection_confirmed=False):
+def evaluate_record(record, rules, fingerprint):
     anomalies = []
     confirmations = []
     rule_hits = []
@@ -911,7 +1197,6 @@ def evaluate_record(record, rules, fingerprint, crack_inspection_confirmed=False
     numeric_pass = None
     expansion_grade = ""
     human_review = False
-    crack_review_required = False
     rule_detail = ""
     if expansion_value is None:
         rule_detail = "信息不足"
@@ -923,16 +1208,12 @@ def evaluate_record(record, rules, fingerprint, crack_inspection_confirmed=False
         )
         if excellent_max is not None and expansion_value <= excellent_max + 1e-12:
             numeric_pass = True
-            expansion_grade = "绿色优等候选"
-            human_review = True
-            crack_review_required = True
-            rule_detail = "膨胀率≤6.5%，需结合开裂观察确认绿色优等"
+            expansion_grade = "绿色优等"
+            rule_detail = "膨胀率≤6.5%，绿色优等"
         elif pass_max is not None and expansion_value <= pass_max + 1e-12:
             numeric_pass = True
             expansion_grade = "蓝色合格"
-            human_review = True
-            crack_review_required = True
-            rule_detail = "6.5%＜膨胀率≤8%，膨胀率维度蓝色合格，仍需核对开裂观察"
+            rule_detail = "6.5%＜膨胀率≤8%，膨胀率维度蓝色合格"
         else:
             numeric_pass = False
             expansion_grade = "红色不合格"
@@ -942,19 +1223,15 @@ def evaluate_record(record, rules, fingerprint, crack_inspection_confirmed=False
         pass_max = normalize_ratio((expansion_rule.get("wall_railing") or {}).get("pass_max_ratio"))
         if excellent_max is not None and expansion_value <= excellent_max + 1e-12:
             numeric_pass = True
-            expansion_grade = "绿色优等候选"
-            human_review = True
-            crack_review_required = True
-            rule_detail = "膨胀率≤6.5%，需结合开裂观察确认绿色优等"
+            expansion_grade = "绿色优等"
+            rule_detail = "膨胀率≤6.5%，绿色优等"
         elif blue_min is not None and expansion_value < blue_min - 1e-12:
             human_review = True
             rule_detail = "墙板/栏杆膨胀率＞6.5%且＜8%，v0.1 规则缺口转人工复核"
         elif pass_max is not None and expansion_value <= pass_max + 1e-12:
             numeric_pass = True
             expansion_grade = "蓝色合格"
-            human_review = True
-            crack_review_required = True
-            rule_detail = "8%≤膨胀率≤12%，膨胀率维度蓝色合格，仍需核对开裂观察"
+            rule_detail = "8%≤膨胀率≤12%，膨胀率维度蓝色合格"
         else:
             numeric_pass = False
             expansion_grade = "红色不合格"
@@ -963,26 +1240,9 @@ def evaluate_record(record, rules, fingerprint, crack_inspection_confirmed=False
         human_review = True
         rule_detail = f"产品用途“{usage}”没有自动判定规则"
 
-    if crack_review_required and crack_inspection_confirmed:
-        human_review = False
-        rule_detail = rule_detail.replace(
-            "需结合开裂观察确认绿色优等",
-            "开裂已人工检查且符合绿色优等要求",
-        ).replace(
-            "仍需核对开裂观察",
-            "开裂已人工检查且符合对应等级",
-        )
-
     record["expansion_numeric_pass"] = numeric_pass
     record["expansion_grade"] = expansion_grade
     record["expansion_human_review_required"] = human_review
-    record["expansion_crack_review_applicable"] = crack_review_required
-    record["crack_inspection_confirmed"] = bool(crack_inspection_confirmed)
-    record["crack_inspection_status"] = (
-        "已检查且符合对应等级"
-        if record["crack_inspection_confirmed"]
-        else ("待确认" if expansion_value is not None else "不适用")
-    )
     record["rule_observations"]["expansion"] = rule_detail
     rule_hits.append(
         {
@@ -992,8 +1252,6 @@ def evaluate_record(record, rules, fingerprint, crack_inspection_confirmed=False
             "product_usage": usage,
             "average_expansion_ratio": expansion_value,
             "human_review_required": human_review,
-            "crack_review_applicable": crack_review_required,
-            "crack_inspection_confirmed": record["crack_inspection_confirmed"],
             "source_cells": [
                 sample["expansion_source_cell"]
                 for sample in record["samples"]
@@ -1023,7 +1281,7 @@ def evaluate_record(record, rules, fingerprint, crack_inspection_confirmed=False
                 "field": "expansion_review",
                 "reason": reason,
                 "suggested_value": None,
-                "options": ["开裂观察符合对应等级", "开裂观察不符合对应等级", "继续待复核"],
+                "options": ["按合格处理", "按不合格处理", "继续待复核"],
                 "confidence": 0.0,
                 "blocking": False,
                 "batch_applicable": False,
@@ -1156,7 +1414,72 @@ def style_result_cell(cell, value):
     cell.font = Font(name="微软雅黑", color="000000")
 
 
-def write_summary(records, output_path, rules, excluded_records=None):
+def append_trend_sheet(workbook, trend_analysis):
+    if not trend_analysis or not trend_analysis.get("monthly"):
+        return
+    sheet = workbook.create_sheet("多月趋势")
+    sheet.append(
+        [
+            "月份",
+            "汇总记录数",
+            "平均密度(g/cm³)",
+            "密度环比变化(g/cm³)",
+            "平均膨胀率",
+            "膨胀率环比变化",
+            "人工复核数",
+            "异常数",
+            "浸渍剥离关注数",
+            "规格数",
+            "证据标识",
+        ]
+    )
+    style_header(sheet[1])
+    for point in trend_analysis["monthly"]:
+        sheet.append(
+            [
+                point["month"],
+                point["record_count"],
+                point["average_density_g_cm3"],
+                point["average_density_g_cm3_change"],
+                point["average_expansion_ratio"],
+                point["average_expansion_ratio_change"],
+                point["manual_review_count"],
+                point["abnormal_count"],
+                point["peel_attention_count"],
+                point["specification_count"],
+                point["evidence_ref"],
+            ]
+        )
+    for row in range(2, sheet.max_row + 1):
+        for column in ("C", "D"):
+            sheet[f"{column}{row}"].number_format = "0.000"
+        for column in ("E", "F"):
+            sheet[f"{column}{row}"].number_format = "0.00%"
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = sheet.dimensions
+    for column, width in {
+        "A": 12,
+        "B": 14,
+        "C": 18,
+        "D": 22,
+        "E": 16,
+        "F": 18,
+        "G": 14,
+        "H": 12,
+        "I": 18,
+        "J": 12,
+        "K": 20,
+    }.items():
+        sheet.column_dimensions[column].width = width
+
+
+def write_summary(
+    records,
+    output_path,
+    rules,
+    excluded_records=None,
+    trend_analysis=None,
+):
     excluded_records = excluded_records or []
     workbook = openpyxl.Workbook()
     summary = workbook.active
@@ -1442,7 +1765,7 @@ def write_summary(records, output_path, rules, excluded_records=None):
             "每个有效试件 1.1～1.3 g/cm³（含边界），且最大值-最小值≤0.1 g/cm³（含边界）。",
         ]
     )
-    rule_sheet.append(["绿色优等", "平均膨胀率≤6.5%，并须结合表面、侧面和端头开裂观察人工确认。"])
+    rule_sheet.append(["绿色优等", "平均膨胀率≤6.5%。"])
     rule_sheet.append(["地板/家具", "6.5%＜平均膨胀率≤8% 为蓝色合格；＞8% 为红色不合格。"])
     rule_sheet.append(["墙板/栏杆", "8%≤平均膨胀率≤12% 为蓝色合格；＞12% 为红色不合格。"])
     rule_sheet.append(["v0.1 人工边界", "墙板/栏杆平均膨胀率＞6.5%且＜8% 不自动标色，转人工复核。"])
@@ -1585,6 +1908,7 @@ def write_summary(records, output_path, rules, excluded_records=None):
                 if cell.row > 1:
                     cell.border = border
         sheet.freeze_panes = sheet.freeze_panes or "A2"
+    append_trend_sheet(workbook, trend_analysis)
     workbook.save(output_path)
 
 
@@ -1596,6 +1920,8 @@ def write_analysis_workbook(
     rules,
     excluded_records=None,
     ai_review=None,
+    trend_analysis=None,
+    knowledge_review=None,
 ):
     """Write a concise, human-oriented report without replacing audit outputs."""
     excluded_records = excluded_records or []
@@ -1632,6 +1958,8 @@ def write_analysis_workbook(
         overall_status = "待人工确认"
     elif anomalies:
         overall_status = "发现异常/观察项"
+    elif not records and trend_analysis and trend_analysis.get("monthly"):
+        overall_status = "已生成多月趋势"
     elif excluded_records:
         overall_status = "部分文件信息不足"
     else:
@@ -1647,7 +1975,11 @@ def write_analysis_workbook(
     ]
     metric_values = [
         overall_status,
-        len(records),
+        (
+            trend_analysis.get("usable_row_count", 0)
+            if not records and trend_analysis
+            else len(records)
+        ),
         status_counts["正常"],
         status_counts["异常"],
         status_counts["待确认"],
@@ -1846,8 +2178,9 @@ def write_analysis_workbook(
     style_header(notes[1])
     notes.column_dimensions["A"].width = 20
     notes.column_dimensions["B"].width = 90
+    append_trend_sheet(workbook, trend_analysis)
 
-    if ai_review:
+    if ai_review or knowledge_review:
         ai_sheet = workbook.create_sheet("AI辅助建议")
         ai_sheet.sheet_view.showGridLines = False
         ai_sheet.merge_cells("A1:H2")
@@ -1866,15 +2199,28 @@ def write_analysis_workbook(
             horizontal="center", vertical="center", wrap_text=True
         )
         ai_sheet["A4"] = "AI 状态"
-        ai_sheet["B4"] = ai_review.get("status", "")
+        ai_sheet["B4"] = (ai_review or {}).get("status", "未请求")
         ai_sheet["C4"] = "建议项数量"
-        ai_sheet["D4"] = len(ai_review.get("items", []))
+        ai_sheet["D4"] = len((ai_review or {}).get("items", []))
         ai_sheet["E4"] = "输出性质"
         ai_sheet.merge_cells("F4:H4")
         ai_sheet["F4"] = "辅助复核，不作为业务结论"
         ai_sheet["A6"] = "总体说明"
         ai_sheet.merge_cells("B6:H8")
-        ai_sheet["B6"] = ai_review.get("overall_summary") or ai_review.get("text", "")
+        summary_parts = [
+            (ai_review or {}).get("overall_summary")
+            or (ai_review or {}).get("text", "")
+        ]
+        knowledge_items = (knowledge_review or {}).get("items", [])
+        if knowledge_items:
+            summary_parts.append(
+                "知识库依据："
+                + "；".join(
+                    f"{item.get('title', '未命名知识')}：{item.get('content', '')}"
+                    for item in knowledge_items[:5]
+                )
+            )
+        ai_sheet["B6"] = "\n\n".join(part for part in summary_parts if part)
         style_header([ai_sheet["A4"], ai_sheet["C4"], ai_sheet["E4"], ai_sheet["A6"]])
         ai_sheet["B4"].fill = note_fill
         ai_sheet["D4"].fill = note_fill
@@ -1884,7 +2230,7 @@ def write_analysis_workbook(
         for row in range(6, 9):
             ai_sheet.row_dimensions[row].height = 26
 
-        structured_items = ai_review.get("items", [])
+        structured_items = (ai_review or {}).get("items", [])
         table_headers = [
             "序号",
             "优先级",
@@ -1947,7 +2293,7 @@ def write_analysis_workbook(
                 horizontal="center", vertical="center", wrap_text=True
             )
 
-        limitations = ai_review.get("limitations", [])
+        limitations = (ai_review or {}).get("limitations", [])
         if limitations:
             limitation_row = ai_sheet.max_row + 2
             ai_sheet.merge_cells(
@@ -2013,6 +2359,8 @@ def write_analysis_report(
     run_summary=None,
     file_results=None,
     errors=None,
+    trend_analysis=None,
+    knowledge_review=None,
 ):
     excluded_records = excluded_records or []
     run_summary = run_summary or {}
@@ -2058,6 +2406,17 @@ def write_analysis_report(
         for sample in record.get("samples", [])
         if sample.get("expansion_ratio") is not None
     ]
+    if not records and trend_analysis:
+        density_values = [
+            point["average_density_g_cm3"]
+            for point in trend_analysis.get("monthly", [])
+            if point.get("average_density_g_cm3") is not None
+        ]
+        expansion_values = [
+            point["average_expansion_ratio"]
+            for point in trend_analysis.get("monthly", [])
+            if point.get("average_expansion_ratio") is not None
+        ]
     density_ranges = [
         record.get("density_range_g_cm3")
         for record in records
@@ -2069,6 +2428,11 @@ def write_analysis_report(
         if as_text(record.get("immersion_peel_result"))
         and "合格" not in as_text(record.get("immersion_peel_result"))
     )
+    if not records and trend_analysis:
+        peel_attention = sum(
+            point.get("peel_attention_count", 0)
+            for point in trend_analysis.get("monthly", [])
+        )
     density_value_text = (
         f"{min(density_values):.3f}～{max(density_values):.3f}"
         if density_values
@@ -2240,18 +2604,65 @@ def write_analysis_report(
     else:
         lines.append("| 无 | 0 | 0 | 本批次未发现数据风险 |")
 
-    if ai_review:
+    section_number = 6
+    if trend_analysis and trend_analysis.get("monthly"):
         lines.extend(
             [
                 "",
-                "## 六、AI 辅助分析（不作为业务结论）",
+                f"## {section_number}、多月趋势分析",
                 "",
-                f"- 状态：`{ai_review.get('status', '')}`",
-                "- AI 不能改变公式、阈值、自动等级、业务状态或人工确认结论。",
+                (
+                    "> 月度值按上传汇总表中的记录做算术平均。不同月份的规格构成可能不同，"
+                    "趋势用于发现变化线索，不直接证明工艺原因。"
+                ),
                 "",
-                ai_review.get("text", ""),
+                "| 月份 | 记录数 | 平均密度 | 密度环比 | 平均膨胀率 | 膨胀率环比 | 异常数 |",
+                "|---|---:|---:|---:|---:|---:|---:|",
             ]
         )
+        for point in trend_analysis["monthly"]:
+            density = point.get("average_density_g_cm3")
+            density_change = point.get("average_density_g_cm3_change")
+            expansion = point.get("average_expansion_ratio")
+            expansion_change = point.get("average_expansion_ratio_change")
+            density_text = f"{density:.3f}" if density is not None else "-"
+            density_change_text = (
+                f"{density_change:+.3f}" if density_change is not None else "-"
+            )
+            expansion_text = f"{expansion:.2%}" if expansion is not None else "-"
+            expansion_change_text = (
+                f"{expansion_change:+.2%}" if expansion_change is not None else "-"
+            )
+            lines.append(
+                f"| {point['month']} | {point['record_count']} | "
+                f"{density_text} | {density_change_text} | "
+                f"{expansion_text} | {expansion_change_text} | "
+                f"{point['abnormal_count']} |"
+            )
+        section_number += 1
+
+    if ai_review or knowledge_review:
+        lines.extend(
+            [
+                "",
+                f"## {section_number}、AI 与知识库辅助分析（不作为业务结论）",
+                "",
+                f"- AI 状态：`{(ai_review or {}).get('status', '未请求')}`",
+                f"- 知识库状态：`{(knowledge_review or {}).get('status', '未请求')}`",
+                "- AI 不能改变公式、阈值、自动等级、业务状态或人工确认结论。",
+                "",
+                (ai_review or {}).get("text", ""),
+            ]
+        )
+        knowledge_items = (knowledge_review or {}).get("items", [])
+        if knowledge_items:
+            lines.extend(["", "### 知识库依据"])
+            for item in knowledge_items[:5]:
+                lines.append(
+                    f"- **{markdown_text(item.get('title', '未命名知识'))}**："
+                    f"{markdown_text(item.get('content', ''))}"
+                )
+        section_number += 1
     next_steps = []
     if business_counts.get("信息不足", 0):
         next_steps.append("补齐空表、未完成表或缺失的核心测量数据后重新运行。")
@@ -2263,16 +2674,20 @@ def write_analysis_report(
         next_steps.append("复核浸渍剥离原表结论和试件状态，由业务人员签署最终结论。")
     if errors or failed_count:
         next_steps.append("修复损坏或结构无法识别的文件后单独重跑，避免遗漏。")
+    if trend_analysis and trend_analysis.get("available"):
+        next_steps.append(
+            "对变化较明显的月份按相同规格、用途和检测口径复核原汇总记录，"
+            "确认构成一致后再判断是否需要工艺追查。"
+        )
     if not next_steps:
         next_steps.append("本批次未发现需立即处理事项；按既定抽检与归档流程执行。")
-    next_section = "七" if ai_review else "六"
-    appendix_section = "八" if ai_review else "七"
-    lines.extend(["", f"## {next_section}、建议的下一步", ""])
+    lines.extend(["", f"## {section_number}、建议的下一步", ""])
     lines.extend(f"{index}. {step}" for index, step in enumerate(next_steps, 1))
+    section_number += 1
     lines.extend(
         [
             "",
-            f"## {appendix_section}、技术附录",
+            f"## {section_number}、技术附录",
             "",
             (
                 "- 完整异常、确认项、稳定标识、规则 ID 和来源单元格："
@@ -2285,7 +2700,13 @@ def write_analysis_report(
     Path(output_path).write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def write_business_records(records, excluded_records, output_path, rules):
+def write_business_records(
+    records,
+    excluded_records,
+    output_path,
+    rules,
+    trend_analysis=None,
+):
     payload = {
         "schema_version": "1.0",
         "module_id": MODULE_ID,
@@ -2299,6 +2720,7 @@ def write_business_records(records, excluded_records, output_path, rules):
         },
         "records": sanitize_business_value(records),
         "excluded_records": sanitize_business_value(excluded_records),
+        "trend_analysis": sanitize_business_value(trend_analysis or {}),
     }
     Path(output_path).write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),
@@ -2397,6 +2819,93 @@ def confirmation_answers(job):
     return {"by_id": by_id, "batch_usage": batch_usage}
 
 
+def apply_confirmed_calculation_values(record, fingerprint, answer_map):
+    applied = []
+    samples_by_label = {
+        as_text(sample.get("label")): sample for sample in record.get("samples", [])
+    }
+    for index, conflict in enumerate(record.get("conflicts", []), 1):
+        confirmation_id = f"C-CONFLICT-{index}-{fingerprint[:12]}"
+        if confirmation_id not in answer_map:
+            continue
+        selected = as_number(answer_map[confirmation_id])
+        allowed = [
+            value
+            for value in (
+                as_number(conflict.get("source_value")),
+                as_number(conflict.get("calculated_value")),
+            )
+            if value is not None
+        ]
+        if selected is None or not any(abs(selected - value) <= 1e-12 for value in allowed):
+            continue
+        sample = samples_by_label.get(as_text(conflict.get("sample")))
+        if sample is None:
+            continue
+        if conflict.get("field") == "density_g_cm3":
+            sample["density_g_cm3"] = selected
+        elif conflict.get("field") == "expansion_ratio":
+            sample["expansion_ratio"] = selected
+        else:
+            continue
+        conflict["confirmation_id"] = confirmation_id
+        conflict["confirmed_value"] = selected
+        conflict["confirmed_choice"] = (
+            "source"
+            if abs(selected - as_number(conflict.get("source_value"))) <= 1e-12
+            else "calculated"
+        )
+        applied.append(
+            {
+                "confirmation_id": confirmation_id,
+                "field": conflict.get("field"),
+                "sample": conflict.get("sample"),
+                "value": selected,
+                "choice": conflict["confirmed_choice"],
+            }
+        )
+    densities = [
+        sample.get("density_g_cm3")
+        for sample in record.get("samples", [])
+        if sample.get("density_g_cm3") is not None
+    ]
+    expansions = [
+        sample.get("expansion_ratio")
+        for sample in record.get("samples", [])
+        if sample.get("expansion_ratio") is not None
+    ]
+    record["average_density_g_cm3"] = mean(densities)
+    record["density_min_g_cm3"] = min(densities) if densities else None
+    record["density_max_g_cm3"] = max(densities) if densities else None
+    record["density_range_g_cm3"] = (
+        record["density_max_g_cm3"] - record["density_min_g_cm3"] if densities else None
+    )
+    record["average_expansion_ratio"] = mean(expansions)
+    record["confirmed_calculation_values"] = applied
+
+
+def apply_confirmation_decisions(record, confirmations, answer_map):
+    decisions = []
+    for confirmation in confirmations:
+        confirmation_id = confirmation["confirmation_id"]
+        if confirmation_id not in answer_map:
+            continue
+        value = answer_map[confirmation_id]
+        decisions.append(
+            {
+                "confirmation_id": confirmation_id,
+                "field": confirmation.get("field"),
+                "value": sanitize_business_value(value),
+            }
+        )
+        if confirmation_id.startswith("C-EXPANSION-REVIEW-"):
+            record["expansion_review_decision"] = as_text(value)
+        for conflict in record.get("conclusion_rule_conflicts", []):
+            if conflict.get("confirmation_id") == confirmation_id:
+                conflict["confirmed_value"] = sanitize_business_value(value)
+    record["final_confirmation_decisions"] = decisions
+
+
 def result_template(job, started, rule_version):
     return {
         "schema_version": "1.0",
@@ -2444,32 +2953,6 @@ def product_usage_confirmation(record, scope_id):
     }
 
 
-def crack_inspection_confirmation(record, scope_id):
-    return {
-        "confirmation_id": f"C-CRACK-INSPECTION-BATCH-{scope_id}",
-        "field": "人工开裂检查",
-        "reason": (
-            "本批次存在需要结合开裂观察确认膨胀率等级的记录。"
-            "“是”表示已经人工检查，并确认表面、侧面和端头开裂情况符合对应等级；"
-            "选择后只消除开裂观察提示，不改变密度、膨胀率数值、自动等级或其他复核项。"
-        ),
-        "suggested_value": "否（尚未完成或不符合对应等级）",
-        "options": [
-            "是（已检查且符合对应等级）",
-            "否（尚未完成或不符合对应等级）",
-        ],
-        "confidence": 1.0,
-        "blocking": True,
-        "batch_applicable": True,
-        "rememberable": False,
-        "source": source_ref(record["source_file"], record["source_sheet"]),
-    }
-
-
-def crack_inspection_is_confirmed(value):
-    return as_text(value).startswith("是")
-
-
 def unresolved_finalize_anomaly(record, fingerprint, confirmation):
     confirmation_id = confirmation["confirmation_id"]
     stable_suffix = hashlib.sha256(confirmation_id.encode("utf-8")).hexdigest()[:12]
@@ -2506,7 +2989,7 @@ def ai_metric_name(item):
 
 
 def ai_safe_value(value):
-    if value is None or isinstance(value, (bool, int, float)):
+    if value is None or isinstance(value, bool | int | float):
         return value
     return sanitize_ai_text(value)[:120]
 
@@ -2576,9 +3059,44 @@ def ai_record_summary(record, anomalies):
         "business_status": as_text(record.get("business_status")),
         "calculation_conflict_count": len(record.get("conflicts", [])),
         "conclusion_conflict_count": len(record.get("conclusion_rule_conflicts", [])),
-        "observations": related_anomalies[:20],
+        "observations": related_anomalies[:MAX_AI_OBSERVATIONS_PER_RECORD],
         "evidence_refs": evidence_refs,
     }
+
+
+def ai_candidate_priority(candidate):
+    if candidate.get("candidate_type") == "multi_month_trend":
+        return 10_000
+    observations = candidate.get("observations", [])
+    critical_count = sum(
+        1 for item in observations if item.get("severity") == "critical"
+    )
+    warning_count = sum(
+        1 for item in observations if item.get("severity") == "warning"
+    )
+    peel_attention = (
+        1
+        if "不合格" in as_text(candidate.get("immersion_peel_result"))
+        else 0
+    )
+    return (
+        critical_count * 100
+        + int(candidate.get("conclusion_conflict_count", 0)) * 30
+        + int(candidate.get("calculation_conflict_count", 0)) * 20
+        + warning_count * 10
+        + peel_attention * 5
+        + int(bool(candidate.get("manual_review_required"))) * 3
+    )
+
+
+def select_ai_candidates(candidates):
+    return sorted(
+        candidates,
+        key=lambda candidate: (
+            -ai_candidate_priority(candidate),
+            as_text(candidate.get("candidate_id")),
+        ),
+    )[:MAX_AI_RECORDS]
 
 
 def ai_payload_size(payload):
@@ -2589,9 +3107,7 @@ def ai_payload_size(payload):
     )
 
 
-def build_ai_service_request(job, records, anomalies, rules):
-    if not records:
-        return None
+def build_ai_service_request(job, records, anomalies, rules, trend_analysis=None):
     root_job_id = ai_root_job_id(job)
     scope_id = stable_input_scope(job["input_files"])
     identity = hashlib.sha256(
@@ -2602,26 +3118,36 @@ def build_ai_service_request(job, records, anomalies, rules):
         for record in records
         if (candidate := ai_record_summary(record, anomalies)) is not None
     ]
+    multi_month_candidate = trend_candidate(trend_analysis or {})
+    if multi_month_candidate:
+        candidates.append(multi_month_candidate)
     if not candidates:
         return None
+    selected_candidates = select_ai_candidates(candidates)
     summaries = []
-    for candidate in candidates[:MAX_AI_RECORDS]:
+    for candidate in selected_candidates:
         proposed = [*summaries, candidate]
         payload = {
             "schema_version": "1.0",
             "module_id": MODULE_ID,
             "rule_version": rules.get("rule_version", ""),
             "instruction": (
-                "仅基于脱敏候选生成中文辅助说明。逐项给出风险说明、待验证原因、"
+                "仅基于脱敏候选和确定性月度指标生成中文辅助说明。逐项给出风险说明、"
+                "趋势解释、待验证原因、"
                 "可执行核对清单、复测建议和优先级；possible_causes 中的内容必须明确"
                 "作为待验证假设，不得写成事实。不得修改或否定模块规则结论，不得"
                 "推断缺失数据，不得给出最终质量签字结论；evidence_refs 只能引用"
-                "对应候选已提供的证据标识。"
+                "对应候选已提供的证据标识。多月趋势必须提醒规格构成变化可能造成"
+                "总体均值偏移，并与工作台水煮知识库检索结果共同供报告引用。"
+                "本次只有一个最高优先级候选；只写必要内容，原因、核对项和复测建议"
+                "避免同义重复。"
             ),
+            "knowledge_query": "水煮实验 多月趋势 密度 膨胀率 浸渍剥离 复核 分析建议",
             "candidates": proposed,
             "candidate_total": len(candidates),
             "candidate_sent": len(proposed),
             "candidate_omitted": len(candidates) - len(proposed),
+            "selection_policy": "优先多月趋势、严重异常、结论/计算冲突和剥离关注项",
             "response_schema": ai_response_schema(),
         }
         if ai_payload_size(payload) > MAX_AI_PAYLOAD_BYTES:
@@ -2632,26 +3158,54 @@ def build_ai_service_request(job, records, anomalies, rules):
         "module_id": MODULE_ID,
         "rule_version": rules.get("rule_version", ""),
         "instruction": (
-            "仅基于脱敏候选生成中文辅助说明。逐项给出风险说明、待验证原因、"
+            "仅基于脱敏候选和确定性月度指标生成中文辅助说明。逐项给出风险说明、"
+            "趋势解释、待验证原因、"
             "可执行核对清单、复测建议和优先级；possible_causes 中的内容必须明确"
             "作为待验证假设，不得写成事实。不得修改或否定模块规则结论，不得"
             "推断缺失数据，不得给出最终质量签字结论；evidence_refs 只能引用"
-            "对应候选已提供的证据标识。"
+            "对应候选已提供的证据标识。多月趋势必须提醒规格构成变化可能造成"
+            "总体均值偏移，并与工作台水煮知识库检索结果共同供报告引用。"
+            "本次只有一个最高优先级候选；只写必要内容，原因、核对项和复测建议"
+            "避免同义重复。"
         ),
+        "knowledge_query": "水煮实验 多月趋势 密度 膨胀率 浸渍剥离 复核 分析建议",
         "candidates": summaries,
         "candidate_total": len(candidates),
         "candidate_sent": len(summaries),
         "candidate_omitted": len(candidates) - len(summaries),
+        "selection_policy": "优先多月趋势、严重异常、结论/计算冲突和剥离关注项",
         "response_schema": ai_response_schema(),
     }
     return {
         "request_id": f"boiling-ai-{identity}",
         "service": "ai",
         "scope": None,
-        "purpose": "生成水煮实验脱敏辅助分析建议",
+        "purpose": "生成水煮实验脱敏复核与多月趋势辅助分析建议",
         "payload": payload,
         "requires_user_consent": True,
         "response_format": "json_object",
+    }
+
+
+def build_knowledge_service_request(job, trend_analysis, rules):
+    if (
+        not trend_analysis.get("available")
+        or MODULE_ID not in job.get("allowed_knowledge_scopes", [])
+    ):
+        return None
+    root_job_id = ai_root_job_id(job)
+    scope_id = stable_input_scope(job["input_files"])
+    identity = hashlib.sha256(
+        f"{root_job_id}:boiling:knowledge:{scope_id}:{rules.get('rule_version', '')}".encode()
+    ).hexdigest()[:24]
+    return {
+        "request_id": f"boiling-knowledge-{identity}",
+        "service": "knowledge",
+        "scope": MODULE_ID,
+        "purpose": "检索水煮实验多月趋势分析所需的已审核知识",
+        "payload": {"query": "水煮实验"},
+        "requires_user_consent": False,
+        "response_format": "text",
     }
 
 
@@ -2662,7 +3216,7 @@ def ai_response_schema():
         "required": ["schema_version", "overall_summary", "items", "limitations"],
         "properties": {
             "schema_version": {"const": "1.0"},
-            "overall_summary": {"type": "string", "maxLength": 1200},
+            "overall_summary": {"type": "string", "maxLength": 300},
             "items": {
                 "type": "array",
                 "items": {
@@ -2679,23 +3233,23 @@ def ai_response_schema():
                     ],
                     "properties": {
                         "candidate_id": {"type": "string"},
-                        "risk_summary": {"type": "string", "maxLength": 800},
+                        "risk_summary": {"type": "string", "maxLength": 240},
                         "possible_causes": {
                             "type": "array",
                             "items": {"type": "string", "maxLength": 300},
                             "minItems": 1,
-                            "maxItems": 5,
+                            "maxItems": 2,
                         },
                         "check_items": {
                             "type": "array",
                             "items": {"type": "string", "maxLength": 300},
                             "minItems": 1,
-                            "maxItems": 8,
+                            "maxItems": 3,
                         },
                         "retest_recommendations": {
                             "type": "array",
                             "items": {"type": "string", "maxLength": 300},
-                            "maxItems": 5,
+                            "maxItems": 2,
                         },
                         "priority": {"enum": ["high", "medium", "low"]},
                         "evidence_refs": {
@@ -2709,7 +3263,7 @@ def ai_response_schema():
             "limitations": {
                 "type": "array",
                 "items": {"type": "string", "maxLength": 500},
-                "maxItems": 8,
+                "maxItems": 2,
             },
         },
     }
@@ -2748,7 +3302,7 @@ def validate_and_render_ai_response(response_text, request):
         return None
     if (
         not isinstance(payload.get("overall_summary"), str)
-        or len(payload["overall_summary"]) > 1200
+        or len(payload["overall_summary"]) > 300
     ):
         return None
     if not isinstance(payload.get("items"), list) or not isinstance(
@@ -2756,7 +3310,7 @@ def validate_and_render_ai_response(response_text, request):
     ):
         return None
     if not valid_ai_string_list(
-        payload["limitations"], min_items=0, max_items=8, max_length=500
+        payload["limitations"], min_items=0, max_items=2, max_length=500
     ):
         return None
     candidates = request.get("payload", {}).get("candidates", [])
@@ -2789,23 +3343,23 @@ def validate_and_render_ai_response(response_text, request):
             or candidate_id in seen
             or not isinstance(item.get("risk_summary"), str)
             or not item["risk_summary"].strip()
-            or len(item["risk_summary"]) > 800
+            or len(item["risk_summary"]) > 240
             or not valid_ai_string_list(
                 item.get("possible_causes"),
                 min_items=1,
-                max_items=5,
+                max_items=2,
                 max_length=300,
             )
             or not valid_ai_string_list(
                 item.get("check_items"),
                 min_items=1,
-                max_items=8,
+                max_items=3,
                 max_length=300,
             )
             or not valid_ai_string_list(
                 item.get("retest_recommendations"),
                 min_items=0,
-                max_items=5,
+                max_items=2,
                 max_length=300,
             )
             or item.get("priority") not in priority_labels
@@ -2923,6 +3477,351 @@ def read_ai_service_response(job, request):
     }
 
 
+def read_knowledge_service_response(job, request):
+    if request is None:
+        return None
+    if job["phase"] == "draft":
+        return {"status": "pending", "items": []}
+    path_value = job.get("service_response_file")
+    if not path_value:
+        return {"status": "unavailable", "items": []}
+    try:
+        payload = load_json(path_value, "知识库服务响应文件")
+    except ValueError:
+        return {"status": "invalid", "items": []}
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != "1.0"
+        or payload.get("task_id") != ai_root_job_id(job)
+        or payload.get("module_id") != MODULE_ID
+        or not isinstance(payload.get("responses"), list)
+    ):
+        return {"status": "invalid", "items": []}
+    matches = [
+        item
+        for item in payload["responses"]
+        if isinstance(item, dict)
+        and item.get("request_id") == request["request_id"]
+        and item.get("service") == "knowledge"
+    ]
+    if len(matches) != 1 or matches[0].get("status") != "ok":
+        return {"status": "invalid", "items": []}
+    items = matches[0].get("items")
+    if not isinstance(items, list):
+        return {"status": "invalid", "items": []}
+    sanitized = []
+    for item in items[:10]:
+        if not isinstance(item, dict):
+            continue
+        record_id = sanitize_ai_text(item.get("record_id"))
+        title = sanitize_ai_text(item.get("title"))
+        content = sanitize_ai_text(item.get("content"))
+        if record_id and title and content:
+            sanitized.append(
+                {
+                    "record_id": record_id,
+                    "title": title,
+                    "content": content,
+                    "source_kind": sanitize_ai_text(item.get("source_kind")),
+                }
+            )
+    return {"status": "ok", "items": sanitized}
+
+
+def write_learning_descriptions(descriptions, output_path):
+    payload = {
+        "schema_version": "1.0",
+        "module_id": MODULE_ID,
+        "descriptions": sanitize_business_value(descriptions),
+    }
+    Path(output_path).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def write_monthly_snapshot(
+    *,
+    records,
+    excluded_records,
+    anomalies,
+    answers,
+    learning_descriptions,
+    ai_review,
+    knowledge_review,
+    rules,
+    output_path,
+):
+    year, month = derive_snapshot_period(records)
+    payload = {
+        "rule_version": rules.get("rule_version"),
+        "records": sanitize_business_value(deepcopy(records)),
+        "excluded_records": sanitize_business_value(deepcopy(excluded_records)),
+        "anomalies": sanitize_business_value(deepcopy(anomalies)),
+        "confirmation_answers": sanitized_confirmation_answers(answers),
+        "learning_descriptions": sanitize_business_value(
+            deepcopy(learning_descriptions)
+        ),
+        "ai_review": sanitize_business_value(deepcopy(ai_review)),
+        "knowledge_review": sanitize_business_value(deepcopy(knowledge_review)),
+    }
+    snapshot = build_snapshot(
+        module_version=MODULE_VERSION,
+        year=year,
+        month=month,
+        payload=payload,
+    )
+    write_rollup_json(output_path, snapshot)
+    return snapshot
+
+
+def combine_snapshot_ai_reviews(verified_snapshots):
+    reviews = []
+    for item in verified_snapshots:
+        review = item["snapshot"]["payload"].get("ai_review")
+        if isinstance(review, dict) and review.get("status") == "ok":
+            reviews.append((item["month"], review))
+    if not reviews:
+        return None
+    items = []
+    summaries = []
+    limitations = []
+    text_sections = []
+    for month, review in reviews:
+        summary = as_text(review.get("overall_summary"))
+        if summary:
+            summaries.append(f"{month}月：{summary}")
+        text = as_text(review.get("text"))
+        if text:
+            text_sections.append(f"### {month}月既有 AI 建议\n{text}")
+        for suggestion in review.get("items", []):
+            if isinstance(suggestion, dict):
+                preserved = deepcopy(suggestion)
+                preserved["snapshot_month"] = month
+                items.append(preserved)
+        for limitation in review.get("limitations", []):
+            text = as_text(limitation)
+            if text and text not in limitations:
+                limitations.append(text)
+    limitations.append("累计重算仅复用月度快照中的既有建议，网络调用次数为 0。")
+    return {
+        "status": "preserved",
+        "overall_summary": "；".join(summaries) or "已保留月度快照中的 AI 辅助建议。",
+        "text": "\n\n".join(
+            [
+                *text_sections,
+                "累计重算仅复用月度快照中的既有建议，网络调用次数为 0。",
+            ]
+        ),
+        "items": items,
+        "limitations": limitations,
+    }
+
+
+def combine_snapshot_knowledge_reviews(verified_snapshots):
+    seen = set()
+    items = []
+    for snapshot_item in verified_snapshots:
+        review = snapshot_item["snapshot"]["payload"].get("knowledge_review")
+        if not isinstance(review, dict):
+            continue
+        for item in review.get("items", []):
+            if not isinstance(item, dict):
+                continue
+            identity = as_text(item.get("record_id")) or hashlib.sha256(
+                json.dumps(item, ensure_ascii=False, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            if identity in seen:
+                continue
+            seen.add(identity)
+            items.append(deepcopy(item))
+    return {"status": "preserved", "items": items} if items else None
+
+
+def trend_rows_from_records(records):
+    rows = []
+    for index, record in enumerate(records, 1):
+        period = record_period(record)
+        if period is None:
+            continue
+        year, month = period
+        rows.append(
+            {
+                "source_file": as_text(record.get("source_file")),
+                "source_sheet": as_text(record.get("source_sheet")),
+                "source_row": index,
+                "month": f"{year:04d}-{month:02d}",
+                "test_date": as_date_text(record.get("test_date")),
+                "batch_no": as_text(record.get("batch_no")),
+                "product": as_text(record.get("product")),
+                "specification": as_text(record.get("specification")),
+                "average_density_g_cm3": record.get("average_density_g_cm3"),
+                "average_expansion_ratio": record.get("average_expansion_ratio"),
+                "automatic_grade": as_text(record.get("expansion_grade")),
+                "manual_review": (
+                    "是" if record.get("expansion_human_review_required") else "否"
+                ),
+                "immersion_peel_result": as_text(
+                    record.get("immersion_peel_result")
+                ),
+                "business_status": as_text(record.get("business_status")),
+            }
+        )
+    return rows
+
+
+def run_monthly_rollup(request_path, response_path):
+    request = {}
+    response_target = Path(response_path).resolve()
+    try:
+        request = read_rollup_json(request_path, "累计渲染请求")
+        verified = resolve_rollup_snapshots(request)
+        output_dir = Path(request["output_dir"]).resolve()
+        if response_target.parent != output_dir:
+            raise RollupContractError("累计响应文件必须位于授权输出目录")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        rules = load_rules()
+        config_identity = request["config_identity"]
+        expected_rule_version = as_text(config_identity.get("rule_version"))
+        if expected_rule_version and expected_rule_version != as_text(
+            rules.get("rule_version")
+        ):
+            raise RollupContractError("累计请求规则版本与模块当前规则不一致")
+        expected_rule_hash = as_text(config_identity.get("sha256"))
+        if expected_rule_hash and expected_rule_hash != rollup_sha256_file(
+            DEFAULT_RULES_FILE
+        ):
+            raise RollupContractError("累计请求规则快照哈希与模块当前规则不一致")
+
+        records = []
+        excluded_records = []
+        anomalies = []
+        for item in verified:
+            payload = item["snapshot"]["payload"]
+            records.extend(deepcopy(payload["records"]))
+            excluded_records.extend(deepcopy(payload["excluded_records"]))
+            anomalies.extend(deepcopy(payload["anomalies"]))
+        trend_analysis = build_trend_analysis(trend_rows_from_records(records))
+        ai_review = combine_snapshot_ai_reviews(verified)
+        knowledge_review = combine_snapshot_knowledge_reviews(verified)
+        summary_path = output_dir / "boiling_summary.xlsx"
+        analysis_path = output_dir / "boiling_analysis.xlsx"
+        markdown_path = output_dir / "boiling_analysis.md"
+        records_path = output_dir / "boiling_records.json"
+        write_summary(
+            records,
+            summary_path,
+            rules,
+            excluded_records,
+            trend_analysis,
+        )
+        run_summary = {
+            "input_count": len(verified),
+            "processed_count": len(verified),
+            "skipped_count": 0,
+            "failed_count": 0,
+            "anomaly_count": len(anomalies),
+            "confirmation_count": 0,
+        }
+        write_analysis_workbook(
+            records,
+            anomalies,
+            [],
+            analysis_path,
+            rules,
+            excluded_records,
+            ai_review,
+            trend_analysis,
+            knowledge_review,
+        )
+        write_analysis_report(
+            records,
+            anomalies,
+            [],
+            markdown_path,
+            rules,
+            excluded_records,
+            ai_review,
+            run_summary,
+            [],
+            [],
+            trend_analysis,
+            knowledge_review,
+        )
+        write_business_records(
+            records,
+            excluded_records,
+            records_path,
+            rules,
+            trend_analysis,
+        )
+        artifacts = [
+            (
+                "summary_excel",
+                summary_path,
+                "水煮实验年度累计汇总",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
+            (
+                "analysis_report",
+                analysis_path,
+                "水煮实验年度累计分析报告",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            ),
+            (
+                "analysis_report_markdown",
+                markdown_path,
+                "水煮实验年度累计分析记录（Markdown）",
+                "text/markdown",
+            ),
+            (
+                "business_records",
+                records_path,
+                "水煮实验年度累计结构化业务记录",
+                "application/json",
+            ),
+        ]
+        outputs = [
+            {
+                "type": artifact_type,
+                "path": str(path),
+                "label": label,
+                "mime_type": mime_type,
+                "sha256": rollup_sha256_file(path),
+            }
+            for artifact_type, path, label, mime_type in artifacts
+        ]
+        response = rollup_response_template(
+            request,
+            status="success",
+            outputs=outputs,
+            used=verified,
+        )
+        write_rollup_json(response_target, response)
+        emit(
+            f"累计渲染完成: {request['year']}年1-{request['target_month']}月，"
+            f"使用月份 {response['used_months']}",
+            100,
+        )
+        return 0
+    except (OSError, ValueError, RollupContractError) as exc:
+        response = rollup_response_template(
+            request if isinstance(request, dict) else {},
+            status="failed",
+            error=str(exc),
+        )
+        try:
+            response_target.parent.mkdir(parents=True, exist_ok=True)
+            write_rollup_json(response_target, response)
+        except OSError:
+            pass
+        print(
+            json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False),
+            file=sys.stderr,
+        )
+        return 2
+
+
 def run_job(job_path):
     try:
         job = load_json(job_path, "任务JSON")
@@ -2951,17 +3850,15 @@ def run_job(job_path):
     result_path = output_dir / "result.json"
     records = []
     excluded_records = []
+    trend_rows = []
     seen = set()
     usage_prompt_added = False
-    crack_prompt_added = False
+    learning_descriptions = []
+    unresolved_confirmation_count = 0
     is_finalize = job["phase"] == "finalize"
     scope_id = stable_input_scope(job["input_files"])
     answer_map = answers["by_id"]
     batch_usage = answers["batch_usage"]
-    crack_confirmation_id = f"C-CRACK-INSPECTION-BATCH-{scope_id}"
-    crack_answer = as_text(answer_map.get(crack_confirmation_id))
-    crack_answered = bool(crack_answer)
-    crack_inspection_confirmed = crack_inspection_is_confirmed(crack_answer)
     emit("任务开始", 0)
     for index, raw_path in enumerate(job["input_files"], 1):
         source = Path(raw_path).resolve()
@@ -2983,9 +3880,19 @@ def run_job(job_path):
                 error = "重复文件，已跳过"
             else:
                 seen.add(fingerprint)
-                record = extract_file(source)
-                missing_fields = record["missing_fields"]
-                if record["is_incomplete"]:
+                summary_rows = extract_summary_trend_rows(source)
+                record = (
+                    {"_trend_rows": summary_rows}
+                    if summary_rows is not None
+                    else extract_file(source)
+                )
+                if "_trend_rows" in record:
+                    trend_rows.extend(record["_trend_rows"])
+                    extracted_records = len(record["_trend_rows"])
+                    result["summary"]["processed_count"] += 1
+                    status = "success"
+                elif record["is_incomplete"]:
+                    missing_fields = record["missing_fields"]
                     status = "success"
                     record["business_status"] = "信息不足"
                     anomalies = [
@@ -3033,46 +3940,31 @@ def run_job(job_path):
                             finalize_anomalies.append(
                                 unresolved_finalize_anomaly(record, fingerprint, missing_usage)
                             )
+                            unresolved_confirmation_count += 1
                         else:
                             usage_confirmation_pending = True
+                    apply_confirmed_calculation_values(record, fingerprint, answer_map)
                     anomalies, confirmations = evaluate_record(
                         record,
                         rules,
                         fingerprint,
-                        crack_inspection_confirmed=crack_inspection_confirmed,
                     )
-                    crack_confirmation_relevant = bool(
-                        record.get("expansion_crack_review_applicable")
-                        or (
-                            not as_text(record.get("product_usage"))
-                            and record.get("average_expansion_ratio") is not None
+                    for confirmation in confirmations:
+                        description = learning_description_for_confirmation(
+                            confirmation,
+                            record,
                         )
-                    )
-                    crack_confirmation_pending = bool(
-                        crack_confirmation_relevant and not crack_answered
-                    )
-                    if crack_confirmation_relevant:
-                        if crack_answered and not crack_inspection_confirmed:
-                            record["crack_inspection_status"] = (
-                                "已确认尚未完成或不符合对应等级"
-                            )
-                        elif not is_finalize and not crack_prompt_added:
-                            result["confirmations"].append(
-                                crack_inspection_confirmation(record, scope_id)
-                            )
-                            crack_prompt_added = True
-                        elif is_finalize and not crack_answered:
-                            finalize_anomalies.append(
-                                unresolved_finalize_anomaly(
-                                    record,
-                                    fingerprint,
-                                    crack_inspection_confirmation(record, scope_id),
-                                )
-                            )
+                        if description and all(
+                            item["confirmation_id"] != description["confirmation_id"]
+                            for item in learning_descriptions
+                        ):
+                            learning_descriptions.append(description)
+                    apply_confirmation_decisions(record, confirmations, answer_map)
                     pending_confirmations = [
                         item for item in confirmations if item["confirmation_id"] not in answer_map
                     ]
                     if is_finalize:
+                        unresolved_confirmation_count += len(pending_confirmations)
                         finalize_anomalies.extend(
                             unresolved_finalize_anomaly(record, fingerprint, item)
                             for item in pending_confirmations
@@ -3085,7 +3977,6 @@ def run_job(job_path):
                     anomaly_count += len(anomalies)
                     if (
                         usage_confirmation_pending
-                        or crack_confirmation_pending
                         or pending_confirmations
                     ):
                         record["business_status"] = "待确认"
@@ -3117,14 +4008,25 @@ def run_job(job_path):
             round(index / len(job["input_files"]) * 80),
         )
 
+    trend_analysis = build_trend_analysis(trend_rows)
     ai_request = None
     ai_review = None
+    knowledge_request = None
+    knowledge_review = None
     ai_request = build_ai_service_request(
         job,
         records,
         result["anomalies"],
         rules,
+        trend_analysis,
     )
+    knowledge_request = build_knowledge_service_request(job, trend_analysis, rules)
+    if knowledge_request is not None:
+        if is_finalize:
+            knowledge_review = read_knowledge_service_response(job, knowledge_request)
+        else:
+            result["service_requests"].append(knowledge_request)
+            knowledge_review = read_knowledge_service_response(job, knowledge_request)
     if ai_request is not None:
         if is_finalize:
             ai_review = read_ai_service_response(job, ai_request)
@@ -3134,13 +4036,19 @@ def run_job(job_path):
 
     result["summary"]["anomaly_count"] = len(result["anomalies"])
     result["summary"]["confirmation_count"] = len(result["confirmations"])
-    if records or excluded_records:
+    if records or excluded_records or trend_rows:
         summary_path = output_dir / "boiling_summary.xlsx"
         analysis_workbook_path = output_dir / "boiling_analysis.xlsx"
         report_path = output_dir / "boiling_analysis.md"
         records_path = output_dir / "boiling_records.json"
         try:
-            write_summary(records, summary_path, rules, excluded_records)
+            write_summary(
+                records,
+                summary_path,
+                rules,
+                excluded_records,
+                trend_analysis,
+            )
             write_analysis_workbook(
                 records,
                 result["anomalies"],
@@ -3149,6 +4057,8 @@ def run_job(job_path):
                 rules,
                 excluded_records,
                 ai_review,
+                trend_analysis,
+                knowledge_review,
             )
             write_analysis_report(
                 records,
@@ -3161,8 +4071,16 @@ def run_job(job_path):
                 result["summary"],
                 result["file_results"],
                 result["errors"],
+                trend_analysis,
+                knowledge_review,
             )
-            write_business_records(records, excluded_records, records_path, rules)
+            write_business_records(
+                records,
+                excluded_records,
+                records_path,
+                rules,
+                trend_analysis,
+            )
             result["outputs"].extend(
                 [
                     {
@@ -3195,6 +4113,17 @@ def run_job(job_path):
                     },
                 ]
             )
+            if learning_descriptions:
+                learning_path = output_dir / "boiling_confirmation_learning.json"
+                write_learning_descriptions(learning_descriptions, learning_path)
+                result["outputs"].append(
+                    {
+                        "type": "confirmation_learning",
+                        "path": str(learning_path),
+                        "label": "水煮实验确认项学习描述（内部）",
+                        "mime_type": "application/json",
+                    }
+                )
         except (OSError, ValueError) as exc:
             result["errors"].append(f"生成汇总文件失败: {exc}")
 
@@ -3206,6 +4135,38 @@ def run_job(job_path):
         result["status"] = "failed"
     else:
         result["status"] = "success"
+    if (
+        is_finalize
+        and result["status"] == "success"
+        and records
+        and unresolved_confirmation_count == 0
+    ):
+        snapshot_path = output_dir / "boiling_monthly_snapshot.json"
+        try:
+            snapshot = write_monthly_snapshot(
+                records=records,
+                excluded_records=excluded_records,
+                anomalies=result["anomalies"],
+                answers=answer_map,
+                learning_descriptions=learning_descriptions,
+                ai_review=ai_review,
+                knowledge_review=knowledge_review,
+                rules=rules,
+                output_path=snapshot_path,
+            )
+            result["outputs"].append(
+                {
+                    "type": "monthly_snapshot",
+                    "path": str(snapshot_path),
+                    "label": (
+                        f"水煮实验{snapshot['year']}年{snapshot['month']}月业务快照（内部）"
+                    ),
+                    "mime_type": "application/json",
+                }
+            )
+        except (OSError, ValueError, RollupContractError) as exc:
+            result["errors"].append(f"生成月度快照失败: {exc}")
+            result["status"] = "failed"
     result["analysis_summary"] = (
         f"处理{result['summary']['processed_count']}个文件，失败{result['summary']['failed_count']}个，"
         f"未纳入正常统计{len(excluded_records)}个，异常/观察{result['summary']['anomaly_count']}项，"
@@ -3280,12 +4241,17 @@ def main():
     subparsers.add_parser("self-check")
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("--job", required=True)
+    rollup_parser = subparsers.add_parser("rollup")
+    rollup_parser.add_argument("--request", required=True)
+    rollup_parser.add_argument("--response", required=True)
     args = parser.parse_args()
     if args.command == "version":
         emit(f"{MODULE_ID} {MODULE_VERSION}", 100)
         return 0
     if args.command == "self-check":
         return self_check()
+    if args.command == "rollup":
+        return run_monthly_rollup(args.request, args.response)
     return run_job(args.job)
 
 

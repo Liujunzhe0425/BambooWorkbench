@@ -195,4 +195,73 @@ foreach ($Artifact in @('boiling_summary.xlsx', 'boiling_analysis.md', 'boiling_
     }
 }
 
+$SnapshotSource = Join-Path $FinalOutput 'boiling_monthly_snapshot.json'
+if (-not (Test-Path -LiteralPath $SnapshotSource -PathType Leaf)) {
+    throw 'Packaged boiling finalize did not create boiling_monthly_snapshot.json'
+}
+$Snapshot = Get-Content -LiteralPath $SnapshotSource -Raw -Encoding UTF8 | ConvertFrom-Json
+$SnapshotRoot = Join-Path $VerificationRoot 'snapshots'
+$RollupOutput = Join-Path $VerificationRoot 'rollup-output'
+$RollupRequestPath = Join-Path $VerificationRoot 'rollup-request.json'
+$RollupResponsePath = Join-Path $RollupOutput 'rollup-response.json'
+New-Item -ItemType Directory -Force -Path $SnapshotRoot, $RollupOutput | Out-Null
+$CandidateSnapshot = Join-Path $SnapshotRoot (
+    '{0:D4}-{1:D2}.json' -f [int]$Snapshot.year, [int]$Snapshot.month
+)
+Copy-Item -LiteralPath $SnapshotSource -Destination $CandidateSnapshot -Force
+$SnapshotHash = (Get-FileHash -LiteralPath $CandidateSnapshot -Algorithm SHA256).Hash.ToLowerInvariant()
+$RuleHash = (
+    Get-FileHash -LiteralPath (Join-Path $ModuleRoot 'rules\default_rules.yaml') -Algorithm SHA256
+).Hash.ToLowerInvariant()
+[ordered]@{
+    schema_version = '1.0'
+    request_id = 'PORTABLE-ROLLUP-001'
+    module_id = 'boiling'
+    year = [int]$Snapshot.year
+    target_month = [int]$Snapshot.month
+    snapshot_root = $SnapshotRoot
+    output_dir = $RollupOutput
+    snapshots = @()
+    candidate_snapshot = [ordered]@{
+        month = [int]$Snapshot.month
+        path = $CandidateSnapshot
+        sha256 = $SnapshotHash
+    }
+    config_identity = [ordered]@{
+        rule_version = $Snapshot.payload.rule_version
+        sha256 = $RuleHash
+    }
+    forbid_network = $true
+} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $RollupRequestPath -Encoding UTF8
+$RollupRun = Invoke-IsolatedLauncher -Launcher $Launcher -Arguments @(
+    'rollup',
+    '--request',
+    $RollupRequestPath,
+    '--response',
+    $RollupResponsePath
+)
+if ($RollupRun.ExitCode -ne 0) {
+    throw "Packaged boiling rollup failed with exit code $($RollupRun.ExitCode): $($RollupRun.Stderr)"
+}
+$RollupResponse = Get-Content -LiteralPath $RollupResponsePath -Raw -Encoding UTF8 |
+    ConvertFrom-Json
+if (
+    $RollupResponse.status -ne 'success' -or
+    $RollupResponse.network_call_count -ne 0 -or
+    $RollupResponse.used_months.Count -ne 1 -or
+    $RollupResponse.used_months[0] -ne [int]$Snapshot.month
+) {
+    throw 'Packaged boiling rollup response did not satisfy the offline monthly contract.'
+}
+foreach ($Artifact in @(
+    'boiling_summary.xlsx',
+    'boiling_analysis.xlsx',
+    'boiling_analysis.md',
+    'boiling_records.json'
+)) {
+    if (-not (Test-Path -LiteralPath (Join-Path $RollupOutput $Artifact) -PathType Leaf)) {
+        throw "Packaged boiling rollup did not create $Artifact"
+    }
+}
+
 Write-Host 'Boiling standalone portable runtime built and verified.' -ForegroundColor Green

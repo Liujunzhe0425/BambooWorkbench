@@ -1,0 +1,26 @@
+{
+  "schema_version": "1.0",
+  "scenario": "2026年已有1月、缺少2月、以3月候选生成截至3月累计成果",
+  "expected_status": "success",
+  "expected_year": 2026,
+  "expected_target_month": 3,
+  "expected_used_months": [1, 3],
+  "expected_network_call_count": 0,
+  "expected_output_types": [
+    "summary_excel",
+    "analysis_report",
+    "analysis_report_markdown",
+    "business_records"
+  ],
+  "expected_record_count": 2,
+  "expected_replacement_behavior": "候选月份与已有月份相同时，以候选快照替换旧月后按月份升序重算",
+  "expected_rejections": [
+    "其他模块",
+    "跨年",
+    "已有快照乱序",
+    "已有快照重复月份",
+    "晚于目标月份",
+    "路径超出授权根",
+    "SHA-256不一致"
+  ]
+}
