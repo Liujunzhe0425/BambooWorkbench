@@ -1,8 +1,8 @@
-# BambooWorkbench v1.2.0 本地发布清单
+# BambooWorkbench v1.3.0 本地发布清单
 
 ## 代码与测试
 
-- [ ] 工作树仅包含本次正式版变更，产品与三个模块版本统一为 `1.2.0`
+- [ ] 工作树仅包含本次正式版变更，产品与三个模块版本统一为 `1.3.0`
 - [ ] `scripts/verify_repo.ps1` 全部通过
 - [ ] 三个真实业务模块的合同、单元、集成与框架测试通过
 - [ ] 正常启动默认加载真实模块，只有 `--demo` 使用 Mock
@@ -23,7 +23,7 @@
 - [ ] `scripts/build_installer.ps1` 和 `scripts/verify_installer.ps1` 通过
 - [ ] 清空 Python/PYTHONPATH 等环境变量后，真实模式与演示模式均可启动
 - [ ] 安装包、桌面快捷方式和窗口使用 BambooWorkbench 图标
-- [ ] 安装、覆盖升级、卸载后 `%LOCALAPPDATA%\BambooWorkbench` 数据保留
+- [ ] 安装根目录创建 source/output，覆盖升级和卸载保留业务数据、数据库、设置、实例标记与 Windows 凭据
 - [ ] 记录便携版、安装包 SHA-256
 - [ ] 从上一安装版完成一次“发现更新 → 用户确认 → 下载 → SHA-256 校验 → 覆盖安装 → 自动重启”
 - [ ] 拒绝更新、断网、无更新权限及哈希错误均不影响离线模块启动
@@ -44,6 +44,6 @@
 - [ ] 用户明确批准本次稳定版合并与发布
 - [ ] 稳定分支 PR 到 `integration`，质量检查与评审通过
 - [ ] `integration` PR 到 `main`，质量检查与评审通过
-- [ ] `v1.2.0` 标签指向最终 `main` 提交
+- [ ] `v1.3.0` 标签指向最终 `main` 提交
 - [ ] package 工作流绿色，Release 仅上传该工作流生成的安装包、便携包和校验文件
-- [ ] GitHub Release 标记 `v1.2.0` 为 Latest
+- [ ] GitHub Release 标记 `v1.3.0` 为 Latest
