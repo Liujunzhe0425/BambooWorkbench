@@ -9,6 +9,27 @@
       "title": "ModuleId",
       "type": "string"
     },
+    "RollupConfigurationIdentity": {
+      "additionalProperties": false,
+      "properties": {
+        "sha256": {
+          "pattern": "^[0-9a-f]{64}$",
+          "title": "Sha256",
+          "type": "string"
+        },
+        "version": {
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "version",
+        "sha256"
+      ],
+      "title": "RollupConfigurationIdentity",
+      "type": "object"
+    },
     "RollupSnapshotRef": {
       "additionalProperties": false,
       "properties": {
@@ -69,11 +90,15 @@
   "additionalProperties": false,
   "properties": {
     "configuration_identity": {
-      "additionalProperties": {
-        "type": "string"
-      },
-      "title": "Configuration Identity",
-      "type": "object"
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RollupConfigurationIdentity"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "module_id": {
       "$ref": "#/$defs/ModuleId"
@@ -96,6 +121,10 @@
     "schema_version": {
       "pattern": "^1\\.0$",
       "title": "Schema Version",
+      "type": "string"
+    },
+    "snapshot_root": {
+      "title": "Snapshot Root",
       "type": "string"
     },
     "snapshots": {
@@ -133,6 +162,7 @@
     "year",
     "target_month",
     "snapshots",
+    "snapshot_root",
     "output_dir"
   ],
   "title": "MonthlyRollupRequest",

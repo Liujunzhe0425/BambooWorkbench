@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import tempfile
@@ -61,6 +62,7 @@ class MonthlyRollupService(QObject):
     completed = Signal(str, object)
     failed = Signal(str, str, bool)
     progress = Signal(str, int, int)
+    detail_progress = Signal(str, object)
     governance_completed = Signal(str, int, int)
     governance_failed = Signal(str)
 
@@ -284,6 +286,9 @@ class MonthlyRollupService(QObject):
         _atomic_write(request_path, request.model_dump_json(indent=2))
         runner = self.runner_factory()
         self._runners[context.job_id] = runner
+        runner.progress.connect(
+            lambda event: self.detail_progress.emit(context.job_id, event)
+        )
         runner.completed.connect(
             lambda result, active=runner, month=target_month: self._rollup_completed(
                 context.job_id, month, result, active
@@ -323,29 +328,44 @@ class MonthlyRollupService(QObject):
             by_month.pop(candidate_month, None)
         else:
             by_month[candidate_month] = context.candidate_snapshot
-        snapshots = [
-            RollupSnapshotRef(
-                snapshot_id=str(snapshot["snapshot_id"]),
-                job_id=str(snapshot["job_id"]),
-                module_id=context.module.manifest.module_id,
-                year=year,
-                month=month,
-                path=str(snapshot["path"]),
-                size=int(snapshot["size"]),
-                sha256=str(snapshot["sha256"]),
-            )
-            for month, snapshot in sorted(by_month.items())
-            if month <= target_month
-        ]
-        output_dir = (
+        request_root = (
             self.paths.tasks
             / context.job_id
             / "rollup"
             / context.transaction_id
             / f"{target_month:02d}"
-            / "output"
         )
+        snapshot_root = request_root / "snapshots"
+        output_dir = request_root / "output"
+        snapshot_root.mkdir(parents=True, exist_ok=False)
         output_dir.mkdir(parents=True, exist_ok=False)
+        snapshots: list[RollupSnapshotRef] = []
+        for month, snapshot in sorted(by_month.items()):
+            if month > target_month:
+                continue
+            source = Path(str(snapshot["path"]))
+            destination = snapshot_root / (
+                f"{month:02d}-{str(snapshot['snapshot_id'])}.json"
+            )
+            _atomic_copy(source, destination)
+            destination.chmod(0o444)
+            if (
+                destination.stat().st_size != int(snapshot["size"])
+                or _sha256(destination) != str(snapshot["sha256"])
+            ):
+                raise ValueError("authorized snapshot copy failed integrity validation")
+            snapshots.append(
+                RollupSnapshotRef(
+                    snapshot_id=str(snapshot["snapshot_id"]),
+                    job_id=str(snapshot["job_id"]),
+                    module_id=context.module.manifest.module_id,
+                    year=year,
+                    month=month,
+                    path=str(destination.resolve()),
+                    size=int(snapshot["size"]),
+                    sha256=str(snapshot["sha256"]),
+                )
+            )
         return MonthlyRollupRequest(
             schema_version="1.0",
             transaction_id=context.transaction_id,
@@ -354,8 +374,11 @@ class MonthlyRollupService(QObject):
             year=year,
             target_month=target_month,
             snapshots=snapshots,
+            snapshot_root=str(snapshot_root.resolve()),
             output_dir=str(output_dir.resolve()),
-            configuration_identity={},
+            configuration_identity=self._configuration_identity(
+                context, target_month
+            ),
             offline_required=True,
         )
 
@@ -581,6 +604,40 @@ class MonthlyRollupService(QObject):
                     break
         return manifests
 
+    def _configuration_identity(
+        self, context: _RollupContext, target_month: int
+    ) -> dict[str, str] | None:
+        candidate_month = int(context.candidate_snapshot["month"])
+        if context.operation == "replace" and target_month == candidate_month:
+            job_id = context.job_id
+        else:
+            slot = self.monthly.get_slot(
+                context.module.manifest.module_id.value,
+                _required_int(self.tasks.get(context.job_id), "period_year"),
+                target_month,
+            )
+            job_id = context.job_id if slot is None else str(slot["official_job_id"])
+        task_dir = self.paths.tasks / job_id
+        final_job_path = task_dir / "job-finalize.json"
+        if not final_job_path.is_file():
+            return None
+        job = json.loads(final_job_path.read_text(encoding="utf-8"))
+        config_path = job.get("module_config_file")
+        if not isinstance(config_path, str):
+            return None
+        config_file = resolve_contained_file(
+            Path(config_path), task_dir, "rollup module configuration", reject_link=True
+        )
+        payload = json.loads(config_file.read_text(encoding="utf-8"))
+        identity = payload.get("rule_selection")
+        if (
+            not isinstance(identity, dict)
+            or set(identity) != {"version", "sha256"}
+            or not all(isinstance(value, str) for value in identity.values())
+        ):
+            return None
+        return {"version": identity["version"], "sha256": identity["sha256"]}
+
     def _stage_learning(self, task: dict[str, object], module_id: str) -> None:
         if not bool(task["learning_enabled"]) or self.learning.has_staged_for_job(
             str(task["job_id"])
@@ -632,7 +689,7 @@ def _sha256(path: Path) -> str:
 
 
 def _result_digest(result: MonthlyRollupResult) -> str:
-    payload = result.model_dump_json(exclude={"errors"}).encode("utf-8")
+    payload = result.model_dump_json().encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -644,7 +701,7 @@ def _atomic_copy(source: Path, destination: Path) -> None:
     temporary = Path(name)
     try:
         shutil.copyfile(source, temporary)
-        with temporary.open("rb") as stream:
+        with temporary.open("rb+") as stream:
             os.fsync(stream.fileno())
         os.replace(temporary, destination)
     except Exception:

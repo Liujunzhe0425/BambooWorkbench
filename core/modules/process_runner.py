@@ -256,7 +256,26 @@ class ModuleProcessRunner(QObject):
         for output in result.outputs:
             resolve_contained_file(Path(output.path), output_dir, "output artifact")
 
-        if self._job.phase.value == "finalize" and self._module.manifest.monthly_rollup:
+        monthly_contract = self._module.manifest.monthly_rollup
+        has_learning = any(prompt.learning is not None for prompt in result.confirmations)
+        if has_learning and (
+            monthly_contract is None or monthly_contract.learning_schema is None
+        ):
+            raise ValueError("module learning descriptions require a declared learning schema")
+        if monthly_contract and monthly_contract.learning_schema is not None:
+            learning_schema_path = resolve_contained_file(
+                self._module.path / monthly_contract.learning_schema,
+                self._module.path,
+                "monthly learning schema",
+            )
+            learning_validator = Draft202012Validator(
+                json.loads(learning_schema_path.read_text(encoding="utf-8"))
+            )
+            for prompt in result.confirmations:
+                if prompt.learning is not None:
+                    learning_validator.validate(prompt.learning.model_dump(mode="json"))
+
+        if self._job.phase.value == "finalize" and monthly_contract:
             snapshot = result.monthly_snapshot
             if snapshot is None:
                 raise ValueError("monthly_rollup module finalize result is missing a snapshot")
@@ -270,9 +289,8 @@ class ModuleProcessRunner(QObject):
             snapshot_path = resolve_contained_file(
                 Path(snapshot.path), output_dir, "monthly snapshot"
             )
-            contract = self._module.manifest.monthly_rollup
             schema_path = resolve_contained_file(
-                self._module.path / contract.snapshot_schema,
+                self._module.path / monthly_contract.snapshot_schema,
                 self._module.path,
                 "monthly snapshot schema",
             )

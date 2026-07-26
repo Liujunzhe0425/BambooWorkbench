@@ -18,6 +18,7 @@ from core.platform.path_safety import resolve_contained_file, resolve_path
 
 from .host_runtime import add_packaged_host_environment, module_host_command
 from .process_control import terminate_process
+from .progress_parser import parse_progress
 from .registry import RegisteredModule
 
 _SENSITIVE_ENVIRONMENT_MARKERS = (
@@ -30,6 +31,7 @@ _SENSITIVE_ENVIRONMENT_MARKERS = (
 
 
 class MonthlyRollupRunner(QObject):
+    progress = Signal(object)
     completed = Signal(object)
     failed = Signal(str)
     cancelled = Signal()
@@ -46,6 +48,7 @@ class MonthlyRollupRunner(QObject):
         self._request: MonthlyRollupRequest | None = None
         self._module: RegisteredModule | None = None
         self._generation = 0
+        self._stdout_buffer = bytearray()
 
     @property
     def is_running(self) -> bool:
@@ -81,7 +84,15 @@ class MonthlyRollupRunner(QObject):
                 module.path / contract.entrypoint, "monthly rollup entrypoint", strict=True
             )
             program, arguments = module_host_command(
-                ["--launcher", str(entrypoint), "rollup", "--request", str(trusted_request)]
+                [
+                    "--launcher",
+                    str(entrypoint),
+                    "rollup",
+                    "--request",
+                    str(trusted_request),
+                    "--response",
+                    str(Path(request.output_dir) / "rollup-result.json"),
+                ]
             )
         except (
             OSError,
@@ -99,6 +110,10 @@ class MonthlyRollupRunner(QObject):
         self._process = process
         self._request = request
         self._module = module
+        self._stdout_buffer.clear()
+        process.readyReadStandardOutput.connect(
+            lambda: self._read_stdout(generation, process)
+        )
         process.finished.connect(
             lambda exit_code, status: self._finished(
                 generation, process, exit_code, status
@@ -141,16 +156,50 @@ class MonthlyRollupRunner(QObject):
     ) -> None:
         if not self._is_current(generation, process):
             return
-        if exit_code != 0:
-            self._fail(process, f"monthly rollup exited with code {exit_code}")
+        self._read_stdout(generation, process)
+        if not self._is_current(generation, process):
+            return
+        if self._stdout_buffer:
+            self._fail(process, "monthly_rollup_invalid_progress: unterminated stdout event")
             return
         try:
             result = self._load_result()
         except Exception as error:
-            self._fail(process, f"invalid monthly rollup result: {error}")
+            if exit_code != 0:
+                self._fail(process, f"monthly_rollup_exit_{exit_code}: no valid failure response")
+            else:
+                self._fail(process, f"monthly_rollup_invalid_result: {error}")
+            return
+        if result.status == "failed":
+            assert result.error is not None
+            self._fail(process, f"{result.error.code}: {result.error.message}")
+            return
+        if exit_code != 0:
+            self._fail(process, f"monthly_rollup_exit_{exit_code}: success response rejected")
             return
         self._clear(process)
         self.completed.emit(result)
+
+    def _read_stdout(self, generation: int, process: QProcess) -> None:
+        data = bytes(process.readAllStandardOutput())
+        if not self._is_current(generation, process):
+            return
+        self._stdout_buffer.extend(data)
+        while (newline := self._stdout_buffer.find(b"\n")) >= 0:
+            line = bytes(self._stdout_buffer[: newline + 1])
+            del self._stdout_buffer[: newline + 1]
+            try:
+                event = parse_progress(line)
+                if event.source_file is not None:
+                    raise ValueError("monthly progress must not expose source paths")
+            except (UnicodeError, ValidationError, ValueError):
+                terminate_process(process, grace_ms=200, force_ms=1_000)
+                self._fail(
+                    process,
+                    "monthly_rollup_invalid_progress: stdout must contain JSON progress lines",
+                )
+                return
+            self.progress.emit(event)
 
     def _load_result(self) -> MonthlyRollupResult:
         if self._request is None or self._module is None:
@@ -175,6 +224,7 @@ class MonthlyRollupRunner(QObject):
         )
         Draft202012Validator(json.loads(schema_path.read_text(encoding="utf-8"))).validate(raw)
         result = MonthlyRollupResult.model_validate(raw)
+        self._validate_snapshot_integrity(self._request)
         if (
             result.transaction_id != self._request.transaction_id
             or result.module_id is not self._request.module_id
@@ -183,24 +233,40 @@ class MonthlyRollupRunner(QObject):
             or result.target_month != self._request.target_month
         ):
             raise ValueError("monthly rollup result identity mismatch")
-        expected = {snapshot.snapshot_id: snapshot.sha256 for snapshot in self._request.snapshots}
-        if result.used_snapshots != expected:
+        expected = [
+            (snapshot.snapshot_id, snapshot.month, snapshot.sha256)
+            for snapshot in self._request.snapshots
+        ]
+        acknowledged = [
+            (snapshot.snapshot_id, snapshot.month, snapshot.sha256)
+            for snapshot in result.snapshot_hashes
+        ]
+        if acknowledged != expected:
             raise ValueError("monthly rollup snapshot acknowledgement mismatch")
+        if result.used_months != [snapshot.month for snapshot in self._request.snapshots]:
+            raise ValueError("monthly rollup used-month acknowledgement mismatch")
         for artifact in result.outputs:
-            resolve_contained_file(
+            path = resolve_contained_file(
                 Path(artifact.path), output_dir, "monthly output artifact", reject_link=True
             )
+            if _sha256(path) != artifact.sha256:
+                raise ValueError("monthly output artifact hash mismatch")
         return result
 
     @staticmethod
     def _validate_snapshot_integrity(request: MonthlyRollupRequest) -> None:
+        root = resolve_path(
+            Path(request.snapshot_root), "monthly snapshot root", strict=True
+        )
+        if not root.is_dir() or root.is_symlink():
+            raise ValueError("monthly snapshot root is not a trusted directory")
         for snapshot in request.snapshots:
-            path = resolve_path(Path(snapshot.path), "monthly snapshot", strict=True)
-            if not path.is_file() or path.is_symlink():
-                raise ValueError("monthly snapshot is not a trusted file")
+            path = resolve_contained_file(
+                Path(snapshot.path), root, "monthly snapshot", reject_link=True
+            )
             if path.stat().st_size != snapshot.size:
                 raise ValueError("monthly snapshot size mismatch")
-            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+            digest = _sha256(path)
             if digest != snapshot.sha256:
                 raise ValueError("monthly snapshot hash mismatch")
 
@@ -226,6 +292,7 @@ class MonthlyRollupRunner(QObject):
             self._process = None
             self._request = None
             self._module = None
+            self._stdout_buffer.clear()
             process.deleteLater()
 
     def _is_current(self, generation: int, process: QProcess) -> bool:
@@ -256,3 +323,11 @@ def _offline_environment() -> QProcessEnvironment:
         environment.insert("BAMBOO_MODULE_PYTHON", str(Path(sys.executable).resolve()))
     add_packaged_host_environment(environment)
     return environment
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()

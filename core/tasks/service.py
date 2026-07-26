@@ -133,6 +133,9 @@ class TaskService(QObject):
         if self.monthly_rollup_service is not None:
             self.monthly_rollup_service.completed.connect(self._monthly_completed)
             self.monthly_rollup_service.failed.connect(self._monthly_failed)
+            self.monthly_rollup_service.detail_progress.connect(
+                lambda job_id, event: self.progress.emit(job_id, event)
+            )
         self._reconcile_startup()
 
     def pending_confirmations(self) -> list[tuple[str, ModuleResult]]:

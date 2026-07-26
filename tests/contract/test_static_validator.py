@@ -50,7 +50,7 @@ def test_validator_accepts_complete_monthly_rollup_contract(tmp_path: Path) -> N
     (module_dir / "run_module.bat").write_text("@exit /b 0\n", encoding="utf-8")
     schema_dir = module_dir / "schemas"
     schema_dir.mkdir()
-    for name in ("snapshot.json", "request.json", "response.json"):
+    for name in ("snapshot.json", "request.json", "response.json", "learning.json"):
         (schema_dir / name).write_text(
             json.dumps({"$schema": "https://json-schema.org/draft/2020-12/schema"}),
             encoding="utf-8",
@@ -64,6 +64,7 @@ def test_validator_accepts_complete_monthly_rollup_contract(tmp_path: Path) -> N
         "snapshot_schema": "schemas/snapshot.json",
         "request_schema": "schemas/request.json",
         "response_schema": "schemas/response.json",
+        "learning_schema": "schemas/learning.json",
     }
     manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
 

@@ -90,6 +90,13 @@ def validate_module(module_dir: Path) -> ValidationReport:
             (manifest.monthly_rollup.response_schema, "monthly-response-schema"),
         ):
             _validate_json_schema_asset(report, module_root, raw_path, label)
+        if manifest.monthly_rollup.learning_schema is not None:
+            _validate_json_schema_asset(
+                report,
+                module_root,
+                manifest.monthly_rollup.learning_schema,
+                "monthly-learning-schema",
+            )
     elif "monthly_rollup" in manifest.capabilities:
         report.issues.append(
             ValidationIssue(

@@ -31,6 +31,7 @@ class MonthlyRollupContract(BaseModel):
     snapshot_schema: str = Field(min_length=1, max_length=240)
     request_schema: str = Field(min_length=1, max_length=240)
     response_schema: str = Field(min_length=1, max_length=240)
+    learning_schema: str | None = Field(default=None, min_length=1, max_length=240)
 
 
 class ModuleManifest(BaseModel):

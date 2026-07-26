@@ -71,6 +71,20 @@
           "title": "Entrypoint",
           "type": "string"
         },
+        "learning_schema": {
+          "anyOf": [
+            {
+              "maxLength": 240,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Learning Schema"
+        },
         "request_schema": {
           "maxLength": 240,
           "minLength": 1,
