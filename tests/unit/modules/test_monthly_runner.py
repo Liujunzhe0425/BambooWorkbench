@@ -13,7 +13,7 @@ from core.contracts.monthly import (
     RollupSnapshotHash,
     RollupSnapshotRef,
 )
-from core.modules.monthly_runner import MonthlyRollupRunner
+from core.modules.monthly_runner import MonthlyRollupRunner, _offline_environment
 from core.modules.registry import RegisteredModule
 
 
@@ -178,3 +178,15 @@ def test_monthly_runner_accepts_only_json_progress_lines() -> None:
 
     assert len(events) == 1
     assert events[0].percent == 50
+
+
+def test_offline_environment_uses_qt_key_enumeration_and_removes_secrets(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("BAMBOO_TEST_TOKEN", "must-not-leak")
+
+    environment = _offline_environment()
+
+    assert environment.value("BAMBOO_OFFLINE") == "1"
+    assert not environment.contains("BAMBOO_TEST_TOKEN")
+    assert environment.value("HTTP_PROXY") == "http://127.0.0.1:9"

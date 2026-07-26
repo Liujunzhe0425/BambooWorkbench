@@ -10,6 +10,7 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtTest import QSignalSpy
 
 from core.contracts.enums import ModuleId
+from core.contracts.manifest import MonthlyRollupContract
 from core.storage.repositories.confirmations import ConfirmationRepository
 from core.storage.repositories.tasks import TaskRepository
 from core.storage.settings import SettingsStore
@@ -73,7 +74,18 @@ def test_supported_ai_report_config_is_task_local_and_contains_no_secret(
     module = registry.get(ModuleId.MOISTURE)
     registry._modules[ModuleId.MOISTURE] = replace(
         module,
-        manifest=module.manifest.model_copy(update={"capabilities": ["ai_report"]}),
+        manifest=module.manifest.model_copy(
+            update={
+                "capabilities": ["ai_report", "monthly_rollup"],
+                "monthly_rollup": MonthlyRollupContract(
+                    schema_version="1.0",
+                    entrypoint="run_module.bat",
+                    snapshot_schema="schemas/monthly-snapshot.json",
+                    request_schema="schemas/monthly-request.json",
+                    response_schema="schemas/monthly-response.json",
+                ),
+            }
+        ),
     )
     source = tmp_path / "summary.xlsx"
     source.write_bytes(b"source")
@@ -94,6 +106,9 @@ def test_supported_ai_report_config_is_task_local_and_contains_no_secret(
     config_path = app_services["paths"].tasks / job_id / "module-config.json"
     assert json.loads(config_path.read_text(encoding="utf-8")) == config
     assert "api_key" not in config_path.read_text(encoding="utf-8").casefold()
+    task = app_services["task_repository"].get(job_id)
+    assert task["period_year"] is None
+    assert task["period_month"] is None
 
 
 def test_incremental_config_requires_manifest_declaration_and_exact_roles(
