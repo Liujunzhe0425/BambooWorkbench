@@ -1,10 +1,10 @@
 # 售后模块 v1.3.0 整改复验上下文交接
 
-日期：2026-07-26  
-PR：[Draft PR #67](https://github.com/Liujunzhe0425/BambooWorkbench/pull/67)  
-分支：`module/after-sales → integration`  
-模块版本：`1.3.0`  
-整改实现提交：`9c91bf58b06f0ef0daa04dc843c8827c7b20c0ea`  
+日期：2026-07-26
+PR：[Draft PR #67](https://github.com/Liujunzhe0425/BambooWorkbench/pull/67)
+分支：`module/after-sales → integration`
+模块版本：`1.3.0`
+整改实现提交：`9c91bf58b06f0ef0daa04dc843c8827c7b20c0ea`
 框架接入基线：`integration@460a29be73e192d77ae4b8ffcecd4a431ccbc830`
 
 ## 1. 本轮复验目的

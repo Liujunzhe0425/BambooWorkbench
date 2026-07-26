@@ -1,10 +1,10 @@
 # 售后模块 v1.3.0 中央合同整改计划
 
-日期：2026-07-26  
-分支：`module/after-sales`  
-模块：`after_sales`  
-目标版本：`1.3.0`  
-依据：`docs/acceptance/rectification/after-sales-v1.3.0-2026-07-26.md`  
+日期：2026-07-26
+分支：`module/after-sales`
+模块：`after_sales`
+目标版本：`1.3.0`
+依据：`docs/acceptance/rectification/after-sales-v1.3.0-2026-07-26.md`
 当前基线：售后提交 `8daeadf` 已合并本地 `integration@460a29b`，合并提交为 `63bdb28`
 
 ## 1. 整改目标
