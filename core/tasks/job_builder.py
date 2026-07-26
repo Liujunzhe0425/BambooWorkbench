@@ -10,6 +10,11 @@ def build_draft_job(
     snapshots: list[Path],
     task_dir: Path,
     module_config_file: Path | None = None,
+    *,
+    task_name: str | None = None,
+    period_year: int | None = None,
+    period_month: int | None = None,
+    learning_enabled: bool = True,
 ) -> JobRequest:
     return JobRequest(
         schema_version="1.0",
@@ -24,4 +29,8 @@ def build_draft_job(
         ),
         ai_enabled=False,
         allowed_knowledge_scopes=["shared", module_id.value],
+        task_name=task_name,
+        period_year=period_year,
+        period_month=period_month,
+        learning_enabled=learning_enabled,
     )

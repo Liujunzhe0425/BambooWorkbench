@@ -25,6 +25,10 @@ class JobRequest(BaseModel):
     parent_job_id: str | None = None
     confirmation_file: str | None = None
     service_response_file: str | None = None
+    task_name: str | None = Field(default=None, min_length=1, max_length=160)
+    period_year: int | None = Field(default=None, ge=2000, le=9999)
+    period_month: int | None = Field(default=None, ge=1, le=12)
+    learning_enabled: bool = True
 
     @model_validator(mode="after")
     def validate_paths_and_phase(self) -> "JobRequest":
@@ -41,4 +45,6 @@ class JobRequest(BaseModel):
             not self.parent_job_id or not self.confirmation_file
         ):
             raise ValueError("finalize jobs require parent_job_id and confirmation_file")
+        if (self.period_year is None) != (self.period_month is None):
+            raise ValueError("task period year and month must be supplied together")
         return self

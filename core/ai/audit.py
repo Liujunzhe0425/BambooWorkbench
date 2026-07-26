@@ -12,6 +12,7 @@ class ConsentDecision:
     allowed: bool
     data_categories: tuple[str, ...]
     decided_at: str
+    authorization_source: str = "legacy"
 
 
 class ConsentAuditRepository:
@@ -21,8 +22,8 @@ class ConsentAuditRepository:
     def record(self, decision: ConsentDecision) -> None:
         self.database.execute(
             "INSERT INTO ai_consent_audit("
-            "task_id,module_id,provider_id,allowed,data_categories_json,decided_at"
-            ") VALUES(?,?,?,?,?,?)",
+            "task_id,module_id,provider_id,allowed,data_categories_json,decided_at,"
+            "authorization_source) VALUES(?,?,?,?,?,?,?)",
             (
                 decision.task_id,
                 decision.module_id,
@@ -30,6 +31,7 @@ class ConsentAuditRepository:
                 int(decision.allowed),
                 json.dumps(decision.data_categories, ensure_ascii=False),
                 decision.decided_at,
+                decision.authorization_source,
             ),
         )
 
@@ -45,6 +47,7 @@ class ConsentAuditRepository:
                 allowed=bool(row["allowed"]),
                 data_categories=tuple(json.loads(str(row["data_categories_json"]))),
                 decided_at=str(row["decided_at"]),
+                authorization_source=str(row["authorization_source"]),
             )
             for row in rows
         ]

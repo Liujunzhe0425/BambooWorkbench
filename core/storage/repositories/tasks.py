@@ -15,12 +15,34 @@ class TaskRepository:
         status: str,
         created_at: str,
         parent_job_id: str | None = None,
+        *,
+        task_name: str | None = None,
+        period_year: int | None = None,
+        period_month: int | None = None,
+        learning_enabled: bool = True,
+        candidate_for_job_id: str | None = None,
+        output_root_id: int | None = None,
     ) -> None:
         self.database.execute(
             "INSERT INTO tasks("
-            "job_id, module_id, status, created_at, updated_at, parent_job_id"
-            ") VALUES (?, ?, ?, ?, ?, ?)",
-            (job_id, module_id, status, created_at, created_at, parent_job_id),
+            "job_id, module_id, status, created_at, updated_at, parent_job_id, "
+            "task_name, period_year, period_month, learning_enabled, "
+            "candidate_for_job_id, output_root_id"
+            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                job_id,
+                module_id,
+                status,
+                created_at,
+                created_at,
+                parent_job_id,
+                task_name,
+                period_year,
+                period_month,
+                int(learning_enabled),
+                candidate_for_job_id,
+                output_root_id,
+            ),
         )
 
     def update_status(
@@ -45,6 +67,11 @@ class TaskRepository:
         if row is None:
             raise KeyError(job_id)
         return dict(row)
+
+    def exists(self, job_id: str) -> bool:
+        return bool(
+            self.database.scalar("SELECT COUNT(*) FROM tasks WHERE job_id = ?", (job_id,))
+        )
 
     def get_number(self, job_id: str) -> int:
         row = self.database.connection.execute(
@@ -77,6 +104,59 @@ class TaskRepository:
             statuses,
         ).fetchall()
         return [dict(row) for row in rows]
+
+    def list_waiting_confirmation(self) -> list[dict[str, object]]:
+        rows = self.database.connection.execute(
+            "SELECT tasks.*, COUNT(confirmations.confirmation_id) AS confirmation_count "
+            "FROM tasks LEFT JOIN confirmations USING(job_id) "
+            "WHERE tasks.status = 'waiting_confirmation' "
+            "GROUP BY tasks.job_id ORDER BY tasks.created_at DESC, tasks.rowid DESC"
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def set_period_metadata(
+        self,
+        job_id: str,
+        *,
+        task_name: str,
+        year: int,
+        month: int,
+        learning_enabled: bool,
+        candidate_for_job_id: str | None = None,
+        output_root_id: int | None = None,
+    ) -> None:
+        if not 2000 <= year <= 9999 or not 1 <= month <= 12:
+            raise ValueError("invalid task period")
+        if not task_name.strip():
+            raise ValueError("task name must not be empty")
+        self.database.execute(
+            "UPDATE tasks SET task_name = ?, period_year = ?, period_month = ?, "
+            "learning_enabled = ?, candidate_for_job_id = ?, output_root_id = ? "
+            "WHERE job_id = ?",
+            (
+                task_name.strip(),
+                year,
+                month,
+                int(learning_enabled),
+                candidate_for_job_id,
+                output_root_id,
+                job_id,
+            ),
+        )
+
+    def set_result_integrity(self, job_id: str, integrity: str) -> None:
+        if integrity not in {"unknown", "ok", "missing", "invalid", "conflict"}:
+            raise ValueError("invalid result integrity state")
+        self.database.execute(
+            "UPDATE tasks SET result_integrity = ?, updated_at = ? WHERE job_id = ?",
+            (integrity, datetime.now().astimezone().isoformat(), job_id),
+        )
+
+    def set_learning_enabled(self, job_id: str, enabled: bool) -> None:
+        self.database.execute(
+            "UPDATE tasks SET learning_enabled = ?, updated_at = ? WHERE job_id = ?",
+            (int(enabled), datetime.now().astimezone().isoformat(), job_id),
+        )
 
     def add_file(
         self,

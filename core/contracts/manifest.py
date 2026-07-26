@@ -23,6 +23,17 @@ class FrameworkAIRequirement(BaseModel):
     service_before_confirmation: bool = True
 
 
+class MonthlyRollupContract(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = Field(pattern=r"^1\.0$")
+    entrypoint: str = Field(min_length=1, max_length=240)
+    snapshot_schema: str = Field(min_length=1, max_length=240)
+    request_schema: str = Field(min_length=1, max_length=240)
+    response_schema: str = Field(min_length=1, max_length=240)
+    learning_schema: str | None = Field(default=None, min_length=1, max_length=240)
+
+
 class ModuleManifest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -34,6 +45,7 @@ class ModuleManifest(BaseModel):
     management_entrypoint: str | None = Field(default=None, min_length=1)
     management_contract: ModuleManagementContract | None = None
     framework_ai: FrameworkAIRequirement | None = None
+    monthly_rollup: MonthlyRollupContract | None = None
     capabilities: list[str] = Field(default_factory=list, max_length=32)
     supported_extensions: list[str] = Field(min_length=1)
     supports_single_file: bool

@@ -23,6 +23,7 @@ def test_main_window_has_canonical_navigation(qtbot, app_context) -> None:
     assert list(window.pages) == [
         PageId.WORKBENCH,
         PageId.HISTORY,
+        PageId.MONTHLY_HISTORY,
         PageId.CONFIRMATIONS,
         PageId.KNOWLEDGE,
         PageId.SETTINGS,

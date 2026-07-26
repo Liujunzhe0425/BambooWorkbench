@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from core.contracts.job import JobRequest
 from core.contracts.management import ModuleManagementRequest, ModuleManagementResponse
 from core.contracts.manifest import ModuleManifest
+from core.contracts.monthly import MonthlyRollupRequest, MonthlyRollupResult
 from core.contracts.result import ModuleResult
 
 MODELS: tuple[tuple[str, type[BaseModel]], ...] = (
@@ -14,6 +15,8 @@ MODELS: tuple[tuple[str, type[BaseModel]], ...] = (
     ("module-result.schema.json", ModuleResult),
     ("module-management-request.schema.json", ModuleManagementRequest),
     ("module-management-response.schema.json", ModuleManagementResponse),
+    ("monthly-rollup-request.schema.json", MonthlyRollupRequest),
+    ("monthly-rollup-result.schema.json", MonthlyRollupResult),
 )
 
 EXAMPLES: tuple[tuple[str, dict[str, object]], ...] = (

@@ -113,12 +113,14 @@ def test_main_window_keeps_canonical_pages_separate_from_internal_workflow_pages
     assert list(window.pages) == [
         PageId.WORKBENCH,
         PageId.HISTORY,
+        PageId.MONTHLY_HISTORY,
         PageId.CONFIRMATIONS,
         PageId.KNOWLEDGE,
         PageId.SETTINGS,
     ]
     assert window.pages[PageId.WORKBENCH] is window.workbench_page
-    assert window.pages[PageId.CONFIRMATIONS] is window.confirmations_page
+    assert window.pages[PageId.CONFIRMATIONS] is window.pending_list_page
+    assert window.confirmations_page not in window.pages.values()
     assert window.module_task_page not in window.pages.values()
     assert window.task_progress_page not in window.pages.values()
     assert window.result_center_page not in window.pages.values()
@@ -194,7 +196,7 @@ def test_file_and_folder_pickers_share_the_same_intake_boundary(
     qtbot.mouseClick(page.add_files_button, Qt.MouseButton.LeftButton)
     qtbot.mouseClick(page.add_folder_button, Qt.MouseButton.LeftButton)
 
-    assert page.files == [picked.resolve(), from_folder.resolve()]
+    assert page.files == [picked.resolve()]
     assert all(path.suffix.lower() == ".xlsx" for path in page.files)
 
 

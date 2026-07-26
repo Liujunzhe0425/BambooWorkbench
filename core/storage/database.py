@@ -115,11 +115,167 @@ MIGRATION_4 = Migration(
     ),
 )
 
+MIGRATION_5 = Migration(
+    version=5,
+    statements=(
+        "ALTER TABLE tasks ADD COLUMN task_name TEXT",
+        "ALTER TABLE tasks ADD COLUMN period_year INTEGER "
+        "CHECK(period_year IS NULL OR period_year BETWEEN 2000 AND 9999)",
+        "ALTER TABLE tasks ADD COLUMN period_month INTEGER "
+        "CHECK(period_month IS NULL OR period_month BETWEEN 1 AND 12)",
+        "ALTER TABLE tasks ADD COLUMN learning_enabled INTEGER NOT NULL DEFAULT 1 "
+        "CHECK(learning_enabled IN (0, 1))",
+        "ALTER TABLE tasks ADD COLUMN candidate_for_job_id TEXT "
+        "REFERENCES tasks(job_id) ON DELETE SET NULL",
+        "ALTER TABLE tasks ADD COLUMN output_root_id INTEGER REFERENCES output_roots(id)",
+        "ALTER TABLE tasks ADD COLUMN result_integrity TEXT NOT NULL DEFAULT 'unknown'",
+        "ALTER TABLE ai_consent_audit ADD COLUMN authorization_source TEXT "
+        "NOT NULL DEFAULT 'legacy'",
+        """
+        CREATE TABLE output_roots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT NOT NULL UNIQUE,
+            is_default INTEGER NOT NULL CHECK(is_default IN (0, 1)),
+            is_current INTEGER NOT NULL CHECK(is_current IN (0, 1)),
+            created_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL
+        )
+        """,
+        "CREATE UNIQUE INDEX idx_output_roots_current ON output_roots(is_current) "
+        "WHERE is_current = 1",
+        """
+        CREATE TABLE monthly_snapshots (
+            snapshot_id TEXT PRIMARY KEY,
+            module_id TEXT NOT NULL,
+            year INTEGER NOT NULL CHECK(year BETWEEN 2000 AND 9999),
+            month INTEGER NOT NULL CHECK(month BETWEEN 1 AND 12),
+            job_id TEXT NOT NULL REFERENCES tasks(job_id) ON DELETE CASCADE,
+            contract_version TEXT NOT NULL,
+            snapshot_format TEXT NOT NULL,
+            path TEXT NOT NULL,
+            size INTEGER NOT NULL CHECK(size >= 0),
+            sha256 TEXT NOT NULL CHECK(length(sha256) = 64),
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(job_id)
+        )
+        """,
+        "CREATE INDEX idx_monthly_snapshots_period "
+        "ON monthly_snapshots(module_id, year, month, status)",
+        """
+        CREATE TABLE monthly_slots (
+            module_id TEXT NOT NULL,
+            year INTEGER NOT NULL CHECK(year BETWEEN 2000 AND 9999),
+            month INTEGER NOT NULL CHECK(month BETWEEN 1 AND 12),
+            official_job_id TEXT NOT NULL REFERENCES tasks(job_id),
+            snapshot_id TEXT NOT NULL REFERENCES monthly_snapshots(snapshot_id),
+            committed_at TEXT NOT NULL,
+            transaction_id TEXT NOT NULL,
+            PRIMARY KEY(module_id, year, month)
+        )
+        """,
+        """
+        CREATE TABLE rollup_transactions (
+            transaction_id TEXT PRIMARY KEY,
+            module_id TEXT NOT NULL,
+            year INTEGER NOT NULL CHECK(year BETWEEN 2000 AND 9999),
+            candidate_month INTEGER NOT NULL CHECK(candidate_month BETWEEN 1 AND 12),
+            candidate_job_id TEXT NOT NULL REFERENCES tasks(job_id),
+            old_job_id TEXT REFERENCES tasks(job_id),
+            state TEXT NOT NULL,
+            error_code TEXT,
+            error_message TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            committed_at TEXT
+        )
+        """,
+        "CREATE INDEX idx_rollup_transactions_candidate "
+        "ON rollup_transactions(candidate_job_id, state)",
+        """
+        CREATE TABLE rollup_transaction_items (
+            transaction_id TEXT NOT NULL
+                REFERENCES rollup_transactions(transaction_id) ON DELETE CASCADE,
+            target_month INTEGER NOT NULL CHECK(target_month BETWEEN 1 AND 12),
+            official_job_id TEXT REFERENCES tasks(job_id),
+            staged_path TEXT,
+            output_manifest_sha256 TEXT,
+            state TEXT NOT NULL,
+            error_code TEXT,
+            error_message TEXT,
+            PRIMARY KEY(transaction_id, target_month)
+        )
+        """,
+        """
+        CREATE TABLE confirmation_drafts (
+            job_id TEXT PRIMARY KEY REFERENCES tasks(job_id) ON DELETE CASCADE,
+            answers_json TEXT NOT NULL,
+            learning_enabled INTEGER NOT NULL CHECK(learning_enabled IN (0, 1)),
+            updated_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE learning_evidence (
+            evidence_id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL REFERENCES tasks(job_id) ON DELETE CASCADE,
+            module_id TEXT NOT NULL,
+            year INTEGER NOT NULL CHECK(year BETWEEN 2000 AND 9999),
+            month INTEGER NOT NULL CHECK(month BETWEEN 1 AND 12),
+            confirmation_id TEXT NOT NULL,
+            learning_key TEXT NOT NULL,
+            field TEXT NOT NULL,
+            context_json TEXT NOT NULL,
+            context_levels_json TEXT NOT NULL,
+            candidate_id TEXT NOT NULL,
+            candidate_label TEXT NOT NULL,
+            base_suggestion_id TEXT,
+            weight INTEGER NOT NULL DEFAULT 1 CHECK(weight > 0),
+            active INTEGER NOT NULL DEFAULT 0 CHECK(active IN (0, 1)),
+            created_at TEXT NOT NULL,
+            activated_at TEXT,
+            revoked_at TEXT,
+            revoked_reason TEXT,
+            UNIQUE(job_id, confirmation_id)
+        )
+        """,
+        "CREATE INDEX idx_learning_match ON learning_evidence(module_id, learning_key, active)",
+        """
+        CREATE TABLE learning_actions (
+            action_id TEXT PRIMARY KEY,
+            scope TEXT NOT NULL,
+            module_id TEXT NOT NULL,
+            learning_key TEXT,
+            evidence_id TEXT,
+            reason TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE credential_revisions (
+            provider_id TEXT PRIMARY KEY,
+            revision TEXT NOT NULL,
+            changed_at TEXT NOT NULL
+        )
+        """,
+        """
+        CREATE TABLE credential_verifications (
+            provider_id TEXT NOT NULL,
+            base_url TEXT NOT NULL,
+            model TEXT NOT NULL,
+            credential_revision TEXT NOT NULL,
+            verified_at TEXT NOT NULL,
+            PRIMARY KEY(provider_id, base_url, model, credential_revision)
+        )
+        """,
+    ),
+)
+
 MIGRATIONS: tuple[Migration, ...] = (
     MIGRATION_1,
     MIGRATION_2,
     MIGRATION_3,
     MIGRATION_4,
+    MIGRATION_5,
 )
 
 

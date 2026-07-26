@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Signal
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QPushButton,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -23,10 +25,12 @@ from ui.widgets.file_drop_zone import FileDropZone
 class ModuleTaskPage(QWidget):
     task_requested = Signal(object, list)
     configured_task_requested = Signal(object, list, object)
+    period_task_requested = Signal(object, list, object)
+    period_configured_task_requested = Signal(object, list, object, object)
     ai_report_requested = Signal(object)
     governance_requested = Signal(object)
 
-    def __init__(self) -> None:
+    def __init__(self, source_root: Path | None = None) -> None:
         super().__init__()
         self.setObjectName("page-module-task")
         self.module_id: object | None = None
@@ -35,6 +39,10 @@ class ModuleTaskPage(QWidget):
         self.base_summary: Path | None = None
         self.incremental_available = False
         self.framework_ai_required = False
+        self.source_root = source_root
+        self.default_source_directory: Path | None = None
+        self.v13_enabled = source_root is not None
+        self._name_customized = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 24, 30, 28)
@@ -53,6 +61,29 @@ class ModuleTaskPage(QWidget):
         self.intake_feedback.setAccessibleName("文件接收状态")
 
         self.operation_form = QFormLayout()
+        current = datetime.now()
+        self.year_spin = QSpinBox()
+        self.year_spin.setRange(2000, 9999)
+        self.year_spin.setValue(current.year)
+        self.year_spin.setAccessibleName("任务年份")
+        self.month_combo = QComboBox()
+        for month in range(1, 13):
+            self.month_combo.addItem(f"{month:02d} 月", month)
+        self.month_combo.setCurrentIndex(current.month - 1)
+        self.month_combo.setAccessibleName("任务月份")
+        period_row = QWidget()
+        period_layout = QHBoxLayout(period_row)
+        period_layout.setContentsMargins(0, 0, 0, 0)
+        period_layout.addWidget(self.year_spin)
+        period_layout.addWidget(self.month_combo)
+        self.task_name_edit = QLineEdit()
+        self.task_name_edit.setMaxLength(160)
+        self.task_name_edit.setAccessibleName("任务名称")
+        self.task_name_edit.textEdited.connect(lambda _text: self._mark_name_customized())
+        self.year_spin.valueChanged.connect(self._refresh_default_name)
+        self.month_combo.currentIndexChanged.connect(self._refresh_default_name)
+        self.operation_form.addRow("所属年月", period_row)
+        self.operation_form.addRow("任务名称", self.task_name_edit)
         self.operation_combo = QComboBox()
         self.operation_combo.setAccessibleName("水分汇总方式")
         self.operation_combo.addItem("创建新的水分汇总表", "summary")
@@ -152,6 +183,7 @@ class ModuleTaskPage(QWidget):
         incremental_available: bool = False,
         governance_available: bool = False,
         framework_ai_required: bool = False,
+        per_task_ai_consent_required: bool | None = None,
     ) -> None:
         self.module_id = module_id
         self.title.setText(title)
@@ -171,14 +203,35 @@ class ModuleTaskPage(QWidget):
             getattr(module_id, "value", module_id) == "after_sales"
             and framework_ai_required
         )
+        consent_required = (
+            self.framework_ai_required
+            if per_task_ai_consent_required is None
+            else per_task_ai_consent_required
+        )
         self.ai_consent.setChecked(False)
-        self.ai_consent.setVisible(self.framework_ai_required)
-        self.ai_disclosure.setVisible(self.framework_ai_required)
+        self.ai_consent.setVisible(consent_required)
+        self.ai_disclosure.setVisible(consent_required)
         self.run_button.setText(
             "开始智能分析并进入人工复核"
-            if self.framework_ai_required
+            if consent_required
             else "创建任务"
         )
+        self.framework_ai_required = consent_required
+        module_key = str(getattr(module_id, "value", module_id))
+        source_names = {
+            "moisture": "竹丝水分",
+            "boiling": "水煮模块",
+            "after_sales": "售后分析",
+        }
+        self.default_source_directory = (
+            self.source_root / source_names[module_key]
+            if self.source_root is not None and module_key in source_names
+            else None
+        )
+        year = self.year_spin.value()
+        month = int(self.month_combo.currentData())
+        self.task_name_edit.setText(f"{title}-{year}年{month:02d}月")
+        self._name_customized = False
         is_moisture = getattr(module_id, "value", module_id) == "moisture"
         self.incremental_available = is_moisture and incremental_available
         self.operation_combo.setVisible(is_moisture and incremental_available)
@@ -271,19 +324,21 @@ class ModuleTaskPage(QWidget):
         selected, _ = QFileDialog.getOpenFileNames(
             self,
             "选择待处理文件",
-            "",
+            str(self.default_source_directory or ""),
             f"支持的文件 ({filters})" if filters else "所有文件 (*)",
         )
         if selected:
             self.add_files([Path(path) for path in selected])
 
     def _pick_folder(self) -> None:
-        selected = QFileDialog.getExistingDirectory(self, "选择待处理文件夹")
+        selected = QFileDialog.getExistingDirectory(
+            self, "选择待处理文件夹", str(self.default_source_directory or "")
+        )
         if not selected:
             return
         folder = Path(selected)
         try:
-            candidates = sorted(path for path in folder.rglob("*") if path.is_file())
+            candidates = sorted(path for path in folder.iterdir() if path.is_file())
         except OSError:
             candidates = []
         self.add_files(candidates)
@@ -306,7 +361,12 @@ class ModuleTaskPage(QWidget):
             self.operation_combo.currentData() == "append_summary"
         )
         if not append_mode:
-            self.task_requested.emit(self.module_id, list(self.files))
+            if self.v13_enabled:
+                self.period_task_requested.emit(
+                    self.module_id, list(self.files), self._task_metadata()
+                )
+            else:
+                self.task_requested.emit(self.module_id, list(self.files))
             return
         if self.base_summary is None:
             self.intake_feedback.setText("请先选择一份历史标准汇总表")
@@ -320,14 +380,34 @@ class ModuleTaskPage(QWidget):
             {"role": "new_raw", "input_index": index}
             for index in range(1, len(inputs))
         )
-        self.configured_task_requested.emit(
-            self.module_id,
-            inputs,
-            {
+        configuration = {
                 "schema_version": "1.0",
                 "operation": "append_summary",
                 "inputs": roles,
-            },
+            }
+        if self.v13_enabled:
+            self.period_configured_task_requested.emit(
+                self.module_id, inputs, configuration, self._task_metadata()
+            )
+        else:
+            self.configured_task_requested.emit(self.module_id, inputs, configuration)
+
+    def _task_metadata(self) -> dict[str, object]:
+        return {
+            "task_name": self.task_name_edit.text().strip(),
+            "period_year": self.year_spin.value(),
+            "period_month": int(self.month_combo.currentData()),
+        }
+
+    def _mark_name_customized(self) -> None:
+        self._name_customized = True
+
+    def _refresh_default_name(self) -> None:
+        if self._name_customized or self.module_id is None:
+            return
+        module_name = self.title.text()
+        self.task_name_edit.setText(
+            f"{module_name}-{self.year_spin.value()}年{int(self.month_combo.currentData()):02d}月"
         )
 
     def _open_ai_report(self) -> None:
