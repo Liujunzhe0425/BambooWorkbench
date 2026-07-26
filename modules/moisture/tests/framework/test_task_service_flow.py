@@ -7,7 +7,6 @@ import shutil
 import sys
 from pathlib import Path
 
-import pytest
 from openpyxl import load_workbook
 from PySide6.QtTest import QSignalSpy
 
@@ -120,16 +119,10 @@ def test_real_task_service_snapshots_and_registers_formal_outputs(
         assert source.read_bytes() == before
         assert service.runners == {}
     finally:
+        service.shutdown()
         database.close()
 
 
-@pytest.mark.xfail(
-    reason=(
-        "framework MonthlyRollupRunner cannot yet construct its QProcess "
-        "environment; the module finalize and snapshot complete first"
-    ),
-    strict=True,
-)
 def test_real_task_service_append_summary_conflict_finalize_and_isolation(
     qtbot, tmp_path: Path, workbook_factory
 ) -> None:
@@ -259,23 +252,23 @@ def test_real_task_service_append_summary_conflict_finalize_and_isolation(
         snapshots = task_repository.list_files(job_id)
         assert len(snapshots) == len(inputs)
         assert all(Path(str(item["snapshot_path"])).is_file() for item in snapshots)
-        assert {Path(str(item["path"])).name for item in task_repository.list_outputs(job_id)} == {
+        formal_outputs = {
+            Path(str(item["path"])).name
+            for item in task_repository.list_outputs(job_id)
+        }
+        assert formal_outputs == {
             "moisture_summary.xlsx",
             "analysis_report.md",
+            "moisture_business_records.json",
         }
+        assert Path(final["monthly_snapshot"]["path"]).name not in formal_outputs
         assert task_repository.get(job_id)["status"] == "partial_success"
         assert service.runners == {}
     finally:
+        service.shutdown()
         database.close()
 
 
-@pytest.mark.xfail(
-    reason=(
-        "framework MonthlyRollupRunner cannot yet construct its QProcess "
-        "environment; the module finalize and snapshot complete first"
-    ),
-    strict=True,
-)
 def test_real_task_service_year_confirmation_does_not_request_ai(
     qtbot, tmp_path: Path, workbook_factory
 ) -> None:
@@ -334,7 +327,18 @@ def test_real_task_service_year_confirmation_does_not_request_ai(
             "moisture_summary.xlsx",
             "analysis_report.md",
         }
+        formal_outputs = {
+            Path(str(item["path"])).name
+            for item in task_repository.list_outputs(job_id)
+        }
+        assert formal_outputs == {
+            "moisture_summary.xlsx",
+            "analysis_report.md",
+            "moisture_business_records.json",
+        }
+        assert Path(final["monthly_snapshot"]["path"]).name not in formal_outputs
         assert source.read_bytes() == before
         assert service.runners == {}
     finally:
+        service.shutdown()
         database.close()

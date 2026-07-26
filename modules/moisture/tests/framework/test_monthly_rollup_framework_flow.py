@@ -6,7 +6,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
 from PySide6.QtTest import QSignalSpy
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -21,13 +20,6 @@ from core.contracts.enums import ModuleId
 pytest_plugins = ("fixtures.workbooks.workbook_factory",)
 
 
-@pytest.mark.xfail(
-    reason=(
-        "framework MonthlyRollupRunner iterates QProcessEnvironment before "
-        "starting the module process; remove after the framework FCR is fixed"
-    ),
-    strict=True,
-)
 def test_real_framework_finalize_snapshot_and_offline_rollup(
     qtbot,
     tmp_path: Path,

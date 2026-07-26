@@ -431,8 +431,8 @@ def _publish_run(
         file_results=_file_result(job, draft, errors[0] if failed and errors else None),
         service_requests=requests,
         analysis_summary=(
-            "独立 AI 汇总报告请求已准备，等待用户授权。"
-            if job.phase.value == "draft"
+            "独立 AI 汇总报告请求已准备，等待框架授权。"
+            if requests
             else "独立 AI 汇总报告处理完成。"
         ),
         errors=errors,
@@ -446,6 +446,11 @@ def _publish_run(
 
 
 def run_ai_report_draft(job: JobRequest, config: ModuleConfig) -> int:
+    if job.service_response_file is not None:
+        # v1.3 resolves the first draft request from the global network
+        # default, then replays a service-bound draft. Consume that response
+        # directly so the Provider is called once without a task-local prompt.
+        return run_ai_report_finalize(job, config)
     started_at = datetime.now(UTC)
     try:
         draft = build_ai_report_draft(job, config, history_root=_history_root_from_environment())

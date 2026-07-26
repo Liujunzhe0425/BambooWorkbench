@@ -2,11 +2,15 @@
 fcr_id: FCR-moisture-20260726-monthly-runtime-blockers
 module_id: moisture
 module_version: 1.3.0
-status: proposed
-priority: blocking
+status: completed
+priority: resolved
 requested_by: moisture-module-owner
 target: framework
 ---
+
+> 文档状态：历史归档
+> 不作为当前实现和验收依据。
+> 框架 PR #68（`cfc446e7`）已于 2026-07-26 解除本文两项阻塞。
 
 # 月度运行时剩余阻塞
 

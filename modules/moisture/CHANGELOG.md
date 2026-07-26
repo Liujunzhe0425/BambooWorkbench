@@ -14,8 +14,10 @@
   重算；不联网、不调用 AI、不重新请求人工确认。
 - 不修改水分公式、Decimal 精度、阈值、颜色、普通四表、独立 AI 报告和
   经验/规则治理语义。
-- 模块公开入口已通过直接 BAT 和合同测试；真实框架链剩余运行时问题记录于
-  `FCR-moisture-20260726-monthly-runtime-blockers.md`。
+- 同步框架 PR #68 后，真实 Registry → TaskService → finalize snapshot →
+  offline rollup 链路恢复正常；独立 AI report 按系统全局联网默认执行。
+- service-bound AI report draft 直接消费框架已取得的响应，确保允许时 Provider
+  调用一次、拒绝时零调用，并且不进入月度事务。
 
 ## 1.2.0 - 2026-07-25
 

@@ -4,7 +4,8 @@ BambooWorkbench 竹丝水分检测模块 v1.3.0。模块提供确定性普通汇
 AI 报告，以及由主框架编排的月度快照与年度累计：
 
 - 普通汇总：确定性 Excel 解析、统计、规则初筛和四表成果；
-- 独立 AI 报告：用户主动选择当前汇总表、可选历史资料和 approved 经验后，由主框架在逐次同意下调用 Provider。
+- 独立 AI 报告：用户主动选择当前汇总表、可选历史资料和 approved 经验后，
+  由主框架按系统全局联网默认调用或拒绝 Provider。
 
 模块不直接访问网络、Provider、数据库或凭据，AI 结果不修改汇总表、规则颜色或确定性结论。
 
@@ -22,7 +23,8 @@ AI 报告，以及由主框架编排的月度快照与年度累计：
 1. 普通检测选择一个或多个原始 `.xlsx`，按提示确认缺失的业务年份；
 2. 在结果中心打开 `moisture_summary.xlsx` 和 `analysis_report.md`；
 3. 需要进一步分析时，另行打开“AI 汇总报告”，选择当前汇总表、历史资料、approved 经验并输入问题；
-4. 查看脱敏预览并逐次同意后，结果中心显示独立的 AI Markdown/JSON 成果。
+4. 系统继续执行脱敏和授权审计；全局联网允许时生成独立 AI Markdown/JSON，
+   拒绝或服务异常时生成结构化降级结果。
 
 客户安装版自带 `runtime/BambooMoistureModule.exe`，不需要安装 Python。
 
@@ -134,8 +136,8 @@ powershell -ExecutionPolicy Bypass -File modules\moisture\build_portable_runtime
 - 主框架经验/规则管理页面通过 ManagementService/Runner 调用独立管理进程；
 - TaskService 创建任务时固定 `{version, sha256}`，draft/finalize 不重新选择 active；
 - v1.3.0 公共 Schema、finalize 快照、离线累计和确认学习适配已完成；
-- 真实框架累计链仍有两项最小运行时阻塞，详见
-  [`FCR-moisture-20260726-monthly-runtime-blockers.md`](docs/framework-change-requests/FCR-moisture-20260726-monthly-runtime-blockers.md)。
+- 框架 PR #68 已解除月度 Runner 和非月度 AI report 快照边界阻塞；
+- 真实月度累计、全局 AI 允许/拒绝和离线降级均纳入模块框架回归。
 
 ## 当前指导文档
 
