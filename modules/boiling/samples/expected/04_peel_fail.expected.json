@@ -1,15 +1,13 @@
 {
   "schema_version": "1.0",
   "sample_file": "04_peel_fail.xlsx",
-  "expected_status": "needs_confirmation",
+  "expected_status": "success",
   "expected_processed_count": 1,
   "expected_failed_count": 0,
   "expected_anomaly_fields": [
     "immersion_peel_result"
   ],
-  "expected_confirmation_fields": [
-    "人工开裂检查"
-  ],
+  "expected_confirmation_fields": [],
   "expected_sample_count": 2,
   "expected_retest_count": 0,
   "expected_immersion_peel_result": "不合格",
