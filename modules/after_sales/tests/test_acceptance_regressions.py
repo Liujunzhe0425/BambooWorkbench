@@ -416,6 +416,10 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
         confirmation_file=str(confirmation_file),
         service_response_file=str(response_path),
         ai_enabled=True,
+        task_name="售后中央月度验收任务",
+        period_year=2026,
+        period_month=5,
+        learning_enabled=True,
     )
     final = _run(tmp_path, final_payload, "final-job")
     records = json.loads((final_output / "after_sales_records.json").read_text(encoding="utf-8"))
@@ -451,11 +455,29 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
         "加工",
         "其他",
     }
-    learning = json.loads(
-        (final_output / "after_sales_learning_descriptors.json").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert learning["items"][0]["learning"]["learning_key"] == (
+    assert prompts["投诉类型"]["learning"]["learning_key"] == (
         "after_sales.complaint_type.v1"
+    )
+    assert not (final_output / "after_sales_learning_descriptors.json").exists()
+    assert final["monthly_snapshot"] == {
+        "schema_version": "1.0",
+        "path": str(snapshot_path.resolve()),
+        "snapshot_format": "module-owned-v1",
+        "year": 2026,
+        "month": 5,
+    }
+
+    mismatched_output = tmp_path / "mismatched-final-output"
+    mismatched_payload = {
+        **final_payload,
+        "job_id": "acceptance-final-mismatched-period",
+        "output_dir": str(mismatched_output),
+        "period_month": 4,
+    }
+    mismatched = _run(tmp_path, mismatched_payload, "mismatched-final-job")
+    assert mismatched["status"] == "failed"
+    assert mismatched.get("monthly_snapshot") is None
+    assert any(
+        "MONTHLY_SNAPSHOT_TARGET_PERIOD_EMPTY" in error
+        for error in mismatched["errors"]
     )

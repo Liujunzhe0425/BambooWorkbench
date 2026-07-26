@@ -2,6 +2,11 @@
 
 ## 1.3.0 - 2026-07-26
 
+- 完成中央 v1.3 月度合同整改：manifest 声明完整累计与学习 Schema，中央合同 CLI、Registry、TaskService、Runner 和 BAT 闭环通过。
+- 接受 `task_name / period_year / period_month / learning_enabled`，finalize 只为任务目标年月返回顶层 `monthly_snapshot`，内部快照不进入普通成果。
+- 将投诉类型学习描述直接映射到公共 `ConfirmationPrompt.learning`，移除对 `after_sales_learning_descriptors.json` 旁路成果的依赖。
+- 累计入口改用中央 `transaction_id / snapshot_root / output_dir / configuration_identity` 请求和稳定响应，确认快照 ID、任务、模块、年月、大小及 SHA-256。
+- 累计响应新增 `record_count`、成果 SHA-256、`network_call_count=0` 和单个稳定 `error {code,message}`，源码与便携入口使用同一合同。
 - 新增模块自有 `monthly_rollup` 能力以及月度快照、累计请求、累计响应三个 JSON Schema。
 - finalize 在全部正式记录完成售后费用、责任工厂和投诉类型人工确认且年月有效时，生成不对用户展示的脱敏月度快照；旧批次含多个有效月份时按月分别生成。
 - 新增完全离线的 `rollup --request --response` 累计入口，只读取同年有序正式快照和最终人工值，生成截至目标月份的累计台账、Word 报告、品牌占比、原因占比、逐月费用、年度看板和结构化业务记录。

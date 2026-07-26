@@ -3,7 +3,7 @@ request_id: FCR-after_sales-20260726-monthly-rollup-integration
 module_id: after_sales
 module_version: 1.3.0
 owner: 售后分析模块负责人
-status: proposed
+status: implemented
 framework_areas:
   - contract
   - service
@@ -163,8 +163,8 @@ run_module.bat rollup --request <absolute-request-json> --response <absolute-res
 
 ## 10. 框架方审核（由框架负责人/Codex填写）
 
-- 审核结论：待审核
-- 判断理由：
-- 实施分支/PR：
-- 验证范围：
-- 对模块交付的后续要求：
+- 审核结论：已批准并由中央 v1.3 合同实现；售后模块已完成薄适配。
+- 判断理由：正式月份槽位、不可变快照、累计 Runner、原子事务和公共 learning 均属于框架公共责任，模块继续拥有售后业务 payload 与累计渲染。
+- 实施基线：`integration@460a29b`；售后适配基线为本地合并提交 `63bdb28` 之后的整改提交。
+- 验证范围：中央合同 CLI、Registry → TaskService → Runner → BAT、单次 AI 调用、顶层月度快照、公共 learning、缺月/替换/错误路径、源码与便携零联网累计。
+- 对模块交付的后续要求：保持 Draft PR #67 指向 `integration`，附最新 SHA、完整测试、便携闭环和零联网证据。

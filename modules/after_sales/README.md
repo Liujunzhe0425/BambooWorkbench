@@ -53,12 +53,11 @@ Provider 超时、拒绝、错误、响应缺失或 JSON 非法时，模块保�
 
 ## 月度快照与年度累计
 
-模块清单声明 `monthly_rollup` 能力。finalize 成功且本批全部正式记录均已完成“售后费用、责任工厂、投诉类型”三项人工确认、报修年月有效时，模块在输出目录生成内部快照：
+模块清单声明完整的中央 `monthly_rollup` 合同。finalize 成功且目标年月内的正式记录均已完成“售后费用、责任工厂、投诉类型”三项人工确认时，模块在输出目录生成单个内部快照：
 
-- `after_sales_monthly_snapshot.json`：单月任务的标准内部快照；
-- `monthly_snapshots/YYYY-MM.json`：兼容旧批次中含多个报修月份的模块内部快照。
+- `after_sales_monthly_snapshot.json`：只包含中央 JobRequest 指定目标年月的标准内部快照。
 
-快照不作为普通用户成果展示，不保存客户原文、客户身份、绝对输入路径或原始单元格，只保留年度累计所需的脱敏结构化最终值。
+快照通过 `result.json` 顶层 `monthly_snapshot` 登记，不作为普通用户成果展示；它不保存客户原文、客户身份、绝对输入路径或原始单元格，只保留年度累计所需的脱敏结构化最终值。
 
 框架可使用模块自有合同调用完全离线的累计入口：
 
@@ -66,7 +65,7 @@ Provider 超时、拒绝、错误、响应缺失或 JSON 非法时，模块保�
 run_module.bat rollup --request D:\data\rollup-request.json --response D:\data\rollup-response.json
 ```
 
-请求必须提供同模块、同年份、严格按月份升序且不大于目标月的正式快照及 SHA-256，并明确 `offline_required: true` 和框架授权的暂存目录。允许月份缺口；重复月、乱序、跨年、越界、哈希损坏、符号链接或 junction 会返回稳定错误码。
+请求使用中央 `transaction_id / snapshot_root / output_dir / configuration_identity` 合同，并提供同模块、同年份、严格按月份升序且不大于目标月的正式快照身份、任务身份、大小及 SHA-256。允许月份缺口；重复月、乱序、跨年、越界、大小或哈希损坏、路径越界、符号链接或 junction 会返回稳定错误码。
 
 累计入口不导入 AI 服务适配代码，不读取 API Key、Windows 凭据或 Provider，不发送服务请求。它只复用快照中的最终人工值，生成截至目标月份的累计台账、Word 报告、品牌/原因/费用图表、年度看板和结构化业务记录。
 
@@ -74,9 +73,10 @@ run_module.bat rollup --request D:\data\rollup-request.json --response D:\data\r
 
 - `schemas/monthly-snapshot.schema.json`
 - `schemas/monthly-rollup-request.schema.json`
-- `schemas/monthly-rollup-response.schema.json`
+- `schemas/monthly-rollup-result.schema.json`
+- `schemas/confirmation-learning.schema.json`
 
-框架尚需按 `docs/framework-change-requests/FCR-after_sales-20260726-monthly-rollup-integration.md` 提供正式月份槽位、替换事务、后续月份重算、公开学习合同和历史数据页面。
+投诉类型确认项直接通过公共 `ConfirmationPrompt.learning` 提供稳定、脱敏的候选和上下文；费用及自由文本责任工厂不声明为可学习字段。框架已提供正式月份槽位、替换事务、后续月份重算、公共学习合同和历史数据页面，模块通过中央 Runner 参与原子累计事务。
 
 ## 数据边界
 

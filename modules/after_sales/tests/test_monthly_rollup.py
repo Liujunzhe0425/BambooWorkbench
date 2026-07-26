@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 import socket
+import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -20,8 +22,11 @@ from after_sales_agent.monthly_rollup import (  # noqa: E402
     file_sha256,
     render_monthly_rollup,
     run_rollup_request,
-    write_finalize_monthly_snapshots,
+    write_finalize_monthly_snapshot,
 )
+
+from core.contracts.monthly import MonthlyRollupRequest, MonthlyRollupResult  # noqa: E402
+from core.contracts.result import LearningDescriptor  # noqa: E402
 
 
 def _record(
@@ -118,7 +123,7 @@ def _request(
 ) -> dict[str, object]:
     return {
         "schema_version": "1.0",
-        "request_id": f"rollup-{year}-{target_month:02d}",
+        "transaction_id": f"rollup-{year}-{target_month:02d}",
         "module_id": "after_sales",
         "module_version": MODULE_VERSION,
         "year": year,
@@ -126,16 +131,23 @@ def _request(
         "offline_required": True,
         "snapshots": [
             {
+                "snapshot_id": f"snapshot-{year}-{month:02d}",
+                "job_id": f"job-{year}-{month:02d}",
+                "module_id": "after_sales",
+                "year": year,
                 "month": month,
                 "path": str(path.resolve()),
+                "size": path.stat().st_size,
                 "sha256": digest,
             }
             for month, path, digest in snapshots
         ],
-        "staging_output_dir": str(output_dir.resolve()),
-        "rule_snapshot_id": "rules-2026-07",
-        "experience_snapshot_id": None,
-        "business_config_snapshot_id": "after-sales-default",
+        "snapshot_root": str(snapshots[0][1].parent.resolve()),
+        "output_dir": str(output_dir.resolve()),
+        "configuration_identity": {
+            "version": "after-sales-default",
+            "sha256": "1" * 64,
+        },
     }
 
 
@@ -193,6 +205,11 @@ def test_complaint_type_learning_descriptor_is_stable_and_anonymized() -> None:
         "product_group": "地板",
     }
     assert first_learning["preference_adjustable"] is True
+    assert first_learning["base_suggestion_id"] == "processing"
+    assert first_learning["context_levels"] == [
+        ["brand_group", "product_group"],
+        ["brand_group"],
+    ]
     assert [item["candidate_id"] for item in first_learning["candidates"]] == [
         "performance",
         "appearance",
@@ -201,18 +218,23 @@ def test_complaint_type_learning_descriptor_is_stable_and_anonymized() -> None:
     ]
     assert "客户甲" not in serialized
     assert "D:\\" not in serialized
+    LearningDescriptor.model_validate(first_learning)
 
 
 def test_finalize_writes_internal_snapshot_for_single_month(tmp_path: Path) -> None:
-    written = write_finalize_monthly_snapshots(
+    written = write_finalize_monthly_snapshot(
         [
             _record(year=2026, month=4, fee=120.0, input_index=1),
             _record(year=2026, month=4, fee=80.0, input_index=2),
+            _record(year=2026, month=3, fee=900.0, input_index=3),
         ],
         tmp_path,
+        year=2026,
+        month=4,
     )
 
-    assert [path.name for path in written] == ["2026-04.json"]
+    assert written is not None
+    assert written.name == "after_sales_monthly_snapshot.json"
     conventional = tmp_path / "after_sales_monthly_snapshot.json"
     assert conventional.is_file()
     snapshot = json.loads(conventional.read_text(encoding="utf-8"))
@@ -257,11 +279,30 @@ def test_rollup_allows_month_gap_and_makes_complete_offline_outputs(
             output_dir=output_dir,
         )
     )
+    MonthlyRollupRequest.model_validate(
+        _request(
+            year=2026,
+            target_month=3,
+            snapshots=[
+                (1, january, january_hash),
+                (3, march, march_hash),
+            ],
+            output_dir=output_dir,
+        )
+    )
+    MonthlyRollupResult.model_validate(response)
 
     assert response["status"] == "success"
     assert response["used_months"] == [1, 3]
+    assert response["network_call_count"] == 0
+    assert response["record_count"] == 2
+    assert response["error"] is None
     assert len(response["outputs"]) == 7
     assert all(Path(item["path"]).is_file() for item in response["outputs"])
+    assert all(
+        file_sha256(Path(item["path"])) == item["sha256"]
+        for item in response["outputs"]
+    )
     records = json.loads((output_dir / "after_sales_records.json").read_text("utf-8"))
     assert [item["month"] for item in records["records"]] == [1, 3]
     assert sum(item["after_sales_fee_amount"] for item in records["records"]) == 400.0
@@ -405,6 +446,54 @@ def test_rollup_rejects_cross_year_snapshot(tmp_path: Path) -> None:
     assert error.value.code == "ROLLUP_SNAPSHOT_YEAR_MISMATCH"
 
 
+def test_rollup_rejects_snapshot_size_mismatch(tmp_path: Path) -> None:
+    snapshot, digest = _write_snapshot(
+        tmp_path,
+        year=2026,
+        month=1,
+        fee=100.0,
+        input_index=1,
+    )
+    request = _request(
+        year=2026,
+        target_month=1,
+        snapshots=[(1, snapshot, digest)],
+        output_dir=tmp_path / "size-mismatch",
+    )
+    request["snapshots"][0]["size"] += 1
+
+    with pytest.raises(MonthlyRollupError) as error:
+        render_monthly_rollup(request)
+
+    assert error.value.code == "ROLLUP_SNAPSHOT_SIZE_MISMATCH"
+
+
+def test_rollup_rejects_snapshot_outside_authorized_root(tmp_path: Path) -> None:
+    snapshot_root = tmp_path / "snapshots"
+    snapshot_root.mkdir()
+    snapshot, digest = _write_snapshot(
+        snapshot_root,
+        year=2026,
+        month=1,
+        fee=100.0,
+        input_index=1,
+    )
+    request = _request(
+        year=2026,
+        target_month=1,
+        snapshots=[(1, snapshot, digest)],
+        output_dir=tmp_path / "outside-root",
+    )
+    other_root = tmp_path / "other-root"
+    other_root.mkdir()
+    request["snapshot_root"] = str(other_root.resolve())
+
+    with pytest.raises(MonthlyRollupError) as error:
+        render_monthly_rollup(request)
+
+    assert error.value.code == "ROLLUP_SNAPSHOT_PATH_OUTSIDE_ROOT"
+
+
 def test_rollup_rejects_snapshot_link_or_reparse_point(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -490,7 +579,62 @@ def test_rollup_cli_writes_stable_error_response_without_traceback(
 
     assert run_rollup_request(request_path.resolve(), response_path.resolve()) == 2
     response = json.loads(response_path.read_text(encoding="utf-8"))
+    MonthlyRollupResult.model_validate(response)
     assert response["status"] == "failed"
-    assert response["errors"][0]["code"] == "ROLLUP_SNAPSHOT_HASH_MISMATCH"
+    assert response["error"]["code"] == "rollup_snapshot_hash_mismatch"
     assert "traceback" not in json.dumps(response, ensure_ascii=False).casefold()
     assert digest != "0" * 64
+
+
+@pytest.mark.skipif(
+    not os.environ.get("PORTABLE_AFTER_SALES_ROOT"),
+    reason="需要显式提供已构建的售后便携模块目录",
+)
+def test_portable_runtime_accepts_central_rollup_contract(tmp_path: Path) -> None:
+    portable_root = Path(os.environ["PORTABLE_AFTER_SALES_ROOT"]).resolve()
+    snapshot_root = tmp_path / "snapshot-root"
+    snapshot_root.mkdir()
+    snapshot, digest = _write_snapshot(
+        snapshot_root,
+        year=2026,
+        month=1,
+        fee=100.0,
+        input_index=1,
+    )
+    output_dir = tmp_path / "portable-output"
+    request = _request(
+        year=2026,
+        target_month=1,
+        snapshots=[(1, snapshot, digest)],
+        output_dir=output_dir,
+    )
+    request_path = tmp_path / "portable-request.json"
+    response_path = output_dir / "rollup-result.json"
+    request_path.write_text(
+        json.dumps(request, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    completed = subprocess.run(
+        [
+            str(portable_root / "run_module.bat"),
+            "rollup",
+            "--request",
+            str(request_path.resolve()),
+            "--response",
+            str(response_path.resolve()),
+        ],
+        cwd=portable_root,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        timeout=120,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    response = json.loads(response_path.read_text(encoding="utf-8"))
+    MonthlyRollupResult.model_validate(response)
+    assert response["transaction_id"] == request["transaction_id"]
+    assert response["network_call_count"] == 0
+    assert all(Path(item["path"]).is_file() for item in response["outputs"])

@@ -10,6 +10,14 @@
   "supports_incremental": true,
   "requires_network": false,
   "capabilities": ["monthly_rollup"],
+  "monthly_rollup": {
+    "schema_version": "1.0",
+    "entrypoint": "run_module.bat",
+    "snapshot_schema": "schemas/monthly-snapshot.schema.json",
+    "request_schema": "schemas/monthly-rollup-request.schema.json",
+    "response_schema": "schemas/monthly-rollup-result.schema.json",
+    "learning_schema": "schemas/confirmation-learning.schema.json"
+  },
   "framework_ai": {
     "required": true,
     "setup_page": "module",

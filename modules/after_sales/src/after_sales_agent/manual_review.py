@@ -304,16 +304,15 @@ def build_complaint_type_learning(
         "context_levels": [
             ["brand_group", "product_group"],
             ["brand_group"],
-            [],
         ],
         "candidates": [
             {
                 "candidate_id": candidate_ids[option],
-                "display_text": option,
+                "label": option,
             }
             for option in options
         ],
-        "base_suggestion": candidate_ids[suggestion],
+        "base_suggestion_id": candidate_ids[suggestion],
         "preference_adjustable": True,
     }
 

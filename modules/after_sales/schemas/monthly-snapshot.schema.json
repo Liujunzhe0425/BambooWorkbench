@@ -16,7 +16,7 @@
     "schema_version": {"const": "1.0"},
     "module_id": {"const": "after_sales"},
     "module_version": {"pattern": "^\\d+\\.\\d+\\.\\d+$"},
-    "year": {"type": "integer", "minimum": 1900, "maximum": 2200},
+    "year": {"type": "integer", "minimum": 2000, "maximum": 9999},
     "month": {"type": "integer", "minimum": 1, "maximum": 12},
     "snapshot_format": {"const": "module-owned-v1"},
     "payload": {
@@ -45,7 +45,7 @@
             "properties": {
               "record_key": {"type": "string", "pattern": "^[0-9a-f]{24}$"},
               "source_file": {"type": "string", "pattern": "^售后记录-[0-9]{4}\\.(xlsx|xlsm)$"},
-              "year": {"type": "integer", "minimum": 1900, "maximum": 2200},
+              "year": {"type": "integer", "minimum": 2000, "maximum": 9999},
               "month": {"type": "integer", "minimum": 1, "maximum": 12},
               "brand": {"type": "string", "minLength": 1},
               "primary_issue_type": {"enum": ["性能", "外观", "加工", "其他"]},

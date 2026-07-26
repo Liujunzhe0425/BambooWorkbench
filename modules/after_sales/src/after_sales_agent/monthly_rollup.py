@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -73,48 +74,31 @@ class MonthlyRollupError(ValueError):
         self.public_message = message
 
 
-def write_finalize_monthly_snapshots(
+def write_finalize_monthly_snapshot(
     records: list[dict[str, Any]],
     output_dir: Path,
-) -> list[Path]:
-    """Write internal snapshots when every included case has final review values.
+    *,
+    year: int,
+    month: int,
+) -> Path | None:
+    """Write the one target-period snapshot declared by the central job contract."""
 
-    Legacy after-sales jobs may contain multiple months. For compatibility, those
-    jobs receive one module-owned snapshot per month. A single-month job also gets
-    the conventional ``after_sales_monthly_snapshot.json`` file expected by the
-    future framework adapter.
-    """
+    period_records = [
+        record
+        for record in records
+        if record.get("included_in_summary", True)
+        and _integer(record.get("year")) == year
+        and _integer(record.get("month")) == month
+    ]
+    if not period_records or any(
+        not _record_is_final(record) for record in period_records
+    ):
+        return None
 
-    included = [record for record in records if record.get("included_in_summary", True)]
-    if not included:
-        return []
-    if any(not _record_is_final(record) for record in included):
-        return []
-
-    grouped: dict[tuple[int, int], list[dict[str, Any]]] = {}
-    for record in included:
-        year = _integer(record.get("year"))
-        month = _integer(record.get("month"))
-        if year is None or month is None or not 1 <= month <= 12:
-            return []
-        grouped.setdefault((year, month), []).append(record)
-
-    snapshot_dir = output_dir / "monthly_snapshots"
-    snapshot_dir.mkdir(parents=True, exist_ok=True)
-    written: list[Path] = []
-    for (year, month), period_records in sorted(grouped.items()):
-        snapshot = build_monthly_snapshot(period_records, year=year, month=month)
-        path = snapshot_dir / f"{year:04d}-{month:02d}.json"
-        _atomic_write_json(path, snapshot)
-        written.append(path)
-
-    if len(written) == 1:
-        conventional = output_dir / "after_sales_monthly_snapshot.json"
-        _atomic_write_json(
-            conventional,
-            json.loads(written[0].read_text(encoding="utf-8")),
-        )
-    return written
+    snapshot = build_monthly_snapshot(period_records, year=year, month=month)
+    path = output_dir / "after_sales_monthly_snapshot.json"
+    _atomic_write_json(path, snapshot)
+    return path
 
 
 def build_monthly_snapshot(
@@ -123,7 +107,7 @@ def build_monthly_snapshot(
     year: int,
     month: int,
 ) -> dict[str, Any]:
-    if year < 1900 or year > 2200:
+    if year < 2000 or year > 9999:
         raise MonthlyRollupError("SNAPSHOT_YEAR_INVALID", "月度快照年份不合法。")
     if month < 1 or month > 12:
         raise MonthlyRollupError("SNAPSHOT_MONTH_INVALID", "月度快照月份不合法。")
@@ -172,7 +156,7 @@ def render_monthly_rollup(
     normalized = _validate_rollup_request(request)
     year = normalized["year"]
     target_month = normalized["target_month"]
-    staging_dir = normalized["staging_output_dir"]
+    output_dir = normalized["output_dir"]
     snapshot_entries = normalized["snapshots"]
 
     records: list[dict[str, Any]] = []
@@ -182,6 +166,7 @@ def render_monthly_rollup(
         payload = _read_and_validate_snapshot(
             entry["path"],
             expected_hash=entry["sha256"],
+            expected_size=entry["size"],
             expected_year=year,
             expected_month=entry["month"],
             target_month=target_month,
@@ -190,6 +175,7 @@ def render_monthly_rollup(
         used_months.append(entry["month"])
         snapshot_hashes.append(
             {
+                "snapshot_id": entry["snapshot_id"],
                 "month": entry["month"],
                 "sha256": entry["sha256"],
             }
@@ -203,8 +189,8 @@ def render_monthly_rollup(
             str(item.get("record_key") or ""),
         )
     )
-    _assert_staging_directory(staging_dir)
-    temp_dir = Path(tempfile.mkdtemp(prefix=".after_sales_rollup_", dir=staging_dir))
+    _assert_staging_directory(output_dir)
+    temp_dir = Path(tempfile.mkdtemp(prefix=".after_sales_rollup_", dir=output_dir))
     try:
         paths = _render_outputs(
             records,
@@ -214,7 +200,7 @@ def render_monthly_rollup(
         )
         outputs: list[dict[str, Any]] = []
         for artifact in paths:
-            final_path = staging_dir / artifact["path"].name
+            final_path = output_dir / artifact["path"].name
             os.replace(artifact["path"], final_path)
             outputs.append(
                 {
@@ -237,7 +223,7 @@ def render_monthly_rollup(
 
     return {
         "schema_version": ROLLUP_SCHEMA_VERSION,
-        "request_id": normalized["request_id"],
+        "transaction_id": normalized["transaction_id"],
         "module_id": MODULE_ID,
         "module_version": MODULE_VERSION,
         "status": "success",
@@ -245,15 +231,19 @@ def render_monthly_rollup(
         "target_month": target_month,
         "used_months": used_months,
         "snapshot_hashes": snapshot_hashes,
+        "record_count": len(records),
+        "network_call_count": 0,
         "outputs": outputs,
-        "errors": [],
+        "error": None,
     }
 
 
 def run_rollup_request(request_path: Path, response_path: Path) -> int:
     """CLI adapter that always returns a stable UTF-8 response document."""
 
-    request_id = ""
+    transaction_id = "invalid-request"
+    year = 2000
+    target_month = 1
     if not response_path.is_absolute():
         return 2
     try:
@@ -266,21 +256,31 @@ def run_rollup_request(request_path: Path, response_path: Path) -> int:
         _assert_regular_file(request_path, "ROLLUP_REQUEST_PATH_INVALID")
         raw = json.loads(request_path.read_text(encoding="utf-8"))
         if isinstance(raw, dict):
-            request_id = str(raw.get("request_id") or "")
+            transaction_id = str(raw.get("transaction_id") or transaction_id)
+            year = _integer(raw.get("year")) or year
+            target_month = _integer(raw.get("target_month")) or target_month
         response = render_monthly_rollup(raw)
         _atomic_write_json(response_path, response)
         return 0
     except MonthlyRollupError as exc:
         _atomic_write_json(
             response_path,
-            _error_response(request_id, exc.code, exc.public_message),
+            _error_response(
+                transaction_id,
+                year,
+                target_month,
+                exc.code,
+                exc.public_message,
+            ),
         )
         return 2
     except (OSError, UnicodeError, json.JSONDecodeError):
         _atomic_write_json(
             response_path,
             _error_response(
-                request_id,
+                transaction_id,
+                year,
+                target_month,
                 "ROLLUP_REQUEST_INVALID",
                 "累计请求文件不是有效的 UTF-8 JSON。",
             ),
@@ -346,17 +346,16 @@ def _validate_rollup_request(request: Any) -> dict[str, Any]:
         raise MonthlyRollupError("ROLLUP_REQUEST_INVALID", "累计请求必须是 JSON 对象。")
     allowed = {
         "schema_version",
-        "request_id",
+        "transaction_id",
         "module_id",
         "module_version",
         "year",
         "target_month",
         "offline_required",
         "snapshots",
-        "staging_output_dir",
-        "rule_snapshot_id",
-        "experience_snapshot_id",
-        "business_config_snapshot_id",
+        "snapshot_root",
+        "output_dir",
+        "configuration_identity",
     }
     if set(request) - allowed:
         raise MonthlyRollupError(
@@ -373,28 +372,54 @@ def _validate_rollup_request(request: Any) -> dict[str, Any]:
             "ROLLUP_MODULE_MISMATCH",
             "累计请求模块与售后模块不一致。",
         )
+    if request.get("module_version") != MODULE_VERSION:
+        raise MonthlyRollupError(
+            "ROLLUP_MODULE_VERSION_MISMATCH",
+            "累计请求模块版本与售后模块不一致。",
+        )
     if request.get("offline_required") is not True:
         raise MonthlyRollupError(
             "ROLLUP_OFFLINE_REQUIRED",
             "售后年度累计必须以强制离线模式运行。",
         )
-    request_id = str(request.get("request_id") or "").strip()
-    if not request_id:
-        raise MonthlyRollupError("ROLLUP_REQUEST_ID_INVALID", "累计请求缺少 request_id。")
+    transaction_id = str(request.get("transaction_id") or "").strip()
+    if not _stable_id(transaction_id):
+        raise MonthlyRollupError(
+            "ROLLUP_TRANSACTION_ID_INVALID",
+            "累计请求缺少合法的 transaction_id。",
+        )
     year = _integer(request.get("year"))
     target_month = _integer(request.get("target_month"))
-    if year is None or not 1900 <= year <= 2200:
+    if year is None or not 2000 <= year <= 9999:
         raise MonthlyRollupError("ROLLUP_YEAR_INVALID", "累计请求年份不合法。")
     if target_month is None or not 1 <= target_month <= 12:
         raise MonthlyRollupError("ROLLUP_TARGET_MONTH_INVALID", "累计目标月份不合法。")
 
-    raw_output_dir = request.get("staging_output_dir")
+    raw_snapshot_root = request.get("snapshot_root")
+    if not isinstance(raw_snapshot_root, str) or not Path(raw_snapshot_root).is_absolute():
+        raise MonthlyRollupError(
+            "ROLLUP_SNAPSHOT_ROOT_INVALID",
+            "累计快照根目录必须是绝对路径。",
+        )
+    snapshot_root = _absolute_without_resolving(Path(raw_snapshot_root))
+    if not snapshot_root.is_dir():
+        raise MonthlyRollupError(
+            "ROLLUP_SNAPSHOT_ROOT_INVALID",
+            "累计快照根目录不存在或不可读取。",
+        )
+    _assert_path_chain_no_reparse(
+        snapshot_root,
+        "ROLLUP_SNAPSHOT_ROOT_REPARSE_POINT",
+    )
+
+    raw_output_dir = request.get("output_dir")
     if not isinstance(raw_output_dir, str) or not Path(raw_output_dir).is_absolute():
         raise MonthlyRollupError(
             "ROLLUP_STAGING_PATH_INVALID",
             "累计暂存输出目录必须是绝对路径。",
         )
-    staging_dir = _absolute_without_resolving(Path(raw_output_dir))
+    output_dir = _absolute_without_resolving(Path(raw_output_dir))
+    _validate_configuration_identity(request.get("configuration_identity"))
 
     raw_snapshots = request.get("snapshots")
     if not isinstance(raw_snapshots, list) or not raw_snapshots:
@@ -405,11 +430,41 @@ def _validate_rollup_request(request: Any) -> dict[str, Any]:
     snapshots: list[dict[str, Any]] = []
     previous_month = 0
     seen_months: set[int] = set()
+    seen_snapshot_ids: set[str] = set()
     for raw in raw_snapshots:
-        if not isinstance(raw, dict) or set(raw) != {"month", "path", "sha256"}:
+        expected_fields = {
+            "snapshot_id",
+            "job_id",
+            "module_id",
+            "year",
+            "month",
+            "path",
+            "size",
+            "sha256",
+        }
+        if not isinstance(raw, dict) or set(raw) != expected_fields:
             raise MonthlyRollupError(
                 "ROLLUP_SNAPSHOT_ENTRY_INVALID",
                 "月度快照清单项格式不合法。",
+            )
+        snapshot_id = str(raw.get("snapshot_id") or "")
+        if (
+            not _stable_id(snapshot_id)
+            or not _stable_id(str(raw.get("job_id") or ""))
+        ):
+            raise MonthlyRollupError(
+                "ROLLUP_SNAPSHOT_ID_INVALID",
+                "月度快照身份不合法。",
+            )
+        if raw.get("module_id") != MODULE_ID:
+            raise MonthlyRollupError(
+                "ROLLUP_SNAPSHOT_MODULE_MISMATCH",
+                "月度快照清单属于其他业务模块。",
+            )
+        if _integer(raw.get("year")) != year:
+            raise MonthlyRollupError(
+                "ROLLUP_SNAPSHOT_YEAR_MISMATCH",
+                "月度快照清单年份与累计请求不一致。",
             )
         month = _integer(raw.get("month"))
         if month is None or not 1 <= month <= target_month:
@@ -427,11 +482,29 @@ def _validate_rollup_request(request: Any) -> dict[str, Any]:
                 "ROLLUP_SNAPSHOT_ORDER_INVALID",
                 "月度快照必须按月份严格升序排列。",
             )
+        if snapshot_id in seen_snapshot_ids:
+            raise MonthlyRollupError(
+                "ROLLUP_SNAPSHOT_ID_INVALID",
+                "月度快照身份重复。",
+            )
+        seen_snapshot_ids.add(snapshot_id)
         raw_path = raw.get("path")
         if not isinstance(raw_path, str) or not Path(raw_path).is_absolute():
             raise MonthlyRollupError(
                 "ROLLUP_SNAPSHOT_PATH_INVALID",
                 "月度快照路径必须是绝对路径。",
+            )
+        snapshot_path = _absolute_without_resolving(Path(raw_path))
+        _assert_contained(
+            snapshot_path,
+            snapshot_root,
+            "ROLLUP_SNAPSHOT_PATH_OUTSIDE_ROOT",
+        )
+        size = _integer(raw.get("size"))
+        if size is None or size < 0:
+            raise MonthlyRollupError(
+                "ROLLUP_SNAPSHOT_SIZE_INVALID",
+                "月度快照大小不合法。",
             )
         digest = str(raw.get("sha256") or "").strip().casefold()
         if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest):
@@ -441,8 +514,11 @@ def _validate_rollup_request(request: Any) -> dict[str, Any]:
             )
         snapshots.append(
             {
+                "snapshot_id": snapshot_id,
+                "job_id": str(raw["job_id"]),
                 "month": month,
-                "path": _absolute_without_resolving(Path(raw_path)),
+                "path": snapshot_path,
+                "size": size,
                 "sha256": digest,
             }
         )
@@ -450,10 +526,11 @@ def _validate_rollup_request(request: Any) -> dict[str, Any]:
         seen_months.add(month)
 
     return {
-        "request_id": request_id,
+        "transaction_id": transaction_id,
         "year": year,
         "target_month": target_month,
-        "staging_output_dir": staging_dir,
+        "snapshot_root": snapshot_root,
+        "output_dir": output_dir,
         "snapshots": snapshots,
     }
 
@@ -462,11 +539,17 @@ def _read_and_validate_snapshot(
     path: Path,
     *,
     expected_hash: str,
+    expected_size: int,
     expected_year: int,
     expected_month: int,
     target_month: int,
 ) -> dict[str, Any]:
     _assert_regular_file(path, "ROLLUP_SNAPSHOT_PATH_INVALID")
+    if path.stat().st_size != expected_size:
+        raise MonthlyRollupError(
+            "ROLLUP_SNAPSHOT_SIZE_MISMATCH",
+            "月度快照大小校验失败。",
+        )
     if file_sha256(path) != expected_hash:
         raise MonthlyRollupError(
             "ROLLUP_SNAPSHOT_HASH_MISMATCH",
@@ -639,6 +722,40 @@ def _render_outputs(
     return rendered
 
 
+def _stable_id(value: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9-]{6,64}", value))
+
+
+def _validate_configuration_identity(value: Any) -> None:
+    if value is None:
+        return
+    if not isinstance(value, dict) or set(value) != {"version", "sha256"}:
+        raise MonthlyRollupError(
+            "ROLLUP_CONFIGURATION_IDENTITY_INVALID",
+            "累计配置身份格式不合法。",
+        )
+    version = str(value.get("version") or "")
+    digest = str(value.get("sha256") or "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", version) or not re.fullmatch(
+        r"[0-9a-f]{64}", digest
+    ):
+        raise MonthlyRollupError(
+            "ROLLUP_CONFIGURATION_IDENTITY_INVALID",
+            "累计配置身份格式不合法。",
+        )
+
+
+def _assert_contained(path: Path, root: Path, code: str) -> None:
+    try:
+        common = os.path.commonpath(
+            (os.path.normcase(os.fspath(path)), os.path.normcase(os.fspath(root)))
+        )
+    except ValueError as exc:
+        raise MonthlyRollupError(code, "累计路径超出框架授权目录。") from exc
+    if common != os.path.normcase(os.fspath(root)):
+        raise MonthlyRollupError(code, "累计路径超出框架授权目录。")
+
+
 def _assert_staging_directory(path: Path) -> None:
     if not path.is_absolute():
         raise MonthlyRollupError(
@@ -710,19 +827,36 @@ def _atomic_write_json(path: Path, payload: Any) -> None:
     os.replace(temporary, path)
 
 
-def _error_response(request_id: str, code: str, message: str) -> dict[str, Any]:
+def _error_response(
+    transaction_id: str,
+    year: int,
+    target_month: int,
+    code: str,
+    message: str,
+) -> dict[str, Any]:
+    public_code = re.sub(r"[^a-z0-9_]", "_", code.casefold()).strip("_")
+    if not re.fullmatch(r"[a-z][a-z0-9_]{2,63}", public_code):
+        public_code = "rollup_failed"
+    if not _stable_id(transaction_id):
+        transaction_id = "invalid-request"
+    if not 2000 <= year <= 9999:
+        year = 2000
+    if not 1 <= target_month <= 12:
+        target_month = 1
     return {
         "schema_version": ROLLUP_SCHEMA_VERSION,
-        "request_id": request_id,
+        "transaction_id": transaction_id,
         "module_id": MODULE_ID,
         "module_version": MODULE_VERSION,
         "status": "failed",
-        "year": None,
-        "target_month": None,
+        "year": year,
+        "target_month": target_month,
         "used_months": [],
         "snapshot_hashes": [],
+        "record_count": 0,
+        "network_call_count": 0,
         "outputs": [],
-        "errors": [{"code": code, "message": message}],
+        "error": {"code": public_code, "message": message[:300]},
     }
 
 
@@ -739,6 +873,8 @@ def _json_value(value: Any) -> Any:
 
 
 def _integer(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
     try:
         return int(value) if value not in (None, "") else None
     except (TypeError, ValueError):
