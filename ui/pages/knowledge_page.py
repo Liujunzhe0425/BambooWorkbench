@@ -1,3 +1,4 @@
+import json
 import shutil
 from pathlib import Path
 from uuid import uuid4
@@ -15,11 +16,13 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+from core.knowledge.learning import LearningEvidenceRepository
 from core.knowledge.models import KnowledgeRecord, KnowledgeSourceKind
 from core.knowledge.repository import KnowledgeRepository
 
@@ -41,10 +44,12 @@ class KnowledgePage(QWidget):
         self,
         repository: KnowledgeRepository | None = None,
         knowledge_root: Path | None = None,
+        learning_repository: LearningEvidenceRepository | None = None,
     ) -> None:
         super().__init__()
         self.repository = repository
         self.knowledge_root = knowledge_root
+        self.learning_repository = learning_repository
         self._updating_enabled = False
         self.setObjectName("page-knowledge")
         self.setAccessibleName("知识库")
@@ -137,7 +142,47 @@ class KnowledgePage(QWidget):
         columns.setColumnStretch(0, 1)
         columns.setColumnStretch(1, 1)
         layout.addLayout(columns, 1)
+        learning_card = QFrame()
+        learning_card.setProperty("card", True)
+        learning_layout = QVBoxLayout(learning_card)
+        learning_header = QHBoxLayout()
+        learning_title = QLabel("用户偏好证据")
+        learning_title.setProperty("section", True)
+        self.learning_module_combo = QComboBox()
+        for label, namespace in NAMESPACE_LABELS.items():
+            if namespace != "shared":
+                self.learning_module_combo.addItem(label, namespace)
+        self.learning_module_combo.currentIndexChanged.connect(self.refresh_learning)
+        learning_header.addWidget(learning_title)
+        learning_header.addStretch()
+        learning_header.addWidget(self.learning_module_combo)
+        self.learning_list = QListWidget()
+        self.learning_list.setAccessibleName("知识自学习证据")
+        self.revoke_evidence_button = QPushButton("撤销选中任务证据")
+        self.reset_scenario_button = QPushButton("重置选中学习场景")
+        self.reset_module_button = QPushButton("重置当前模块全部偏好")
+        for button in (
+            self.revoke_evidence_button,
+            self.reset_scenario_button,
+            self.reset_module_button,
+        ):
+            button.setProperty("secondary", True)
+        self.revoke_evidence_button.clicked.connect(self._revoke_selected_evidence)
+        self.reset_scenario_button.clicked.connect(self._reset_selected_scenario)
+        self.reset_module_button.clicked.connect(self._reset_learning_module)
+        learning_actions = QHBoxLayout()
+        learning_actions.addWidget(self.revoke_evidence_button)
+        learning_actions.addWidget(self.reset_scenario_button)
+        learning_actions.addWidget(self.reset_module_button)
+        learning_layout.addLayout(learning_header)
+        learning_layout.addWidget(
+            QLabel("权重只调整确认页建议值，不会修改已批准规则、公式或阈值。")
+        )
+        learning_layout.addWidget(self.learning_list)
+        learning_layout.addLayout(learning_actions)
+        layout.addWidget(learning_card)
         self.refresh_records()
+        self.refresh_learning()
 
     def lookup(self, namespace: str, query: str) -> list[KnowledgeRecord]:
         if namespace not in self.namespaces:
@@ -237,6 +282,78 @@ class KnowledgePage(QWidget):
             self.refresh_records()
         except Exception as error:
             self.action_failed.emit(f"知识状态更新失败：{error}")
+
+    def refresh_learning(self) -> None:
+        self.learning_list.clear()
+        enabled = self.learning_repository is not None
+        for button in (
+            self.revoke_evidence_button,
+            self.reset_scenario_button,
+            self.reset_module_button,
+        ):
+            button.setEnabled(enabled)
+        if not enabled:
+            self.learning_list.addItem("自学习仓储不可用")
+            return
+        module_id = str(self.learning_module_combo.currentData())
+        for record in self.learning_repository.list_module(module_id):
+            state = "有效" if record["active"] else "已撤销"
+            item = QListWidgetItem(
+                f"{record['learning_key']} · {record['candidate_label']} "
+                f"(+{record['weight']}) · {record['year']}年{int(record['month']):02d}月 · {state}"
+            )
+            item.setData(256, record["evidence_id"])
+            item.setData(257, record["learning_key"])
+            item.setData(258, bool(record["active"]))
+            item.setToolTip(
+                f"来源任务：{record['job_id']}\n上下文："
+                + json.dumps(record["context"], ensure_ascii=False, sort_keys=True)
+            )
+            self.learning_list.addItem(item)
+
+    def _revoke_selected_evidence(self) -> None:
+        current = self.learning_list.currentItem()
+        if current is None or not current.data(258) or self.learning_repository is None:
+            return
+        if not self._confirm_learning_action("撤销这条任务证据？"):
+            return
+        self.learning_repository.revoke_evidence(
+            str(current.data(256)), "user revoked evidence"
+        )
+        self.refresh_learning()
+
+    def _reset_selected_scenario(self) -> None:
+        current = self.learning_list.currentItem()
+        if current is None or self.learning_repository is None:
+            return
+        if not self._confirm_learning_action("重置当前学习场景的全部偏好证据？"):
+            return
+        self.learning_repository.reset_scenario(
+            str(self.learning_module_combo.currentData()),
+            str(current.data(257)),
+            "user reset scenario",
+        )
+        self.refresh_learning()
+
+    def _reset_learning_module(self) -> None:
+        if self.learning_repository is None or not self._confirm_learning_action(
+            "重置当前模块全部自学习偏好？"
+        ):
+            return
+        self.learning_repository.reset_module(
+            str(self.learning_module_combo.currentData()), "user reset module"
+        )
+        self.refresh_learning()
+
+    def _confirm_learning_action(self, question: str) -> bool:
+        return (
+            QMessageBox.question(
+                self,
+                "确认知识偏好操作",
+                question + "\n该操作不会修改已批准规则。",
+            )
+            == QMessageBox.StandardButton.Yes
+        )
 
     @staticmethod
     def _extract_content(source: Path) -> str:

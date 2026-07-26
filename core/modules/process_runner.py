@@ -1,7 +1,9 @@
+import json
 import sys
 from collections.abc import Callable
 from pathlib import Path
 
+from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal
 
@@ -30,6 +32,15 @@ def resolve_contained_file(path: Path, root: Path, label: str) -> Path:
     if not resolved_path.is_file():
         raise ValueError(f"{label} is not a file")
     return resolved_path
+
+
+def _requires_monthly_snapshot(job: JobRequest, has_monthly_contract: bool) -> bool:
+    return (
+        job.phase.value == "finalize"
+        and has_monthly_contract
+        and job.period_year is not None
+        and job.period_month is not None
+    )
 
 
 class ModuleProcessRunner(QObject):
@@ -253,6 +264,54 @@ class ModuleProcessRunner(QObject):
 
         for output in result.outputs:
             resolve_contained_file(Path(output.path), output_dir, "output artifact")
+
+        monthly_contract = self._module.manifest.monthly_rollup
+        has_learning = any(prompt.learning is not None for prompt in result.confirmations)
+        if has_learning and (
+            monthly_contract is None or monthly_contract.learning_schema is None
+        ):
+            raise ValueError("module learning descriptions require a declared learning schema")
+        if monthly_contract and monthly_contract.learning_schema is not None:
+            learning_schema_path = resolve_contained_file(
+                self._module.path / monthly_contract.learning_schema,
+                self._module.path,
+                "monthly learning schema",
+            )
+            learning_validator = Draft202012Validator(
+                json.loads(learning_schema_path.read_text(encoding="utf-8"))
+            )
+            for prompt in result.confirmations:
+                if prompt.learning is not None:
+                    learning_validator.validate(prompt.learning.model_dump(mode="json"))
+
+        snapshot = result.monthly_snapshot
+        monthly_finalize = _requires_monthly_snapshot(
+            self._job, monthly_contract is not None
+        )
+        if monthly_finalize and snapshot is None:
+            raise ValueError("monthly_rollup module finalize result is missing a snapshot")
+        if snapshot is not None:
+            if self._job.phase.value != "finalize" or monthly_contract is None:
+                raise ValueError("monthly snapshot is only valid for a monthly finalize")
+            if self._job.period_year is None or self._job.period_month is None:
+                raise ValueError("monthly snapshot requires a job period")
+            if (
+                snapshot.year != self._job.period_year
+                or snapshot.month != self._job.period_month
+            ):
+                raise ValueError("monthly snapshot period does not match the job")
+            snapshot_path = resolve_contained_file(
+                Path(snapshot.path), output_dir, "monthly snapshot"
+            )
+            schema_path = resolve_contained_file(
+                self._module.path / monthly_contract.snapshot_schema,
+                self._module.path,
+                "monthly snapshot schema",
+            )
+            raw_snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            Draft202012Validator(
+                json.loads(schema_path.read_text(encoding="utf-8"))
+            ).validate(raw_snapshot)
 
         input_files = {_resolve_path(Path(path)) for path in self._job.input_files}
         for file_result in result.file_results:

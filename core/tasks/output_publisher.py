@@ -2,7 +2,9 @@
 
 import re
 import shutil
+from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from core.contracts.enums import ModuleId
 from core.contracts.result import ModuleResult, OutputArtifact
@@ -11,6 +13,7 @@ from core.platform.path_safety import (
     resolve_contained_file,
     resolve_path,
 )
+from core.tasks.output_manifest import OutputManifestMetadata, write_output_manifest
 
 _MODULE_NAMES = {
     ModuleId.MOISTURE: "竹丝水分",
@@ -23,10 +26,13 @@ _UNSAFE_NAME = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 def publish_outputs(
     result: ModuleResult,
     *,
-    task_number: int,
+    task_number: int | None = None,
+    task_name: str | None = None,
     task_dir: Path,
     task_output_dir: Path,
     configured_root: str,
+    manifest_metadata: OutputManifestMetadata | None = None,
+    folder_timestamp: datetime | None = None,
 ) -> ModuleResult:
     """Copy a task's generated files and return a host-facing result copy.
 
@@ -54,26 +60,49 @@ def publish_outputs(
     if root.is_relative_to(source):
         raise ValueError("输出目录不能位于任务内部输出目录中")
 
-    timestamp = result.finished_at.astimezone().strftime("%Y%m%d-%H%M%S")
+    timestamp = (folder_timestamp or result.finished_at).astimezone().strftime(
+        "%Y%m%d-%H%M%S"
+    )
     module_name = _UNSAFE_NAME.sub("_", _MODULE_NAMES[result.module_id]).strip(" .")
-    base_name = f"{task_number:06d}-{module_name}-{timestamp}"
+    safe_task_name = _UNSAFE_NAME.sub("_", task_name or module_name).strip(" .")
+    if not safe_task_name:
+        safe_task_name = module_name
+    safe_task_name = safe_task_name[:96].rstrip(" .")
+    base_name = f"{safe_task_name}-{timestamp}"
+    # Compatibility for callers that have not yet adopted v1.3 task names.
+    if task_name is None and task_number is not None:
+        base_name = f"{task_number:06d}-{module_name}-{timestamp}"
     destination = _unique_destination(root, base_name)
-    destination.mkdir(parents=False, exist_ok=False)
+    staging = root / f".bamboo-publish-{uuid4().hex}"
+    staging.mkdir(parents=False, exist_ok=False)
 
     try:
-        _copy_tree_without_links(source, destination)
+        _copy_declared_outputs(result.outputs, source, staging)
+        if task_name is None:
+            legacy_result = source / "result.json"
+            if legacy_result.is_file() and not _is_link(legacy_result):
+                shutil.copy2(legacy_result, staging / "result.json")
         published: list[OutputArtifact] = []
         for artifact in result.outputs:
             source_file = resolve_contained_file(
                 Path(artifact.path), source, "output artifact", reject_link=True
             )
             relative = source_file.relative_to(source)
-            published_file = destination / relative
+            published_file = staging / relative
             if not published_file.is_file():
                 raise OSError(f"输出文件复制不完整：{relative.name}")
             published.append(artifact.model_copy(update={"path": str(published_file)}))
+        if manifest_metadata is not None:
+            write_output_manifest(staging, manifest_metadata, published)
+        staging.rename(destination)
+        published = [
+            artifact.model_copy(
+                update={"path": str(destination / Path(artifact.path).relative_to(staging))}
+            )
+            for artifact in published
+        ]
     except Exception:
-        shutil.rmtree(destination, ignore_errors=True)
+        shutil.rmtree(staging, ignore_errors=True)
         raise
     return result.model_copy(update={"outputs": published})
 
@@ -87,19 +116,17 @@ def _unique_destination(root: Path, base_name: str) -> Path:
     return candidate
 
 
-def _copy_tree_without_links(source: Path, destination: Path) -> None:
-    for item in source.rglob("*"):
-        if _is_link(item):
-            raise ValueError("输出目录包含不允许发布的链接文件")
+def _copy_declared_outputs(
+    artifacts: list[OutputArtifact], source: Path, destination: Path
+) -> None:
+    for artifact in artifacts:
+        item = resolve_contained_file(
+            Path(artifact.path), source, "output artifact", reject_link=True
+        )
         relative = item.relative_to(source)
         target = destination / relative
-        if item.is_dir():
-            target.mkdir(parents=True, exist_ok=True)
-        elif item.is_file():
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(item, target)
-        else:
-            raise ValueError("输出目录包含不支持的文件类型")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(item, target)
 
 
 def _is_link(path: Path) -> bool:

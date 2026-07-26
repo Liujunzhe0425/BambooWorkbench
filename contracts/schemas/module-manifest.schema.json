@@ -1,5 +1,29 @@
 {
   "$defs": {
+    "FrameworkAIRequirement": {
+      "additionalProperties": false,
+      "description": "Framework-hosted AI policy; it never grants network access to the module process.",
+      "properties": {
+        "required": {
+          "default": true,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "service_before_confirmation": {
+          "default": true,
+          "title": "Service Before Confirmation",
+          "type": "boolean"
+        },
+        "setup_page": {
+          "const": "module",
+          "default": "module",
+          "title": "Setup Page",
+          "type": "string"
+        }
+      },
+      "title": "FrameworkAIRequirement",
+      "type": "object"
+    },
     "ModuleId": {
       "enum": [
         "moisture",
@@ -8,6 +32,92 @@
       ],
       "title": "ModuleId",
       "type": "string"
+    },
+    "ModuleManagementContract": {
+      "additionalProperties": false,
+      "properties": {
+        "request_schema": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Request Schema",
+          "type": "string"
+        },
+        "response_schema": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Response Schema",
+          "type": "string"
+        },
+        "schema_version": {
+          "pattern": "^1\\.\\d+$",
+          "title": "Schema Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "request_schema",
+        "response_schema"
+      ],
+      "title": "ModuleManagementContract",
+      "type": "object"
+    },
+    "MonthlyRollupContract": {
+      "additionalProperties": false,
+      "properties": {
+        "entrypoint": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Entrypoint",
+          "type": "string"
+        },
+        "learning_schema": {
+          "anyOf": [
+            {
+              "maxLength": 240,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Learning Schema"
+        },
+        "request_schema": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Request Schema",
+          "type": "string"
+        },
+        "response_schema": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Response Schema",
+          "type": "string"
+        },
+        "schema_version": {
+          "pattern": "^1\\.0$",
+          "title": "Schema Version",
+          "type": "string"
+        },
+        "snapshot_schema": {
+          "maxLength": 240,
+          "minLength": 1,
+          "title": "Snapshot Schema",
+          "type": "string"
+        }
+      },
+      "required": [
+        "schema_version",
+        "entrypoint",
+        "snapshot_schema",
+        "request_schema",
+        "response_schema"
+      ],
+      "title": "MonthlyRollupContract",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -24,6 +134,28 @@
       "minLength": 1,
       "title": "Entrypoint",
       "type": "string"
+    },
+    "framework_ai": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FrameworkAIRequirement"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "management_contract": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ModuleManagementContract"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "management_entrypoint": {
       "anyOf": [
@@ -51,6 +183,17 @@
       "pattern": "^\\d+\\.\\d+\\.\\d+$",
       "title": "Module Version",
       "type": "string"
+    },
+    "monthly_rollup": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/MonthlyRollupContract"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "requires_network": {
       "title": "Requires Network",

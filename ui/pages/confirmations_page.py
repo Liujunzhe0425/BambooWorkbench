@@ -120,6 +120,7 @@ class ConfirmationComboBox(QComboBox):
 class ConfirmationsPage(QWidget):
     submitted = Signal(str, list)
     job_selected = Signal(str)
+    draft_changed = Signal(str, list, bool)
 
     def __init__(self, task_number_resolver: Callable[[str], int] | None = None) -> None:
         super().__init__()
@@ -129,6 +130,8 @@ class ConfirmationsPage(QWidget):
         self._task_numbers: dict[str, int] = {}
         self._task_number_resolver = task_number_resolver
         self._submitting_jobs: set[str] = set()
+        self._drafts: dict[str, tuple[list[ConfirmationAnswer], bool]] = {}
+        self._rendering = False
         self.prompts: list[ConfirmationPrompt] = []
         self.answer_inputs: dict[str, QLineEdit | QComboBox] = {}
         self.batch_checks: dict[str, QCheckBox] = {}
@@ -162,6 +165,13 @@ class ConfirmationsPage(QWidget):
         self.submit_button.setAccessibleName("提交确认答案")
         self.submit_button.setEnabled(False)
         self.submit_button.clicked.connect(self._submit)
+        self.learning_checkbox = QCheckBox("将本次最终选择用于知识库更新")
+        self.learning_checkbox.setChecked(True)
+        self.learning_checkbox.setAccessibleName("本次任务参与知识自学习")
+        self.learning_checkbox.setToolTip(
+            "仅在任务成功成为正式月度结果后生效；不会修改批准规则、公式或阈值。"
+        )
+        self.learning_checkbox.toggled.connect(self._draft_edited)
         self.card = QFrame()
         self.card.setProperty("card", True)
         card_layout = QVBoxLayout(self.card)
@@ -170,6 +180,7 @@ class ConfirmationsPage(QWidget):
         card_layout.addWidget(self.status_label)
         card_layout.addWidget(self.job_selector)
         card_layout.addWidget(self.form_host)
+        card_layout.addWidget(self.learning_checkbox)
         card_layout.addWidget(self.submit_button, 0)
         self.scroll_content = QWidget()
         self.scroll_content.setObjectName("confirmationScrollContent")
@@ -189,9 +200,19 @@ class ConfirmationsPage(QWidget):
         layout.addWidget(subtitle)
         layout.addWidget(self.scroll_area, 1)
 
-    def load(self, job_id: str, prompts: list[ConfirmationPrompt]) -> None:
+    def load(
+        self,
+        job_id: str,
+        prompts: list[ConfirmationPrompt],
+        draft: dict[str, object] | None = None,
+    ) -> None:
         is_new = job_id not in self._models
         self._models[job_id] = list(prompts)
+        if draft is not None:
+            self._drafts[job_id] = (
+                list(draft.get("answers", [])),
+                bool(draft.get("learning_enabled", True)),
+            )
         if is_new:
             if self._task_number_resolver is not None:
                 try:
@@ -251,6 +272,7 @@ class ConfirmationsPage(QWidget):
             self.submit_button.setEnabled(True)
 
     def _render(self, job_id: str) -> None:
+        self._rendering = True
         self._clear_form()
         self.current_job_id = job_id
         prompts = self._models[job_id]
@@ -270,12 +292,32 @@ class ConfirmationsPage(QWidget):
                 file_group_position,
                 file_group_total,
             )
+        draft_answers, learning_enabled = self._drafts.get(job_id, ([], True))
+        by_id = {answer.confirmation_id: answer for answer in draft_answers}
+        for confirmation_id, answer in by_id.items():
+            editor = self.answer_inputs.get(confirmation_id)
+            if editor is None:
+                continue
+            if isinstance(editor, QComboBox):
+                index = editor.findText(str(answer.value))
+                if index >= 0:
+                    editor.setCurrentIndex(index)
+            else:
+                editor.setText(str(answer.value))
+            batch = self.batch_checks.get(confirmation_id)
+            if batch is not None:
+                batch.setChecked(answer.apply_to_batch)
+            remember = self.remember_checks.get(confirmation_id)
+            if remember is not None:
+                remember.setChecked(answer.remember_mapping)
+        self.learning_checkbox.setChecked(learning_enabled)
         self.form_layout.addStretch()
         self.form_host.setMinimumHeight(self.form_layout.sizeHint().height())
         self.scroll_content.setMinimumHeight(self.card.sizeHint().height())
         self.submit_button.setEnabled(
             bool(job_id) and bool(prompts) and job_id not in self._submitting_jobs
         )
+        self._rendering = False
 
     def _selector_changed(self, index: int) -> None:
         if index < 0:
@@ -412,6 +454,10 @@ class ConfirmationsPage(QWidget):
         answer.setAccessibleName(f"{prompt.field}的确认答案")
         answer.setAccessibleDescription(prompt.reason)
         self.answer_inputs[prompt.confirmation_id] = answer
+        if isinstance(answer, QComboBox):
+            answer.currentIndexChanged.connect(self._draft_edited)
+        else:
+            answer.textChanged.connect(self._draft_edited)
         editor_layout.addWidget(answer)
 
         reason_text, preview_text = self._split_preview(prompt.reason)
@@ -457,6 +503,7 @@ class ConfirmationsPage(QWidget):
             batch.setAccessibleDescription(_BATCH_HELP)
             batch.setToolTip(_BATCH_HELP)
             self.batch_checks[prompt.confirmation_id] = batch
+            batch.toggled.connect(self._draft_edited)
             help_label = InstantHelpBadge(_BATCH_HELP, "应用到本批次说明")
             self.batch_help_labels[prompt.confirmation_id] = help_label
             batch_row = QWidget()
@@ -472,6 +519,7 @@ class ConfirmationsPage(QWidget):
             remember.setAccessibleName(f"记住{prompt.field}映射")
             remember.setAccessibleDescription(_REMEMBER_HELP)
             self.remember_checks[prompt.confirmation_id] = remember
+            remember.toggled.connect(self._draft_edited)
             help_label = InstantHelpBadge(_REMEMBER_HELP, "记住该映射说明")
             self.remember_help_labels[prompt.confirmation_id] = help_label
             remember_row = QWidget()
@@ -541,6 +589,20 @@ class ConfirmationsPage(QWidget):
         return editor.text()
 
     def _submit(self) -> None:
+        answers = self._current_answers()
+        if self.current_job_id:
+            self.draft_changed.emit(
+                self.current_job_id, answers, self.learning_checkbox.isChecked()
+            )
+        if self.current_job_id and answers:
+            job_id = self.current_job_id
+            if job_id in self._submitting_jobs:
+                return
+            self._submitting_jobs.add(job_id)
+            self.submit_button.setEnabled(False)
+            self.submitted.emit(job_id, answers)
+
+    def _current_answers(self) -> list[ConfirmationAnswer]:
         answers: list[ConfirmationAnswer] = []
         for prompt in self.prompts:
             batch = self.batch_checks.get(prompt.confirmation_id)
@@ -553,10 +615,12 @@ class ConfirmationsPage(QWidget):
                     remember_mapping=(remember.isChecked() if remember is not None else False),
                 )
             )
-        if self.current_job_id and answers:
-            job_id = self.current_job_id
-            if job_id in self._submitting_jobs:
-                return
-            self._submitting_jobs.add(job_id)
-            self.submit_button.setEnabled(False)
-            self.submitted.emit(job_id, answers)
+        return answers
+
+    def _draft_edited(self) -> None:
+        if self._rendering or not self.current_job_id:
+            return
+        answers = self._current_answers()
+        enabled = self.learning_checkbox.isChecked()
+        self._drafts[self.current_job_id] = (answers, enabled)
+        self.draft_changed.emit(self.current_job_id, answers, enabled)

@@ -128,3 +128,34 @@ def test_host_accepts_contained_management_command(tmp_path: Path) -> None:
     assert environment["BAMBOO_HOST_ARG_0"] == "manage"
     assert environment["BAMBOO_HOST_ARG_2"] == str(request)
     assert environment["BAMBOO_HOST_ARG_4"] == str(response)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows Job Object")
+def test_host_accepts_contained_monthly_rollup_command(tmp_path: Path) -> None:
+    launcher = tmp_path / "run_module.cmd"
+    launcher.write_text("@echo off\r\nexit /b 0\r\n", encoding="utf-8")
+    request = tmp_path / "rollup-request.json"
+    response = tmp_path / "rollup-response.json"
+    request.write_text("{}", encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    class HostExited(Exception):
+        pass
+
+    def child_runner(command: str, **kwargs):
+        captured.update(kwargs)
+        return subprocess.CompletedProcess(command, 0)
+
+    with pytest.raises(HostExited):
+        run_host(
+            launcher,
+            ["rollup", "--request", str(request), "--response", str(response)],
+            job_factory=lambda: object(),
+            child_runner=child_runner,
+            host_exit=lambda _code: (_ for _ in ()).throw(HostExited),
+        )
+
+    environment = captured["env"]
+    assert environment["BAMBOO_HOST_ARG_0"] == "rollup"
+    assert environment["BAMBOO_HOST_ARG_2"] == str(request)
+    assert environment["BAMBOO_HOST_ARG_4"] == str(response)

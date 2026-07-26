@@ -44,6 +44,7 @@ class HistoryPage(QWidget):
         "failed": "失败",
         "cancelled": "已取消",
         "running": "处理中",
+        "replacement_candidate": "替换候选（可重试）",
     }
 
     def __init__(

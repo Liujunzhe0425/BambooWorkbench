@@ -16,10 +16,12 @@ from core.ai.providers import (
     UnavailableProvider,
 )
 from core.confirmations.service import ConfirmationService
+from core.knowledge.learning import LearningEvidenceRepository
 from core.knowledge.models import KnowledgeRecord, KnowledgeSourceKind
 from core.knowledge.repository import KnowledgeRepository
 from core.modules.management_service import ModuleManagementService
 from core.modules.registry import ModuleRegistry, RegisteredModule
+from core.platform.installation import complete_fresh_installation, prepare_installation
 from core.platform.logging import close_logging, configure_logging
 from core.platform.paths import AppPaths
 from core.security.credentials import CredentialStore, KeyringCredentialStore
@@ -27,9 +29,14 @@ from core.security.redaction import RedactionService
 from core.services.orchestrator import ServiceOrchestrator
 from core.storage.database import Database
 from core.storage.repositories.confirmations import ConfirmationRepository
+from core.storage.repositories.credential_state import CredentialStateRepository
 from core.storage.repositories.modules import ModuleRepository
+from core.storage.repositories.monthly import MonthlyRepository
+from core.storage.repositories.output_roots import OutputRootRepository
 from core.storage.repositories.tasks import TaskRepository
 from core.storage.settings import SettingsStore
+from core.tasks.monthly_service import MonthlyRollupService
+from core.tasks.output_recovery import OutputRecoveryService
 from core.tasks.service import TaskService
 from ui.styles.theme import load_stylesheet
 
@@ -45,6 +52,10 @@ class AppContext:
     confirmation_repository: ConfirmationRepository
     consent_audit_repository: ConsentAuditRepository
     knowledge_repository: KnowledgeRepository
+    learning_repository: LearningEvidenceRepository
+    monthly_repository: MonthlyRepository
+    output_root_repository: OutputRootRepository
+    credential_state_repository: CredentialStateRepository
     credential_store: CredentialStore
     ai_gateway: AIGateway
     service_orchestrator: ServiceOrchestrator
@@ -96,19 +107,55 @@ def resolve_real_modules_root(resource_root: Path, paths: AppPaths) -> Path:
 def build_context(data_root: Path | None = None, use_mocks: bool = False) -> AppContext:
     resource_root = resolve_resource_root()
     paths = AppPaths.for_root(data_root)
+    installation = prepare_installation(paths)
     logger = configure_logging(paths)
     logger.info("application startup data_root=%s", paths.root)
     database = Database.open(paths)
     try:
         database.migrate()
         settings = SettingsStore(database)
+        credential_store = KeyringCredentialStore()
+        # Explicit roots are development/test sandboxes.  Only a normal frozen
+        # startup is allowed to clear machine credentials for a new install.
+        complete_fresh_installation(
+            paths,
+            installation,
+            settings,
+            credential_store,
+            clear_credentials=data_root is None,
+        )
         module_repository = ModuleRepository(database)
         task_repository = TaskRepository(database)
         confirmation_repository = ConfirmationRepository(database)
         consent_audit_repository = ConsentAuditRepository(database)
         knowledge_repository = KnowledgeRepository(database)
+        learning_repository = LearningEvidenceRepository(database)
+        monthly_repository = MonthlyRepository(database)
+        output_root_repository = OutputRootRepository(database, paths)
+        if not output_root_repository.list_all():
+            output_root_repository.restore_from_registry()
+        configured_output = settings.get("output_dir", "") or ""
+        if configured_output:
+            output_root_repository.set_current(
+                Path(configured_output),
+                is_default=Path(configured_output).resolve() == paths.output,
+            )
+        elif not output_root_repository.list_all():
+            output_root_repository.initialize_default()
+        else:
+            settings.set(
+                "output_dir", str(output_root_repository.current()["path"])
+            )
+        output_recovery_service = OutputRecoveryService(
+            paths,
+            task_repository,
+            monthly_repository,
+            output_root_repository,
+        )
+        recovery_summary = output_recovery_service.scan()
+        logger.info("output manifest scan completed summary=%s", recovery_summary)
+        credential_state_repository = CredentialStateRepository(database)
         _seed_framework_knowledge(knowledge_repository)
-        credential_store = KeyringCredentialStore()
         ai_provider, provider_id, model = _configured_ai_provider(
             settings,
             credential_store,
@@ -134,6 +181,15 @@ def build_context(data_root: Path | None = None, use_mocks: bool = False) -> App
         scan_results = registry.scan()
         logger.info("module scan completed count=%d", len(scan_results))
         module_management_service = ModuleManagementService(paths, registry)
+        monthly_rollup_service = MonthlyRollupService(
+            paths,
+            registry,
+            task_repository,
+            confirmation_repository,
+            monthly_repository,
+            learning_repository,
+            output_root_repository,
+        )
         task_service = TaskService(
             paths,
             registry,
@@ -142,6 +198,7 @@ def build_context(data_root: Path | None = None, use_mocks: bool = False) -> App
             service_orchestrator=service_orchestrator,
             settings=settings,
             module_management_service=module_management_service,
+            monthly_rollup_service=monthly_rollup_service,
         )
         confirmation_service = ConfirmationService(
             paths,
@@ -158,6 +215,10 @@ def build_context(data_root: Path | None = None, use_mocks: bool = False) -> App
             confirmation_repository=confirmation_repository,
             consent_audit_repository=consent_audit_repository,
             knowledge_repository=knowledge_repository,
+            learning_repository=learning_repository,
+            monthly_repository=monthly_repository,
+            output_root_repository=output_root_repository,
+            credential_state_repository=credential_state_repository,
             credential_store=credential_store,
             ai_gateway=ai_gateway,
             service_orchestrator=service_orchestrator,
@@ -224,12 +285,6 @@ def _configured_ai_provider(
     model = settings.get("ai_model", "mock-model") or "mock-model"
     if provider_id == "mock":
         return MockProvider(), provider_id, model
-    if settings.get("ai_network_enabled", "false") != "true":
-        return (
-            UnavailableProvider(provider_id, "AI 联网尚未启用，请在系统设置中开启。"),
-            provider_id,
-            model,
-        )
     try:
         api_key = credential_store.get_secret(provider_id)
     except Exception as error:
