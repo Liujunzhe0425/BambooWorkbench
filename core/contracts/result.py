@@ -1,6 +1,7 @@
 import re
 from datetime import datetime
 from pathlib import PureWindowsPath
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -104,6 +105,7 @@ class ConfirmationPrompt(BaseModel):
     reason: str
     suggested_value: object | None = None
     options: list[object] = Field(default_factory=list)
+    value_type: Literal["text", "date"] = "text"
     confidence: float = Field(ge=0, le=1)
     blocking: bool
     batch_applicable: bool
@@ -166,6 +168,7 @@ class ModuleResult(BaseModel):
     file_results: list[FileResult] = Field(default_factory=list)
     service_requests: list[ServiceRequest] = Field(default_factory=list)
     analysis_summary: str | None = None
+    warnings: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
     started_at: datetime
     finished_at: datetime

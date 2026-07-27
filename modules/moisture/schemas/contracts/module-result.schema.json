@@ -127,6 +127,15 @@
           ],
           "default": null,
           "title": "Suggested Value"
+        },
+        "value_type": {
+          "default": "text",
+          "enum": [
+            "text",
+            "date"
+          ],
+          "title": "Value Type",
+          "type": "string"
         }
       },
       "required": [
@@ -659,6 +668,13 @@
     },
     "summary": {
       "$ref": "#/$defs/ResultSummary"
+    },
+    "warnings": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Warnings",
+      "type": "array"
     }
   },
   "required": [

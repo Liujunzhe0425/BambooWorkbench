@@ -16,9 +16,6 @@ from core.updates.models import ReleaseUpdate
 from core.updates.service import GitHubReleaseUpdateService, UpdateError
 
 _LOG = logging.getLogger("bamboo_workbench")
-_UPDATE_CREDENTIAL_ID = "github-updates"
-
-
 class UpdateController(QObject):
     status_changed = Signal(str)
     _available = Signal(object)
@@ -40,7 +37,6 @@ class UpdateController(QObject):
         self._threads: set[threading.Thread] = set()
         self._busy = False
         self._manual = False
-        self._token: str | None = None
         self._available.connect(self._update_available)
         self._current.connect(self._already_current)
         self._check_error.connect(self._check_failed)
@@ -71,7 +67,6 @@ class UpdateController(QObject):
             return
         self._busy = True
         self._manual = manual
-        self._token = self._update_token()
         self.status_changed.emit("正在检查更新…")
         self._start_thread(self._check_in_background)
 
@@ -90,7 +85,7 @@ class UpdateController(QObject):
 
     def _check_in_background(self) -> None:
         try:
-            release = self.service.check(__version__, token=self._token)
+            release = self.service.check(__version__)
         except (UpdateError, ValueError) as error:
             self._check_error.emit(str(error))
         else:
@@ -132,7 +127,6 @@ class UpdateController(QObject):
             installer = self.service.download(
                 release,
                 destination,
-                token=self._token,
             )
         except UpdateError as error:
             self._download_error.emit(str(error))
@@ -176,16 +170,6 @@ class UpdateController(QObject):
         self.status_changed.emit("更新下载或安装失败")
         _LOG.warning("update download failed: %s", message)
         self._show_warning("更新失败", message)
-
-    def _update_token(self) -> str | None:
-        environment_token = os.environ.get("BAMBOO_UPDATE_TOKEN", "").strip()
-        if environment_token:
-            return environment_token
-        try:
-            return self.context.credential_store.get_secret(_UPDATE_CREDENTIAL_ID)
-        except Exception as error:
-            _LOG.warning("update credential lookup failed: %s", type(error).__name__)
-            return None
 
     def _show_information(self, title: str, message: str) -> None:
         QMessageBox.information(self.parent_window, title, message)

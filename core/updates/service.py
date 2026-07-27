@@ -12,7 +12,8 @@ import httpx
 from .models import ReleaseUpdate, semantic_version
 
 DEFAULT_RELEASE_API = (
-    "https://api.github.com/repos/Liujunzhe0425/BambooWorkbench/releases/latest"
+    "https://api.github.com/repos/Liujunzhe0425/"
+    "BambooWorkbench-Distribution/releases/latest"
 )
 _INSTALLER = re.compile(r"^BambooWorkbench-Setup-(\d+\.\d+\.\d+)\.exe$")
 _DIGEST = re.compile(r"^sha256:([0-9a-f]{64})$")
@@ -47,9 +48,7 @@ class GitHubReleaseUpdateService:
             with self._client(token) as client:
                 response = client.get(self.release_api)
                 if response.status_code == 404:
-                    raise UpdateError(
-                        "无法访问更新源。团队测试私有仓库时需配置只读更新令牌。"
-                    )
+                    raise UpdateError("公开更新源暂不可用，请稍后重试")
                 response.raise_for_status()
                 payload = response.json()
         except UpdateError:
@@ -104,7 +103,8 @@ class GitHubReleaseUpdateService:
             notes_url=(
                 _validated_https_url(html_url, {"github.com"})
                 if isinstance(html_url, str)
-                else "https://github.com/Liujunzhe0425/BambooWorkbench/releases"
+                else "https://github.com/Liujunzhe0425/"
+                "BambooWorkbench-Distribution/releases"
             ),
             asset_name=name,
             asset_url=_validated_https_url(url, _DOWNLOAD_HOSTS),

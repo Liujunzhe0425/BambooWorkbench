@@ -128,6 +128,42 @@ def test_confirmation_submit_rejects_incomplete_or_untrusted_answer_ids(
     assert all(record["answer"] is None for record in repository.list_for_job(job_id))
 
 
+@pytest.mark.parametrize("value", ["", "4月10日", "2026-02-30", "2026-4-10"])
+def test_confirmation_service_rejects_invalid_required_dates(
+    qtbot,
+    app_services: dict[str, object],
+    tmp_path: Path,
+    value: str,
+) -> None:
+    _, job_id = _start_waiting_job(qtbot, app_services, tmp_path)
+    repository = app_services["confirmation_repository"]
+    assert isinstance(repository, ConfirmationRepository)
+    repository.save_prompts(
+        job_id,
+        [
+            ConfirmationPrompt(
+                confirmation_id="mock-confirm-1",
+                field="complaint_date",
+                reason="必须明确填写完整日期。",
+                suggested_value=None,
+                options=[],
+                value_type="date",
+                confidence=1.0,
+                blocking=True,
+                batch_applicable=False,
+                rememberable=False,
+                source=SourceRef(source_file="售后记录.xlsx"),
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="blocking confirmation is empty|YYYY-MM-DD"):
+        _confirmation_service(app_services).submit(
+            job_id,
+            [ConfirmationAnswer(confirmation_id="mock-confirm-1", value=value)],
+        )
+
+
 def test_confirmation_file_is_atomically_replaced_before_answers_are_saved(
     qtbot,
     app_services: dict[str, object],

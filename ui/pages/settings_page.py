@@ -189,7 +189,8 @@ class SettingsPage(QWidget):
         update_title = QLabel("软件更新")
         update_title.setProperty("section", True)
         update_hint = QLabel(
-            "安装版启动后可自动检查 GitHub Release；只有确认更新时才下载。"
+            "安装版启动后可匿名检查公开二进制 Release；无需 GitHub 令牌。"
+            "只有确认更新时才下载。"
             "检查失败不会影响离线数据处理。"
         )
         update_hint.setWordWrap(True)
@@ -203,20 +204,18 @@ class SettingsPage(QWidget):
         update_form.setHorizontalSpacing(24)
         update_form.setVerticalSpacing(13)
         self.update_token_edit = QLineEdit()
-        self.update_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
-        self.update_token_edit.setPlaceholderText("仅私有仓库团队测试需要")
-        self.update_token_edit.setAccessibleName("GitHub更新访问令牌")
+        self.update_token_edit.setVisible(False)
+        self.update_token_edit.setEnabled(False)
         self.update_credential_label = QLabel(self._update_credential_status())
-        self.update_credential_label.setAccessibleName("更新令牌保存状态")
-        update_form.addRow("团队测试令牌", self.update_token_edit)
-        update_form.addRow("令牌状态", self.update_credential_label)
-        self.delete_update_token_button = QPushButton("删除 GitHub 更新令牌")
+        self.update_credential_label.setAccessibleName("公开更新源访问状态")
+        update_form.addRow("更新源", self.update_credential_label)
+        self.delete_update_token_button = QPushButton("删除旧版 GitHub 更新令牌")
         self.delete_update_token_button.setProperty("secondary", True)
         self.delete_update_token_button.clicked.connect(self.delete_update_token)
-        update_form.addRow("令牌管理", self.delete_update_token_button)
+        update_form.addRow("旧版凭据", self.delete_update_token_button)
         private_hint = QLabel(
-            "当前源码仓库为私有仓库：团队成员可保存仅有 Contents: read 权限的细粒度令牌；"
-            "不要把令牌交给客户。客户自动更新需在正式发布前配置独立的公开二进制更新源。"
+            "自动更新只访问独立的公开二进制分发仓库；私有源码、客户数据和密钥不会公开。"
+            "旧版本保存过的更新令牌不再使用，可在此安全删除。"
         )
         private_hint.setWordWrap(True)
         private_hint.setProperty("caption", True)
@@ -270,9 +269,6 @@ class SettingsPage(QWidget):
                 "update_auto_check",
                 "true" if self.auto_update_checkbox.isChecked() else "false",
             )
-            update_token = self.update_token_edit.text().strip()
-            if update_token:
-                self.credential_store.set_secret("github-updates", update_token)
         except Exception as error:
             self.action_failed.emit(f"设置保存失败：{error}")
             return
@@ -315,7 +311,7 @@ class SettingsPage(QWidget):
             saved = self.credential_store.has_secret("github-updates")
         except Exception:
             saved = False
-        return "已安全保存" if saved else "未保存"
+        return "公开源无需令牌；检测到旧版令牌" if saved else "公开源无需令牌"
 
     def _has_credential(self) -> bool:
         provider_id = str(self.provider_combo.currentData())

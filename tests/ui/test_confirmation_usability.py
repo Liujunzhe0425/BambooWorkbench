@@ -134,6 +134,42 @@ def test_after_sales_protocol_fields_are_localized(qtbot) -> None:
     assert not any("_" in label for label in labels if "（可选）" in label)
 
 
+def test_required_date_confirmation_rejects_blank_and_partial_values(qtbot) -> None:
+    page = ConfirmationsPage()
+    qtbot.addWidget(page)
+    prompt = ConfirmationPrompt(
+        confirmation_id="date-required",
+        field="complaint_date",
+        reason="原始日期缺少年份，请明确填写完整日期。",
+        suggested_value=None,
+        options=[],
+        value_type="date",
+        confidence=0.8,
+        blocking=True,
+        batch_applicable=False,
+        rememberable=False,
+        source=SourceRef(source_file="售后记录.xlsx"),
+    )
+    page.load("date-task", [prompt])
+    submitted: list[object] = []
+    page.submitted.connect(lambda *args: submitted.append(args))
+    editor = page.answer_inputs[prompt.confirmation_id]
+
+    qtbot.mouseClick(page.submit_button, Qt.MouseButton.LeftButton)
+    assert submitted == []
+    assert "必填" in page.validation_label.text()
+
+    editor.setText("4月10日")
+    qtbot.mouseClick(page.submit_button, Qt.MouseButton.LeftButton)
+    assert submitted == []
+    assert "YYYY-MM-DD" in page.validation_label.text()
+
+    editor.setText("2026-04-10")
+    qtbot.mouseClick(page.submit_button, Qt.MouseButton.LeftButton)
+    assert len(submitted) == 1
+    assert submitted[0][1][0].value == "2026-04-10"
+
+
 def test_date_location_and_ai_preview_use_progressive_disclosure(qtbot) -> None:
     page = ConfirmationsPage()
     qtbot.addWidget(page)

@@ -1,3 +1,3 @@
 PRODUCT_NAME_EN = "BambooWorkbench"
 PRODUCT_NAME_ZH = "竹简工作台"
-__version__ = "1.3.1"
+__version__ = "1.3.2"
