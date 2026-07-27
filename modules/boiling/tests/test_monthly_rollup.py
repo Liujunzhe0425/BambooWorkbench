@@ -263,6 +263,112 @@ def test_finalize_writes_confirmed_monthly_snapshot_with_existing_ai(tmp_path):
     assert not re.search(r"(?i)[a-z]:[\\/]", serialized)
 
 
+def test_finalize_preserves_standalone_slash_business_placeholders(tmp_path):
+    sample = tmp_path / "slash-placeholders.xlsx"
+    make_sample(sample, month=4, batch_no="SLASH-APR")
+    workbook = openpyxl.load_workbook(sample)
+    try:
+        sheet = workbook["水煮实验"]
+        for coordinate in ("B2", "D2", "D3", "F3"):
+            sheet[coordinate] = "/"
+        workbook.save(sample)
+    finally:
+        workbook.close()
+
+    draft_output = tmp_path / "slash-draft"
+    draft = run_job(
+        make_job(
+            sample,
+            draft_output,
+            job_id="SLASH-DRAFT-001",
+            period_month=4,
+        ),
+        tmp_path / "slash-draft-job.json",
+    )
+    confirmation_file = tmp_path / "slash-confirmations.json"
+    write_json(
+        confirmation_file,
+        {
+            "schema_version": "1.0",
+            "task_id": draft["job_id"],
+            "module_id": "boiling",
+            "answers": [
+                {
+                    "confirmation_id": item["confirmation_id"],
+                    "value": (
+                        item["options"][0]
+                        if item["options"]
+                        else item["suggested_value"]
+                    ),
+                    "apply_to_batch": False,
+                    "remember_mapping": False,
+                }
+                for item in draft["confirmations"]
+            ],
+        },
+    )
+    final_output = tmp_path / "slash-final"
+    final = run_job(
+        make_job(
+            sample,
+            final_output,
+            phase="finalize",
+            job_id="SLASH-FINAL-001",
+            parent_job_id=draft["job_id"],
+            confirmation_file=str(confirmation_file),
+            period_month=4,
+        ),
+        tmp_path / "slash-final-job.json",
+    )
+
+    assert final["status"] == "success"
+    assert final["monthly_snapshot"] is not None
+    assert all(item["type"] != "monthly_snapshot" for item in final["outputs"])
+    snapshot = json.loads(
+        Path(final["monthly_snapshot"]["path"]).read_text(encoding="utf-8")
+    )
+    record = snapshot["payload"]["records"][0]
+    assert {
+        record["pressing_date"],
+        record["team_leader"],
+        record["impregnation_date"],
+        record["order_info"],
+    } == {"/"}
+
+
+@pytest.mark.parametrize(
+    "unsafe_path",
+    [
+        r"C:\customer\boiling.xlsx",
+        r"\\server\share\boiling.xlsx",
+        "/home/customer/boiling.xlsx",
+    ],
+    ids=["windows", "unc", "posix"],
+)
+def test_monthly_snapshot_rejects_true_absolute_paths(unsafe_path):
+    payload = {
+        "rule_version": "test-rule-v1",
+        "records": [{"order_info": unsafe_path}],
+        "excluded_records": [],
+        "anomalies": [],
+        "confirmation_answers": [],
+        "learning_descriptions": [],
+        "ai_review": None,
+        "knowledge_review": None,
+    }
+
+    with pytest.raises(
+        boiling_module.RollupContractError,
+        match="月度快照 payload 不得包含绝对路径",
+    ):
+        boiling_module.build_snapshot(
+            module_version="1.3.1",
+            year=2026,
+            month=4,
+            payload=payload,
+        )
+
+
 def test_snapshot_uses_final_human_density_and_expansion_values(tmp_path):
     sample = tmp_path / "conflicts.xlsx"
     make_sample(sample)
