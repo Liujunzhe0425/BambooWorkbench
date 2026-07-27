@@ -900,6 +900,18 @@ class TaskService(QObject):
                 if host_result.status in {TaskStatus.SUCCESS, TaskStatus.PARTIAL_SUCCESS}:
                     module = self.registry.get(job.module_id)
                     if (
+                        host_result.status is TaskStatus.SUCCESS
+                        and job.phase is JobPhase.FINALIZE
+                        and module.manifest.monthly_rollup is not None
+                        and job.period_year is not None
+                        and job.period_month is not None
+                        and host_result.monthly_snapshot is None
+                    ):
+                        raise RuntimeError(
+                            "monthly_rollup module successful finalize result is missing "
+                            "a snapshot"
+                        )
+                    if (
                         job.phase is JobPhase.FINALIZE
                         and module.manifest.monthly_rollup is not None
                         and host_result.monthly_snapshot is not None
@@ -911,7 +923,17 @@ class TaskService(QObject):
                         return
                     display_result = self._publish_result(job_id, job, host_result)
                     self.task_repository.replace_outputs(job_id, display_result.outputs)
-                self._persist_transition(job_id, target, result_path=result_path)
+                terminal_error = (
+                    "；".join(host_result.errors) or host_result.status.value
+                    if host_result.status in {TaskStatus.FAILED, TaskStatus.CANCELLED}
+                    else None
+                )
+                self._persist_transition(
+                    job_id,
+                    target,
+                    error=terminal_error,
+                    result_path=result_path,
+                )
                 _LOG.info("task terminal job=%s status=%s", job_id, target.value)
                 self.finished.emit(display_result)
                 task_terminal = True

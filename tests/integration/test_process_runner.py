@@ -1,5 +1,6 @@
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ from PySide6.QtCore import QObject, QProcess
 from PySide6.QtTest import QSignalSpy
 
 from core.contracts.enums import ModuleId
+from core.contracts.manifest import MonthlyRollupContract
 from core.contracts.progress import ProgressEvent
 from core.modules.process_control import ProcessCleanupResult
 from core.modules.process_runner import ModuleProcessRunner
@@ -15,28 +17,45 @@ from core.modules.registry import ModuleRegistry, RegisteredModule
 
 
 def _write_job(
-    tmp_path: Path, name: str = "normal.xlsx", job_id: str = "runner-001"
+    tmp_path: Path,
+    name: str = "normal.xlsx",
+    job_id: str = "runner-001",
+    *,
+    monthly_finalize: bool = False,
 ) -> tuple[Path, Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     input_file = tmp_path / name
     input_file.write_bytes(b"mock")
     output_dir = tmp_path / "output"
     job_path = tmp_path / "job.json"
-    job_path.write_text(
-        json.dumps(
+    payload = {
+        "schema_version": "1.0",
+        "job_id": job_id,
+        "module_id": "moisture",
+        "phase": "finalize" if monthly_finalize else "draft",
+        "run_mode": "single",
+        "input_files": [str(input_file.resolve())],
+        "output_dir": str(output_dir.resolve()),
+        "module_config_file": None,
+        "ai_enabled": False,
+        "allowed_knowledge_scopes": ["shared", "moisture"],
+    }
+    if monthly_finalize:
+        confirmation = tmp_path / "confirmation.json"
+        confirmation.write_text(
+            json.dumps({"schema_version": "1.0", "job_id": job_id, "answers": []}),
+            encoding="utf-8",
+        )
+        payload.update(
             {
-                "schema_version": "1.0",
-                "job_id": job_id,
-                "module_id": "moisture",
-                "phase": "draft",
-                "run_mode": "single",
-                "input_files": [str(input_file.resolve())],
-                "output_dir": str(output_dir.resolve()),
-                "module_config_file": None,
-                "ai_enabled": False,
-                "allowed_knowledge_scopes": ["shared", "moisture"],
+                "parent_job_id": job_id,
+                "confirmation_file": str(confirmation.resolve()),
+                "period_year": 2026,
+                "period_month": 4,
             }
-        ),
+        )
+    job_path.write_text(
+        json.dumps(payload),
         encoding="utf-8",
     )
     return job_path, output_dir
@@ -116,6 +135,9 @@ if args.mode == "missing-output":
     result["outputs"][0]["path"] = str((output_dir / "absent.txt").resolve())
 if args.mode == "foreign-source":
     result["file_results"][0]["source_file"] = str((output_dir / "foreign.xlsx").resolve())
+if args.mode == "failed-monthly":
+    result["status"] = "failed"
+    result["errors"] = ["MONTHLY_SNAPSHOT_TARGET_PERIOD_EMPTY"]
 (output_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
 if args.mode == "unterminated-progress":
     import sys
@@ -132,6 +154,26 @@ if args.mode == "delayed-result":
         encoding="utf-8",
     )
     return RegisteredModule(module.manifest, module_dir.resolve(), True, "healthy")
+
+
+def _with_monthly_contract(module: RegisteredModule) -> RegisteredModule:
+    schemas = module.path / "schemas"
+    schemas.mkdir()
+    for name in ("snapshot.json", "request.json", "response.json"):
+        (schemas / name).write_text('{"type":"object"}', encoding="utf-8")
+    manifest = module.manifest.model_copy(
+        update={
+            "capabilities": ["monthly_rollup"],
+            "monthly_rollup": MonthlyRollupContract(
+                schema_version="1.0",
+                entrypoint="run_module.bat",
+                snapshot_schema="schemas/snapshot.json",
+                request_schema="schemas/request.json",
+                response_schema="schemas/response.json",
+            ),
+        }
+    )
+    return replace(module, manifest=manifest)
 
 
 def _terminal_spies(runner: ModuleProcessRunner) -> tuple[QSignalSpy, QSignalSpy, QSignalSpy]:
@@ -175,6 +217,40 @@ def test_runner_reports_mock_module_failures_once(
 
     assert terminals[1].count() == 1
     assert message in terminals[1].at(0)[0]
+
+
+def test_failed_monthly_finalize_preserves_module_error_without_snapshot(
+    qtbot, tmp_path: Path
+) -> None:
+    job_path, _ = _write_job(tmp_path, monthly_finalize=True)
+    module = _with_monthly_contract(_write_test_module(tmp_path, "failed-monthly"))
+    runner = ModuleProcessRunner(timeout_ms=10_000)
+    terminals = _terminal_spies(runner)
+
+    runner.start(module, job_path)
+    _wait_terminal(qtbot, terminals)
+
+    assert terminals[0].count() == 1
+    result = terminals[0].at(0)[0]
+    assert result.status.value == "failed"
+    assert result.errors == ["MONTHLY_SNAPSHOT_TARGET_PERIOD_EMPTY"]
+    assert result.monthly_snapshot is None
+
+
+def test_successful_monthly_finalize_still_requires_snapshot(
+    qtbot, tmp_path: Path
+) -> None:
+    job_path, _ = _write_job(tmp_path, monthly_finalize=True)
+    module = _with_monthly_contract(_write_test_module(tmp_path, "normal"))
+    runner = ModuleProcessRunner(timeout_ms=10_000)
+    terminals = _terminal_spies(runner)
+
+    runner.start(module, job_path)
+    _wait_terminal(qtbot, terminals)
+
+    assert terminals[1].count() == 1
+    assert "successful finalize result is missing" not in terminals[1].at(0)[0]
+    assert "finalize result is missing a snapshot" in terminals[1].at(0)[0]
 
 
 @pytest.mark.parametrize(

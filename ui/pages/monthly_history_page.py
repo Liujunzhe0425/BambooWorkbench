@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -45,7 +46,7 @@ class MonthlyHistoryPage(QWidget):
         controls = QHBoxLayout()
         self.year_combo = QComboBox()
         current = datetime.now().year
-        for year in range(current + 1, 1999, -1):
+        for year in range(2077, 1999, -1):
             self.year_combo.addItem(str(year), year)
         self.year_combo.setCurrentIndex(self.year_combo.findData(current))
         self.year_combo.setAccessibleName("历史数据年份")
@@ -57,6 +58,7 @@ class MonthlyHistoryPage(QWidget):
             button = QPushButton(label)
             button.setCheckable(True)
             button.setProperty("secondary", True)
+            button.setProperty("historyModule", True)
             button.clicked.connect(
                 lambda _checked=False, selected=module_id: self.select_module(selected)
             )
@@ -71,6 +73,11 @@ class MonthlyHistoryPage(QWidget):
         for month in range(1, 13):
             card = QPushButton()
             card.setMinimumSize(170, 104)
+            card.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Expanding,
+            )
+            card.setProperty("monthCard", True)
             card.setAccessibleName(f"{month}月历史结果")
             card.clicked.connect(
                 lambda _checked=False, selected_month=month: self._open_month(selected_month)
@@ -145,7 +152,7 @@ class MonthlyHistoryPage(QWidget):
     def resizeEvent(self, event: QResizeEvent) -> None:
         super().resizeEvent(event)
         width = event.size().width()
-        columns = 4 if width >= 980 else 3 if width >= 720 else 2
+        columns = 4 if width >= 820 else 3 if width >= 620 else 2
         if columns != self._columns:
             self._columns = columns
             self._relayout()
@@ -153,11 +160,17 @@ class MonthlyHistoryPage(QWidget):
     def _relayout(self) -> None:
         while self.grid.count():
             self.grid.takeAt(0)
+        for index in range(12):
+            self.grid.setColumnStretch(index, 0)
+            self.grid.setRowStretch(index, 0)
         for index, card in enumerate(self.cards):
             self.grid.addWidget(card, index // self._columns, index % self._columns)
         for column in range(self._columns):
             self.grid.setColumnStretch(column, 1)
-        self.grid.setAlignment(Qt.AlignmentFlag.AlignTop)
+        rows = (len(self.cards) + self._columns - 1) // self._columns
+        for row in range(rows):
+            self.grid.setRowStretch(row, 1)
+        self.grid.setAlignment(Qt.AlignmentFlag(0))
 
     def _open_month(self, month: int) -> None:
         job_id = self.cards[month - 1].property("job_id")

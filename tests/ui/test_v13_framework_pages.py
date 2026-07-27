@@ -3,9 +3,14 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 
+from core.contracts.enums import ModuleId
 from core.contracts.result import ConfirmationPrompt, SourceRef
 from core.security.credentials import InMemoryCredentialStore
+from ui.main_window import MainWindow
+from ui.page_ids import PageId
 from ui.pages.confirmations_page import ConfirmationsPage
+from ui.pages.knowledge_page import KnowledgePage
+from ui.pages.module_task_page import ModuleTaskPage
 from ui.pages.monthly_history_page import MonthlyHistoryPage
 from ui.pages.pending_list_page import PendingListPage
 from ui.pages.settings_page import SettingsPage
@@ -21,6 +26,123 @@ def test_monthly_history_defaults_to_twelve_disabled_cards_without_extra_text(
     assert all(not card.isEnabled() for card in page.cards)
     assert all("不可点击" not in card.text() for card in page.cards)
     assert page.module_buttons["moisture"].isChecked()
+
+
+class _MonthlyHistoryRepository:
+    def list_year(self, _module_id: str, _year: int) -> list[dict[str, object]]:
+        return [
+            {
+                "month": 3,
+                "official_job_id": "job-history-003",
+                "result_integrity": "ok",
+            }
+        ]
+
+    def active_months(self, _module_id: str, _year: int) -> set[int]:
+        return set()
+
+
+def test_monthly_history_fills_responsive_grid_and_exposes_selected_module(
+    qtbot,
+) -> None:
+    page = MonthlyHistoryPage(_MonthlyHistoryRepository())
+    qtbot.addWidget(page)
+    page.resize(970, 720)
+    page.show()
+    qtbot.waitUntil(lambda: page._columns == 4)
+
+    assert page.year_combo.itemData(0) == 2077
+    assert page.year_combo.findData(2000) >= 0
+    assert all(card.height() >= 104 for card in page.cards)
+    assert abs(page.grid_host.width() - page.cards[3].geometry().right()) <= 1
+    assert page.cards[2].isEnabled()
+
+    qtbot.mouseClick(page.module_buttons["boiling"], Qt.MouseButton.LeftButton)
+    assert page.module_id == "boiling"
+    assert page.module_buttons["boiling"].isChecked()
+    assert not page.module_buttons["moisture"].isChecked()
+    assert page.module_buttons["boiling"].property("historyModule") is True
+
+    page.resize(760, 720)
+    qtbot.waitUntil(
+        lambda: page._columns == 3
+        and abs(page.grid_host.width() - page.cards[2].geometry().right()) <= 1
+    )
+
+
+def test_monthly_history_created_card_opens_complete_result(qtbot) -> None:
+    page = MonthlyHistoryPage(_MonthlyHistoryRepository())
+    qtbot.addWidget(page)
+
+    with qtbot.waitSignal(page.result_requested) as signal:
+        qtbot.mouseClick(page.cards[2], Qt.MouseButton.LeftButton)
+
+    assert signal.args == ["job-history-003"]
+
+
+def test_task_and_knowledge_pages_scroll_without_compressing_controls(
+    qtbot, tmp_path: Path
+) -> None:
+    task_page = ModuleTaskPage(tmp_path / "source")
+    task_page.set_module(
+        ModuleId.MOISTURE,
+        "竹丝水分检测",
+        [".xlsx"],
+        ai_report_available=True,
+        governance_available=True,
+    )
+    qtbot.addWidget(task_page)
+    task_page.resize(760, 480)
+    task_page.show()
+
+    knowledge_page = KnowledgePage()
+    qtbot.addWidget(knowledge_page)
+    knowledge_page.resize(760, 480)
+    knowledge_page.show()
+    qtbot.waitUntil(
+        lambda: task_page.scroll_area.verticalScrollBar().maximum() > 0
+        and knowledge_page.scroll_area.verticalScrollBar().maximum() > 0
+    )
+
+    assert task_page.scroll_area.horizontalScrollBar().maximum() == 0
+    assert knowledge_page.scroll_area.horizontalScrollBar().maximum() == 0
+    for control in (
+        task_page.year_spin,
+        task_page.month_combo,
+        task_page.task_name_edit,
+        task_page.operation_combo,
+        knowledge_page.namespace_combo,
+        knowledge_page.query_edit,
+        knowledge_page.search_button,
+    ):
+        assert control.height() >= control.minimumSizeHint().height()
+
+
+def test_minimum_main_window_keeps_task_and_knowledge_controls_readable(
+    qtbot, app_context
+) -> None:
+    window = MainWindow(app_context)
+    qtbot.addWidget(window)
+    window.resize(980, 660)
+    window.show()
+
+    window.workbench_page.module_selected.emit(ModuleId.MOISTURE)
+    qtbot.waitUntil(lambda: window.stack.currentWidget() is window.module_task_page)
+    assert (
+        window.module_task_page.task_name_edit.height()
+        >= window.module_task_page.task_name_edit.minimumSizeHint().height()
+    )
+    assert window.module_task_page.scroll_area.horizontalScrollBar().maximum() == 0
+
+    window.navigate(PageId.KNOWLEDGE)
+    qtbot.waitUntil(
+        lambda: window.stack.currentWidget() is window.knowledge_page
+        and window.knowledge_page.scroll_area.verticalScrollBar().maximum() > 0
+    )
+    assert (
+        window.knowledge_page.query_edit.height()
+        >= window.knowledge_page.query_edit.minimumSizeHint().height()
+    )
 
 
 def test_pending_list_only_shows_waiting_tasks_newest_first(qtbot, app_context) -> None:

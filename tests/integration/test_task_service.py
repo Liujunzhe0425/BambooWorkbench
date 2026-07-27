@@ -52,6 +52,26 @@ def test_task_service_snapshots_input_persists_outputs_and_finishes(
     assert job_id not in service.runners
 
 
+def test_task_service_preserves_failed_module_error_in_task_record(
+    qtbot, app_services: dict[str, object], tmp_path: Path
+) -> None:
+    source = tmp_path / "fail.xlsx"
+    source.write_bytes(b"source-bytes")
+    service = _service(app_services)
+    failures = QSignalSpy(service.failed)
+
+    with qtbot.waitSignal(service.finished, timeout=15_000) as signal:
+        job_id = service.create_and_start(ModuleId.MOISTURE, [source])
+
+    result = signal.args[0]
+    task = app_services["task_repository"].get(job_id)
+    assert result.status.value == "failed"
+    assert result.errors == ["模拟任务失败"]
+    assert task["status"] == "failed"
+    assert task["error"] == "模拟任务失败"
+    assert failures.count() == 0
+
+
 def test_module_config_requires_declared_ai_report_capability(
     app_services: dict[str, object], tmp_path: Path
 ) -> None:

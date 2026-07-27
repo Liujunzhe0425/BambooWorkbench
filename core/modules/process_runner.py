@@ -7,6 +7,7 @@ from jsonschema import Draft202012Validator
 from pydantic import ValidationError
 from PySide6.QtCore import QObject, QProcess, QProcessEnvironment, QTimer, Signal
 
+from core.contracts.enums import TaskStatus
 from core.contracts.job import JobRequest
 from core.contracts.result import ModuleResult
 from core.platform.path_safety import resolve_path
@@ -34,12 +35,17 @@ def resolve_contained_file(path: Path, root: Path, label: str) -> Path:
     return resolved_path
 
 
-def _requires_monthly_snapshot(job: JobRequest, has_monthly_contract: bool) -> bool:
+def _requires_monthly_snapshot(
+    job: JobRequest,
+    has_monthly_contract: bool,
+    result_status: TaskStatus,
+) -> bool:
     return (
         job.phase.value == "finalize"
         and has_monthly_contract
         and job.period_year is not None
         and job.period_month is not None
+        and result_status is TaskStatus.SUCCESS
     )
 
 
@@ -286,11 +292,17 @@ class ModuleProcessRunner(QObject):
 
         snapshot = result.monthly_snapshot
         monthly_finalize = _requires_monthly_snapshot(
-            self._job, monthly_contract is not None
+            self._job,
+            monthly_contract is not None,
+            result.status,
         )
         if monthly_finalize and snapshot is None:
             raise ValueError("monthly_rollup module finalize result is missing a snapshot")
         if snapshot is not None:
+            if result.status is not TaskStatus.SUCCESS:
+                raise ValueError(
+                    "monthly snapshot is only valid for a successful monthly finalize"
+                )
             if self._job.phase.value != "finalize" or monthly_contract is None:
                 raise ValueError("monthly snapshot is only valid for a monthly finalize")
             if self._job.period_year is None or self._job.period_month is None:
