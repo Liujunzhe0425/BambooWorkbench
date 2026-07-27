@@ -72,7 +72,7 @@ def main() -> int:
     draft_output = work / "output-draft"
     draft_job = {
         "schema_version": "1.0",
-        "job_id": "portable-v130-draft",
+        "job_id": "portable-v131-draft",
         "module_id": "after_sales",
         "phase": "draft",
         "run_mode": "single",
@@ -84,13 +84,17 @@ def main() -> int:
         "parent_job_id": None,
         "confirmation_file": None,
         "service_response_file": None,
+        "task_name": "售后便携年月冲突回归",
+        "period_year": 2026,
+        "period_month": 5,
+        "learning_enabled": True,
     }
     draft_job_path = work / "job-draft.json"
     _write_json(draft_job_path, draft_job)
     _run(runtime, draft_job_path)
     draft = json.loads((draft_output / "result.json").read_text(encoding="utf-8"))
-    if draft.get("module_version") != "1.3.0":
-        raise AssertionError("便携运行时不是售后模块 1.3.0")
+    if draft.get("module_version") != "1.3.1":
+        raise AssertionError("便携运行时不是售后模块 1.3.1")
     if draft.get("confirmations"):
         raise AssertionError("第一次 draft 不应在框架 AI 调用前生成业务确认")
     requests = draft.get("service_requests")
@@ -101,7 +105,7 @@ def main() -> int:
         service_path,
         {
             "schema_version": "1.0",
-            "task_id": "portable-v130-draft",
+            "task_id": "portable-v131-draft",
             "module_id": "after_sales",
             "responses": [
                 {
@@ -140,7 +144,7 @@ def main() -> int:
         confirmation_path,
         {
             "schema_version": "1.0",
-            "job_id": "portable-v130-draft",
+            "job_id": "portable-v131-draft",
             "answers": [
                 {
                     "confirmation_id": item["confirmation_id"],
@@ -153,11 +157,11 @@ def main() -> int:
     final_output = work / "output-final"
     final_job = {
         **rebound_job,
-        "job_id": "portable-v130-final",
+        "job_id": "portable-v131-final",
         "phase": "finalize",
         "output_dir": str(final_output),
         "ai_enabled": False,
-        "parent_job_id": "portable-v130-draft",
+        "parent_job_id": "portable-v131-draft",
         "confirmation_file": str(confirmation_path),
         "service_response_file": str(service_path),
     }
@@ -189,6 +193,7 @@ def main() -> int:
     if not snapshot_path.is_file():
         raise AssertionError("便携 finalize 未生成确认后月度快照")
     snapshot_hash = hashlib.sha256(snapshot_path.read_bytes()).hexdigest()
+    snapshot_size = snapshot_path.stat().st_size
     rollup_output = work / "rollup-output"
     rollup_request_path = work / "rollup-request.json"
     rollup_response_path = work / "rollup-response.json"
@@ -196,23 +201,30 @@ def main() -> int:
         rollup_request_path,
         {
             "schema_version": "1.0",
-            "request_id": "portable-v130-rollup",
+            "transaction_id": "portable-v131-rollup",
             "module_id": "after_sales",
-            "module_version": "1.3.0",
+            "module_version": "1.3.1",
             "year": 2026,
             "target_month": 5,
             "offline_required": True,
             "snapshots": [
                 {
+                    "snapshot_id": "snapshot-2026-05",
+                    "job_id": "portable-v131-final",
+                    "module_id": "after_sales",
+                    "year": 2026,
                     "month": 5,
-                    "path": str(snapshot_path),
+                    "path": str(snapshot_path.resolve()),
+                    "size": snapshot_size,
                     "sha256": snapshot_hash,
                 }
             ],
-            "staging_output_dir": str(rollup_output),
-            "rule_snapshot_id": "portable-rules",
-            "experience_snapshot_id": None,
-            "business_config_snapshot_id": "portable-config",
+            "snapshot_root": str(final_output.resolve()),
+            "output_dir": str(rollup_output.resolve()),
+            "configuration_identity": {
+                "version": "after-sales-default",
+                "sha256": "1" * 64,
+            },
         },
     )
     _run_rollup(runtime, rollup_request_path, rollup_response_path)
@@ -221,7 +233,40 @@ def main() -> int:
         raise AssertionError(f"便携离线累计未成功：{rollup}")
     if len(rollup.get("outputs", [])) != 7:
         raise AssertionError("便携离线累计输出不完整")
-    print("便携版 draft→拒绝AI→finalize→月度快照→离线累计闭环通过")
+
+    zero_output = work / "zero-match-output"
+    zero_job_path = work / "job-zero-match.json"
+    _write_json(
+        zero_job_path,
+        {
+            **draft_job,
+            "job_id": "portable-v131-zero-match",
+            "output_dir": str(zero_output),
+            "period_month": 4,
+        },
+    )
+    _run(runtime, zero_job_path)
+    zero_result = json.loads(
+        (zero_output / "result.json").read_text(encoding="utf-8")
+    )
+    if zero_result.get("status") != "failed":
+        raise AssertionError("便携版目标月零匹配未在 draft 阶段失败")
+    if zero_result.get("service_requests") or zero_result.get("confirmations"):
+        raise AssertionError("便携版目标月零匹配仍生成了 AI 请求或普通确认")
+    if zero_result.get("outputs"):
+        raise AssertionError("便携版目标月零匹配仍生成了正式成果")
+    if not any(
+        "TASK_PERIOD_ZERO_MATCH" in str(item)
+        for item in zero_result.get("errors", [])
+    ):
+        raise AssertionError("便携版目标月零匹配缺少稳定错误码")
+    if {path.name for path in zero_output.iterdir()} != {"result.json"}:
+        raise AssertionError("便携版目标月零匹配写入了 result.json 以外的文件")
+
+    print(
+        "便携版 draft→拒绝AI→finalize→月度快照→离线累计闭环"
+        "及 draft 零匹配前置拦截通过"
+    )
     return 0
 
 

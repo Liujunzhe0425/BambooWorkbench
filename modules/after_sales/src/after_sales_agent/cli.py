@@ -66,6 +66,12 @@ _DRAFT_AI_SNAPSHOT_FIELDS = {
     "selected_solution_ai_candidate",
 }
 
+TASK_PERIOD_SCOPE_FIELD = "任务年月范围"
+TASK_PERIOD_SCOPE_VALUE = "仅将目标年月记录写入本月快照"
+TASK_PERIOD_ZERO_MATCH_CODE = "TASK_PERIOD_ZERO_MATCH"
+TASK_PERIOD_UNRESOLVED_CODE = "TASK_PERIOD_DATE_UNRESOLVED"
+TASK_PERIOD_SCOPE_INVALID_CODE = "TASK_PERIOD_SCOPE_INVALID"
+
 
 def _configure_standard_streams() -> None:
     """Make the frozen CLI protocol independent from the Windows code page."""
@@ -272,6 +278,28 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                     },
                 )
 
+        period_analysis = _analyze_task_period(records, job)
+        if period_analysis and period_analysis["has_conflict"]:
+            result["anomalies"].extend(
+                _normalize_anomalies(
+                    [_task_period_anomaly(period_analysis)],
+                    len(result["anomalies"]),
+                )
+            )
+        if period_analysis and period_analysis["definitive_zero_match"]:
+            _fail_for_task_period(
+                result,
+                period_analysis,
+                code=TASK_PERIOD_ZERO_MATCH_CODE,
+                message=(
+                    f"任务目标为{period_analysis['target_label']}，"
+                    f"但可确定的售后业务日期中目标月匹配为0条；"
+                    f"年月分布：{_period_distribution_text(period_analysis)}。"
+                    "请返回任务页修改年月或重新选择文件。"
+                ),
+            )
+            return 0
+
         service_requests = build_ai_service_requests(
             root_job_id=root_job_id,
             records=records,
@@ -300,6 +328,13 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
             elif job.get("phase") == "finalize":
                 for record in records:
                     _restore_draft_ai_snapshot(record, draft_snapshots)
+            if period_analysis and period_analysis["has_conflict"]:
+                result["confirmations"].extend(
+                    _normalize_confirmations(
+                        [_task_period_confirmation(period_analysis)],
+                        len(result["confirmations"]),
+                    )
+                )
             for record in records:
                 if record.get("included_in_summary"):
                     result["confirmations"].extend(
@@ -311,16 +346,64 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
 
         answered_confirmation_ids: set[str] = set()
         if job.get("phase") == "finalize":
+            confirmation_answers = _read_confirmation_answers(
+                Path(job["confirmation_file"])
+            )
             answered_confirmation_ids = _apply_confirmation_answers(
                 records,
                 result["confirmations"],
-                Path(job["confirmation_file"]),
+                confirmation_answers,
+            )
+            invalid_scope = _invalid_task_period_scope_answer(
+                result["confirmations"],
+                confirmation_answers,
             )
             result["confirmations"] = [
                 item
                 for item in result["confirmations"]
                 if item["confirmation_id"] not in answered_confirmation_ids
             ]
+            period_analysis = _analyze_task_period(records, job)
+            if invalid_scope:
+                _fail_for_task_period(
+                    result,
+                    period_analysis,
+                    code=TASK_PERIOD_SCOPE_INVALID_CODE,
+                    message=(
+                        "任务年月范围确认值无效；模块没有改变任何已知业务日期，"
+                        "请返回确认页重新选择“仅将目标年月记录写入本月快照”。"
+                    ),
+                )
+                return 0
+            if period_analysis and period_analysis["definitive_zero_match"]:
+                _fail_for_task_period(
+                    result,
+                    period_analysis,
+                    code=TASK_PERIOD_ZERO_MATCH_CODE,
+                    message=(
+                        f"人工补充日期后，任务目标{period_analysis['target_label']}"
+                        "仍没有匹配记录；请返回任务页修改年月或重新选择文件。"
+                    ),
+                )
+                return 0
+            if (
+                period_analysis
+                and period_analysis["unknown_period_count"]
+                and not any(
+                    prompt.get("field") == "complaint_date"
+                    for prompt in result["confirmations"]
+                )
+            ):
+                _fail_for_task_period(
+                    result,
+                    period_analysis,
+                    code=TASK_PERIOD_UNRESOLVED_CODE,
+                    message=(
+                        "人工填写的提出质量问题/报修日期仍缺少年份或月份；"
+                        "模块不会猜测或改写业务日期，请返回确认页填写完整日期。"
+                    ),
+                )
+                return 0
 
         _notify_progress(
             progress_callback,
@@ -577,6 +660,172 @@ def _validate_job(job: Any) -> None:
         raise ValueError("finalize 阶段必须提供 parent_job_id 和 confirmation_file")
 
 
+def _analyze_task_period(
+    records: list[dict[str, Any]],
+    job: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Compare the task target with business dates without inventing dates."""
+
+    target_year = job.get("period_year")
+    target_month = job.get("period_month")
+    if not isinstance(target_year, int) or not isinstance(target_month, int):
+        return None
+
+    known_period_counts: dict[tuple[int, int], int] = {}
+    unknown_year_count = 0
+    unknown_month_count = 0
+    included_count = 0
+    for record in records:
+        if not record.get("included_in_summary"):
+            continue
+        included_count += 1
+        year = record.get("year")
+        month = record.get("month")
+        valid_year = isinstance(year, int) and not isinstance(year, bool)
+        valid_month = (
+            isinstance(month, int)
+            and not isinstance(month, bool)
+            and 1 <= month <= 12
+        )
+        if not valid_year:
+            unknown_year_count += 1
+        if not valid_month:
+            unknown_month_count += 1
+        if valid_year and valid_month:
+            key = (int(year), int(month))
+            known_period_counts[key] = known_period_counts.get(key, 0) + 1
+
+    target_match_count = known_period_counts.get((target_year, target_month), 0)
+    known_count = sum(known_period_counts.values())
+    other_known_count = known_count - target_match_count
+    unknown_period_count = included_count - known_count
+    known_periods = [
+        {"year": year, "month": month, "count": count}
+        for (year, month), count in sorted(known_period_counts.items())
+    ]
+    return {
+        "target_year": target_year,
+        "target_month": target_month,
+        "target_label": f"{target_year}年{target_month}月",
+        "included_count": included_count,
+        "known_periods": known_periods,
+        "target_match_count": target_match_count,
+        "other_known_count": other_known_count,
+        "unknown_year_count": unknown_year_count,
+        "unknown_month_count": unknown_month_count,
+        "unknown_period_count": unknown_period_count,
+        "has_conflict": other_known_count > 0 or unknown_period_count > 0,
+        "definitive_zero_match": (
+            included_count > 0
+            and target_match_count == 0
+            and unknown_period_count == 0
+        ),
+    }
+
+
+def _period_distribution_text(analysis: dict[str, Any]) -> str:
+    periods = analysis.get("known_periods")
+    labels = [
+        f"{item['year']}年{item['month']}月{item['count']}条"
+        for item in periods
+        if isinstance(item, dict)
+    ]
+    unknown_year_count = int(analysis.get("unknown_year_count") or 0)
+    unknown_month_count = int(analysis.get("unknown_month_count") or 0)
+    if unknown_year_count:
+        labels.append(f"年份未注明{unknown_year_count}条")
+    if unknown_month_count:
+        labels.append(f"月份未注明{unknown_month_count}条")
+    return "、".join(labels) if labels else "无可确定年月"
+
+
+def _task_period_anomaly(analysis: dict[str, Any]) -> dict[str, Any]:
+    definitive_zero = bool(analysis.get("definitive_zero_match"))
+    if definitive_zero:
+        message = (
+            f"任务目标为{analysis['target_label']}，目标月确定匹配0条；"
+            f"已知年月分布为{_period_distribution_text(analysis)}。"
+        )
+        suggestion = "请返回任务页修改年月或重新选择文件；模块不会改写业务日期。"
+    else:
+        message = (
+            f"任务目标为{analysis['target_label']}，确定匹配"
+            f"{analysis['target_match_count']}条、其他已知年月"
+            f"{analysis['other_known_count']}条、年份未注明"
+            f"{analysis['unknown_year_count']}条、月份未注明"
+            f"{analysis['unknown_month_count']}条。"
+        )
+        suggestion = (
+            "请人工确认任务范围；正式月度快照只会使用目标年月记录，"
+            "年份或月份未注明的记录必须补全日期。"
+        )
+    return {
+        "source_file": "任务年月",
+        "field": "任务年月",
+        "value": {
+            "target": {
+                "year": analysis["target_year"],
+                "month": analysis["target_month"],
+            },
+            "known_periods": analysis["known_periods"],
+            "target_match_count": analysis["target_match_count"],
+            "other_known_count": analysis["other_known_count"],
+            "unknown_year_count": analysis["unknown_year_count"],
+            "unknown_month_count": analysis["unknown_month_count"],
+        },
+        "severity": "critical" if definitive_zero else "warning",
+        "rule_id": "AFTER_SALES_TASK_PERIOD_CONFLICT",
+        "message": message,
+        "suggestion": suggestion,
+    }
+
+
+def _task_period_confirmation(analysis: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "source_file": "任务年月",
+        "field": TASK_PERIOD_SCOPE_FIELD,
+        "reason": (
+            f"任务目标为{analysis['target_label']}；确定匹配"
+            f"{analysis['target_match_count']}条、其他已知年月"
+            f"{analysis['other_known_count']}条、年份未注明"
+            f"{analysis['unknown_year_count']}条、月份未注明"
+            f"{analysis['unknown_month_count']}条。"
+            "模块不会改写业务日期；请确认仅把目标年月记录写入本月快照。"
+        ),
+        "suggested_value": TASK_PERIOD_SCOPE_VALUE,
+        "options": [TASK_PERIOD_SCOPE_VALUE],
+        "confidence": 1.0,
+        "blocking": True,
+        "batch_applicable": False,
+        "rememberable": False,
+    }
+
+
+def _fail_for_task_period(
+    result: dict[str, Any],
+    analysis: dict[str, Any] | None,
+    *,
+    code: str,
+    message: str,
+) -> None:
+    """Stop before formal artifacts and expose only desensitized period facts."""
+
+    result["status"] = "failed"
+    result["service_requests"] = []
+    result["confirmations"] = []
+    result["outputs"] = []
+    result["summary"]["anomaly_count"] = len(result["anomalies"])
+    result["summary"]["confirmation_count"] = 0
+    result["errors"].append(f"{code}：{message}")
+    if analysis is not None:
+        result["analysis_summary"] = (
+            f"任务目标{analysis['target_label']}，目标匹配"
+            f"{analysis['target_match_count']}条；"
+            f"年月分布：{_period_distribution_text(analysis)}。"
+            "未生成正式售后成果，且未改写任何业务日期。"
+        )
+
+
 def _normalize_anomalies(items: list[dict[str, Any]], offset: int) -> list[dict[str, Any]]:
     normalized: list[dict[str, Any]] = []
     for index, item in enumerate(items, start=offset + 1):
@@ -639,20 +888,9 @@ def _source_ref(item: dict[str, Any]) -> dict[str, Any]:
 def _apply_confirmation_answers(
     records: list[dict[str, Any]],
     confirmations: list[dict[str, Any]],
-    confirmation_path: Path,
+    answers: dict[str, Any],
 ) -> set[str]:
-    try:
-        payload = json.loads(confirmation_path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        raise ValueError(f"无法读取人工确认文件：{exc}") from exc
-    raw_answers = payload.get("answers") if isinstance(payload, dict) else None
-    if not isinstance(raw_answers, list):
-        raise ValueError("人工确认文件缺少 answers 数组")
-    answers = {
-        str(item.get("confirmation_id")): item.get("value")
-        for item in raw_answers
-        if isinstance(item, dict) and item.get("confirmation_id")
-    }
+
     answered: set[str] = set()
     for prompt in confirmations:
         confirmation_id = prompt["confirmation_id"]
@@ -669,6 +907,35 @@ def _apply_confirmation_answers(
         _apply_record_value(record, prompt["field"], answers[confirmation_id])
         record["reviewed"] = True
     return answered
+
+
+def _read_confirmation_answers(confirmation_path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(confirmation_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ValueError(f"无法读取人工确认文件：{exc}") from exc
+    raw_answers = payload.get("answers") if isinstance(payload, dict) else None
+    if not isinstance(raw_answers, list):
+        raise ValueError("人工确认文件缺少 answers 数组")
+    return {
+        str(item.get("confirmation_id")): item.get("value")
+        for item in raw_answers
+        if isinstance(item, dict) and item.get("confirmation_id")
+    }
+
+
+def _invalid_task_period_scope_answer(
+    confirmations: list[dict[str, Any]],
+    answers: dict[str, Any],
+) -> bool:
+    for prompt in confirmations:
+        if prompt.get("field") != TASK_PERIOD_SCOPE_FIELD:
+            continue
+        confirmation_id = str(prompt.get("confirmation_id") or "")
+        if confirmation_id not in answers:
+            continue
+        return str(answers[confirmation_id] or "").strip() != TASK_PERIOD_SCOPE_VALUE
+    return False
 
 
 def _apply_record_value(record: dict[str, Any], field: str, value: Any) -> None:
