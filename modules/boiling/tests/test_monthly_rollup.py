@@ -28,7 +28,7 @@ def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
-def make_sample(path, *, month=1, batch_no="MONTH-001"):
+def make_sample(path, *, month=1, batch_no="MONTH-001", product_usage="家具"):
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "水煮实验"
@@ -36,7 +36,14 @@ def make_sample(path, *, month=1, batch_no="MONTH-001"):
         ["批号", batch_no, "产品名称", "脱敏竹材", "规格型号", "100×100×10"]
     )
     sheet.append(
-        ["压制日期", dt.date(2026, month, 3), "班长", "脱敏班长", "产品用途", "家具"]
+        [
+            "压制日期",
+            dt.date(2026, month, 3),
+            "班长",
+            "脱敏班长",
+            "产品用途",
+            product_usage,
+        ]
     )
     sheet.append(
         [
@@ -229,7 +236,7 @@ def rollup_request(root, output, *, snapshots, year=2026, target_month=3):
         "schema_version": "1.0",
         "transaction_id": "ROLLUP-TRANSACTION-001",
         "module_id": "boiling",
-        "module_version": "1.3.0",
+        "module_version": "1.3.1",
         "year": year,
         "target_month": target_month,
         "snapshot_root": str(Path(root).resolve()),
@@ -247,7 +254,7 @@ def test_finalize_writes_confirmed_monthly_snapshot_with_existing_ai(tmp_path):
     final, snapshot_path = finalized_snapshot(tmp_path)
     assert final["status"] == "success"
     snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-    assert snapshot["module_version"] == "1.3.0"
+    assert snapshot["module_version"] == "1.3.1"
     assert (snapshot["year"], snapshot["month"]) == (2026, 1)
     record = snapshot["payload"]["records"][0]
     assert record["final_confirmation_decisions"][0]["value"] == "不合格"
@@ -323,9 +330,11 @@ def test_snapshot_uses_final_human_density_and_expansion_values(tmp_path):
     } == {"source"}
 
 
-def test_finalize_with_unanswered_business_confirmation_has_no_snapshot(tmp_path):
+def test_finalize_with_unanswered_blocking_confirmation_fails_without_snapshot(
+    tmp_path,
+):
     sample = tmp_path / "unanswered.xlsx"
-    make_sample(sample)
+    make_sample(sample, product_usage="")
     draft_output = tmp_path / "draft-unanswered"
     draft = run_job(
         make_job(sample, draft_output),
@@ -343,20 +352,170 @@ def test_finalize_with_unanswered_business_confirmation_has_no_snapshot(tmp_path
         },
     )
     final_output = tmp_path / "final-unanswered"
-    final = run_job(
-        make_job(
-            sample,
-            final_output,
-            phase="finalize",
-            job_id="ROLLUP-FINAL-NO-SNAPSHOT",
-            parent_job_id=draft["job_id"],
-            confirmation_file=str(confirmation_file),
-        ),
-        tmp_path / "final-unanswered-job.json",
+    final_job = make_job(
+        sample,
+        final_output,
+        phase="finalize",
+        job_id="ROLLUP-FINAL-NO-SNAPSHOT",
+        parent_job_id=draft["job_id"],
+        confirmation_file=str(confirmation_file),
+    )
+    final_job_path = tmp_path / "final-unanswered-job.json"
+    write_json(final_job_path, final_job)
+    assert boiling_module.run_job(final_job_path) == 3
+    final = json.loads((final_output / "result.json").read_text(encoding="utf-8"))
+    assert final["status"] == "failed"
+    assert any(
+        error.startswith("BOILING-UNRESOLVED-BLOCKING-CONFIRMATION-001:")
+        for error in final["errors"]
     )
     assert final["monthly_snapshot"] is None
     assert all(item["type"] != "monthly_snapshot" for item in final["outputs"])
     assert not (final_output / "boiling_monthly_snapshot.json").exists()
+
+
+def test_source_bat_draft_finalize_snapshot_and_rollup(tmp_path):
+    sample = tmp_path / "bat-month.xlsx"
+    make_sample(sample, month=4, batch_no="BAT-APR")
+    environment = os.environ.copy()
+    environment["BAMBOO_PYTHON"] = sys.executable
+    launcher = MODULE_ROOT / "run_module.bat"
+
+    draft_output = tmp_path / "bat-draft"
+    draft_job = make_job(
+        sample,
+        draft_output,
+        job_id="BAT-DRAFT-001",
+        period_month=4,
+        task_name="水煮 BAT 2026-04",
+    )
+    draft_job_path = tmp_path / "bat-draft-job.json"
+    write_json(draft_job_path, draft_job)
+    draft_run = subprocess.run(
+        [str(launcher), "run", "--job", str(draft_job_path)],
+        cwd=REPO_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert draft_run.returncode == 0, draft_run.stderr
+    draft = json.loads((draft_output / "result.json").read_text(encoding="utf-8"))
+    assert draft["status"] == "needs_confirmation"
+    draft_ids = {item["confirmation_id"] for item in draft["confirmations"]}
+
+    confirmation_file = tmp_path / "bat-confirmations.json"
+    write_json(
+        confirmation_file,
+        {
+            "schema_version": "1.0",
+            "task_id": draft["job_id"],
+            "module_id": "boiling",
+            "answers": [
+                {
+                    "confirmation_id": item["confirmation_id"],
+                    "value": (
+                        item["options"][0]
+                        if item["options"]
+                        else item["suggested_value"]
+                    ),
+                    "apply_to_batch": False,
+                    "remember_mapping": False,
+                }
+                for item in draft["confirmations"]
+            ],
+        },
+    )
+    final_output = tmp_path / "bat-final"
+    final_job = make_job(
+        sample,
+        final_output,
+        phase="finalize",
+        job_id="BAT-FINAL-001",
+        parent_job_id=draft["job_id"],
+        confirmation_file=str(confirmation_file),
+        period_month=4,
+        task_name="水煮 BAT 2026-04",
+    )
+    final_job_path = tmp_path / "bat-final-job.json"
+    write_json(final_job_path, final_job)
+    final_run = subprocess.run(
+        [str(launcher), "run", "--job", str(final_job_path)],
+        cwd=REPO_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert final_run.returncode == 0, final_run.stderr
+    final = json.loads((final_output / "result.json").read_text(encoding="utf-8"))
+    assert final["status"] == "success"
+    assert final["confirmations"] == []
+    assert final["monthly_snapshot"] is not None
+    assert (
+        final["monthly_snapshot"]["year"],
+        final["monthly_snapshot"]["month"],
+    ) == (2026, 4)
+    assert all(item["type"] != "monthly_snapshot" for item in final["outputs"])
+    snapshot = json.loads(
+        Path(final["monthly_snapshot"]["path"]).read_text(encoding="utf-8")
+    )
+    decision_ids = {
+        decision["confirmation_id"]
+        for record in snapshot["payload"]["records"]
+        for decision in record["final_confirmation_decisions"]
+    }
+    assert decision_ids <= draft_ids
+
+    snapshot_root = tmp_path / "bat-snapshots"
+    snapshot_root.mkdir()
+    snapshot_path = snapshot_root / "2026-04.json"
+    snapshot_path.write_bytes(Path(final["monthly_snapshot"]["path"]).read_bytes())
+    snapshot_ref = {
+        "snapshot_id": "BAT-SNAPSHOT-2026-04",
+        "job_id": final["job_id"],
+        "module_id": "boiling",
+        "year": 2026,
+        "month": 4,
+        "path": str(snapshot_path.resolve()),
+        "size": snapshot_path.stat().st_size,
+        "sha256": digest(snapshot_path),
+    }
+    rollup_output = tmp_path / "bat-rollup"
+    request_path = tmp_path / "bat-rollup-request.json"
+    response_path = rollup_output / "result.json"
+    write_json(
+        request_path,
+        rollup_request(
+            snapshot_root,
+            rollup_output,
+            snapshots=[snapshot_ref],
+            target_month=4,
+        ),
+    )
+    rollup_run = subprocess.run(
+        [
+            str(launcher),
+            "rollup",
+            "--request",
+            str(request_path),
+            "--response",
+            str(response_path),
+        ],
+        cwd=REPO_ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    assert rollup_run.returncode == 0, rollup_run.stderr
+    rollup = json.loads(response_path.read_text(encoding="utf-8"))
+    assert rollup["status"] == "success"
+    assert rollup["used_months"] == [4]
+    assert rollup["network_call_count"] == 0
 
 
 def test_rollup_allows_month_gap_and_never_builds_ai_request(tmp_path, monkeypatch):

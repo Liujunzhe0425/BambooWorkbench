@@ -55,7 +55,7 @@ except ImportError as exc:  # pragma: no cover - exercised in a clean environmen
 
 
 MODULE_ID = "boiling"
-MODULE_VERSION = "1.3.0"
+MODULE_VERSION = "1.3.1"
 MAX_AI_RECORDS = 1
 MAX_AI_OBSERVATIONS_PER_RECORD = 6
 MAX_TREND_MONTHS = 60
@@ -2804,6 +2804,8 @@ def validate_job(job):
         or not 1 <= period_month <= 12
     ):
         errors.append("period_month 必须为 1～12 的整数或 null")
+    if (period_year is None) != (period_month is None):
+        errors.append("period_year 和 period_month 必须同时提供或同时为 null")
     for key in ("module_config_file", "confirmation_file", "service_response_file"):
         path_value = job.get(key)
         if path_value is not None and not isinstance(path_value, str):
@@ -3969,7 +3971,6 @@ def run_job(job_path):
     seen = set()
     usage_prompt_added = False
     learning_descriptions = []
-    unresolved_confirmation_count = 0
     is_finalize = job["phase"] == "finalize"
     scope_id = stable_input_scope(job["input_files"])
     answer_map = answers["by_id"]
@@ -4030,6 +4031,23 @@ def run_job(job_path):
                     result["summary"]["processed_count"] += 1
                 else:
                     finalize_anomalies = []
+                    draft_confirmation_ids = set()
+                    if is_finalize:
+                        preview_record = deepcopy(record)
+                        preview_confirmations = []
+                        if is_missing_value(preview_record["product_usage"]):
+                            preview_confirmations.append(
+                                product_usage_confirmation(preview_record, scope_id)
+                            )
+                        _, evaluated_preview_confirmations = evaluate_record(
+                            preview_record,
+                            rules,
+                            fingerprint,
+                        )
+                        preview_confirmations.extend(evaluated_preview_confirmations)
+                        draft_confirmation_ids = {
+                            item["confirmation_id"] for item in preview_confirmations
+                        }
                     if is_missing_value(record["product_usage"]):
                         record["product_usage"] = ""
                     batch_confirmation_id = f"C-PRODUCT-USAGE-BATCH-{scope_id}"
@@ -4052,10 +4070,10 @@ def run_job(job_path):
                             usage_prompt_added = True
                         if is_finalize:
                             missing_usage = product_usage_confirmation(record, scope_id)
-                            finalize_anomalies.append(
-                                unresolved_finalize_anomaly(record, fingerprint, missing_usage)
+                            result["errors"].append(
+                                "BOILING-UNRESOLVED-BLOCKING-CONFIRMATION-001: "
+                                f"未回答阻断确认 {missing_usage['confirmation_id']}"
                             )
-                            unresolved_confirmation_count += 1
                         else:
                             usage_confirmation_pending = True
                     apply_confirmed_calculation_values(record, fingerprint, answer_map)
@@ -4078,11 +4096,25 @@ def run_job(job_path):
                         item for item in confirmations if item["confirmation_id"] not in answer_map
                     ]
                     if is_finalize:
-                        unresolved_confirmation_count += len(pending_confirmations)
-                        finalize_anomalies.extend(
-                            unresolved_finalize_anomaly(record, fingerprint, item)
-                            for item in pending_confirmations
-                        )
+                        for item in pending_confirmations:
+                            confirmation_id = item["confirmation_id"]
+                            if item.get("blocking"):
+                                error_code = (
+                                    "BOILING-UNRESOLVED-BLOCKING-CONFIRMATION-001"
+                                    if confirmation_id in draft_confirmation_ids
+                                    else "BOILING-CONFIRMATION-DRIFT-001"
+                                )
+                                result["errors"].append(
+                                    f"{error_code}: 未回答阻断确认 {confirmation_id}"
+                                )
+                            else:
+                                finalize_anomalies.append(
+                                    unresolved_finalize_anomaly(
+                                        record,
+                                        fingerprint,
+                                        item,
+                                    )
+                                )
                         pending_confirmations = []
                     else:
                         result["confirmations"].extend(pending_confirmations)
@@ -4252,7 +4284,6 @@ def run_job(job_path):
         is_finalize
         and result["status"] == "success"
         and records
-        and unresolved_confirmation_count == 0
     ):
         snapshot_path = output_dir / "boiling_monthly_snapshot.json"
         try:
@@ -4277,8 +4308,25 @@ def run_job(job_path):
                 "month": snapshot["month"],
             }
         except (OSError, ValueError, RollupContractError) as exc:
-            result["errors"].append(f"生成月度快照失败: {exc}")
+            result["errors"].append(
+                "BOILING-SNAPSHOT-WRITE-001: "
+                + (sanitize_ai_text(str(exc))[:300] or "生成月度快照失败")
+            )
             result["status"] = "failed"
+    monthly_period_requested = (
+        job.get("period_year") is not None and job.get("period_month") is not None
+    )
+    if (
+        is_finalize
+        and monthly_period_requested
+        and result["status"] == "success"
+        and result["monthly_snapshot"] is None
+    ):
+        result["errors"].append(
+            "BOILING-SNAPSHOT-INVARIANT-001: "
+            "带年月的 finalize 成功结果必须包含合法 monthly_snapshot"
+        )
+        result["status"] = "failed"
     result["analysis_summary"] = (
         f"处理{result['summary']['processed_count']}个文件，失败{result['summary']['failed_count']}个，"
         f"未纳入正常统计{len(excluded_records)}个，异常/观察{result['summary']['anomaly_count']}项，"
