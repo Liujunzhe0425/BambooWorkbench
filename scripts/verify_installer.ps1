@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $Root = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
-$Installer = Join-Path $Root 'installer-output\BambooWorkbench-Setup-1.3.0.exe'
+$Installer = Join-Path $Root 'installer-output\BambooWorkbench-Setup-1.3.1.exe'
 if (-not (Test-Path -LiteralPath $Installer -PathType Leaf)) {
     throw 'Installer does not exist. Run build_installer.ps1 first.'
 }
