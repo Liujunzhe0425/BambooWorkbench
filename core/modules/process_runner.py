@@ -45,7 +45,7 @@ def _requires_monthly_snapshot(
         and has_monthly_contract
         and job.period_year is not None
         and job.period_month is not None
-        and result_status is TaskStatus.SUCCESS
+        and result_status in {TaskStatus.SUCCESS, TaskStatus.PARTIAL_SUCCESS}
     )
 
 
@@ -299,9 +299,10 @@ class ModuleProcessRunner(QObject):
         if monthly_finalize and snapshot is None:
             raise ValueError("monthly_rollup module finalize result is missing a snapshot")
         if snapshot is not None:
-            if result.status is not TaskStatus.SUCCESS:
+            if result.status not in {TaskStatus.SUCCESS, TaskStatus.PARTIAL_SUCCESS}:
                 raise ValueError(
-                    "monthly snapshot is only valid for a successful monthly finalize"
+                    "monthly snapshot is only valid for a successful or partial-success "
+                    "monthly finalize"
                 )
             if self._job.phase.value != "finalize" or monthly_contract is None:
                 raise ValueError("monthly snapshot is only valid for a monthly finalize")

@@ -47,7 +47,7 @@ def test_only_period_bound_finalize_requires_monthly_snapshot() -> None:
 
     assert _requires_monthly_snapshot(job, True, TaskStatus.SUCCESS) is True
     assert _requires_monthly_snapshot(job, True, TaskStatus.FAILED) is False
-    assert _requires_monthly_snapshot(job, True, TaskStatus.PARTIAL_SUCCESS) is False
+    assert _requires_monthly_snapshot(job, True, TaskStatus.PARTIAL_SUCCESS) is True
     assert _requires_monthly_snapshot(job, True, TaskStatus.CANCELLED) is False
     assert (
         _requires_monthly_snapshot(

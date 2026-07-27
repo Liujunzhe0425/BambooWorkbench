@@ -900,7 +900,8 @@ class TaskService(QObject):
                 if host_result.status in {TaskStatus.SUCCESS, TaskStatus.PARTIAL_SUCCESS}:
                     module = self.registry.get(job.module_id)
                     if (
-                        host_result.status is TaskStatus.SUCCESS
+                        host_result.status
+                        in {TaskStatus.SUCCESS, TaskStatus.PARTIAL_SUCCESS}
                         and job.phase is JobPhase.FINALIZE
                         and module.manifest.monthly_rollup is not None
                         and job.period_year is not None
@@ -908,8 +909,8 @@ class TaskService(QObject):
                         and host_result.monthly_snapshot is None
                     ):
                         raise RuntimeError(
-                            "monthly_rollup module successful finalize result is missing "
-                            "a snapshot"
+                            "monthly_rollup module successful or partial-success finalize "
+                            "result is missing a snapshot"
                         )
                     if (
                         job.phase is JobPhase.FINALIZE
