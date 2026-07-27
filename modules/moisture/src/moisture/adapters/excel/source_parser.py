@@ -47,6 +47,12 @@ class SourceFileModified(ValueError):
     code = "SOURCE_FILE_MODIFIED"
 
 
+class InvalidRecordIdentity(WorkbookStructureError):
+    """The source name cannot produce one stable business record identity."""
+
+    code = "WORKBOOK_RECORD_ID_INVALID"
+
+
 _LABEL_ALIASES = {
     "supplier": {"供应商", "供货商", "供应单位", "送样单位"},
     "material_type": {"物料类型", "物料名称", "品名", "材料"},
@@ -65,13 +71,19 @@ _TASK_SNAPSHOT_STEM_PATTERN = re.compile(r"^\d{3}-(?P<source_stem>.+)$")
 
 
 def _record_id_from_path(path: Path) -> str:
-    """Recover the original stem from one TaskService input snapshot layer."""
+    """Recover and normalize the stable ID from one TaskService snapshot layer."""
 
     stem = path.stem
-    if path.parent.name != "inputs":
-        return stem
-    match = _TASK_SNAPSHOT_STEM_PATTERN.fullmatch(stem)
-    return match.group("source_stem") if match is not None else stem
+    if path.parent.name == "inputs":
+        match = _TASK_SNAPSHOT_STEM_PATTERN.fullmatch(stem)
+        if match is not None:
+            stem = match.group("source_stem")
+    record_id = stem.strip()
+    if not record_id:
+        raise InvalidRecordIdentity(
+            "source workbook name is empty after identity normalization"
+        )
+    return record_id
 
 
 def _as_decimal(value: object) -> Decimal:

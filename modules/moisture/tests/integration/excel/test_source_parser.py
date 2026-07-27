@@ -16,6 +16,7 @@ sys.path.insert(0, str(MODULE_ROOT / "tests"))
 from moisture.adapters.excel.source_parser import (  # noqa: E402
     AmbiguousWorkbookStructure,
     ExcelSourceParser,
+    InvalidRecordIdentity,
     SampleLimitExceeded,
     SourceFileModified,
     WorkbookStructureError,
@@ -59,6 +60,7 @@ def test_reads_dynamic_departments_and_source_rows(tmp_path: Path, workbook_fact
     [
         ("002-same-batch.xlsx", "same-batch"),
         ("002-001-customer-batch.xlsx", "001-customer-batch"),
+        ("002- 供应商甲原竹丝水分检测（2） .xlsx", "供应商甲原竹丝水分检测（2）"),
     ],
 )
 def test_task_snapshot_prefix_does_not_change_original_record_id(
@@ -72,6 +74,33 @@ def test_task_snapshot_prefix_does_not_change_original_record_id(
     record = ExcelSourceParser().parse(path, default_year=2026)
 
     assert record.record_id == expected_record_id
+
+
+def test_source_stem_whitespace_is_normalized_without_changing_internal_text(
+    tmp_path: Path,
+    workbook_factory,
+) -> None:
+    path = workbook_factory(tmp_path / " 001 供应商甲 原竹丝水分检测（2） .xlsx")
+
+    first = ExcelSourceParser().parse(path, default_year=2026)
+    second = ExcelSourceParser().parse(path, default_year=2026)
+
+    assert first.record_id == "001 供应商甲 原竹丝水分检测（2）"
+    assert second.record_id == first.record_id
+    assert path.name == " 001 供应商甲 原竹丝水分检测（2） .xlsx"
+
+
+def test_whitespace_only_source_stem_has_stable_business_error(
+    tmp_path: Path,
+    workbook_factory,
+) -> None:
+    path = workbook_factory(tmp_path / " .xlsx")
+
+    with pytest.raises(InvalidRecordIdentity) as error:
+        ExcelSourceParser().parse(path, default_year=2026)
+
+    assert error.value.code == "WORKBOOK_RECORD_ID_INVALID"
+    assert str(tmp_path) not in str(error.value)
 
 
 def test_eleven_samples_fails_without_truncation(tmp_path: Path, workbook_factory) -> None:

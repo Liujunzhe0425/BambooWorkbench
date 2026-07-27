@@ -32,9 +32,10 @@ def test_real_framework_finalize_snapshot_and_offline_rollup(
         assert "monthly_rollup" in module.manifest.capabilities
         assert module.manifest.monthly_rollup is not None
 
-        record_id = "001-4.10供应商甲原竹丝水分检测（2）"
+        source_stem = "001-4.10供应商甲原竹丝水分检测（2） "
+        record_id = source_stem.strip()
         source = workbook_factory(
-            tmp_path / f"{record_id}.xlsx",
+            tmp_path / f"{source_stem}.xlsx",
             moisture_values=(0.50,),
             mass_values=((100, 50, 0),),
             arrival_date="4.8",
@@ -120,5 +121,6 @@ def test_real_framework_finalize_snapshot_and_offline_rollup(
         )
         business = json.loads(business_path.read_text(encoding="utf-8"))
         assert [item["record_id"] for item in business["records"]] == [record_id]
+        assert source.name == f"{source_stem}.xlsx"
     finally:
         context.close()

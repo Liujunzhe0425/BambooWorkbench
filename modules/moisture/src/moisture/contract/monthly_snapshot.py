@@ -172,14 +172,17 @@ class MonthlySnapshot:
                 "monthly snapshot rule identity is invalid",
             )
         record_ids = [record.record_id for record in self.records]
-        if (
-            not record_ids
-            or any(not _is_safe_business_record_id(record_id) for record_id in record_ids)
-            or len(record_ids) != len(set(record_ids))
+        if not record_ids or any(
+            not _is_safe_business_record_id(record_id) for record_id in record_ids
         ):
             raise MonthlySnapshotError(
                 "MONTHLY_SNAPSHOT_INVALID",
                 "monthly snapshot record identities are invalid",
+            )
+        if len(record_ids) != len(set(record_ids)):
+            raise MonthlySnapshotError(
+                "MONTHLY_SNAPSHOT_RECORD_ID_CONFLICT",
+                "monthly snapshot record identities conflict after normalization",
             )
         semantic_keys: list[tuple[str, str, str]] = []
         try:

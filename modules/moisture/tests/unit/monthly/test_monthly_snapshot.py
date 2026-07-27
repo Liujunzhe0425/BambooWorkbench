@@ -233,7 +233,7 @@ def test_snapshot_rejects_duplicate_but_accepts_similar_record_ids(
     duplicate["records"][1]["record_id"] = duplicate["records"][0]["record_id"]
     with pytest.raises(MonthlySnapshotError) as duplicate_error:
         MonthlySnapshot.from_payload(duplicate)
-    assert duplicate_error.value.code == "MONTHLY_SNAPSHOT_INVALID"
+    assert duplicate_error.value.code == "MONTHLY_SNAPSHOT_RECORD_ID_CONFLICT"
 
     similar = json.loads(json.dumps(payload))
     similar["records"][0]["record_id"] = "供应商甲原竹丝水分检测（1）"

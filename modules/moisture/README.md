@@ -135,8 +135,9 @@ powershell -ExecutionPolicy Bypass -File modules\moisture\build_portable_runtime
 - 统一管理进程覆盖 27 个公开操作，并保留旧 v1.0 四操作；
 - 主框架经验/规则管理页面通过 ManagementService/Runner 调用独立管理进程；
 - TaskService 创建任务时固定 `{version, sha256}`，draft/finalize 不重新选择 active；
-- v1.3.1 私有月度快照支持稳定、安全的 Unicode 业务记录 ID；公共 Schema、
-  finalize 快照、离线累计和确认学习适配保持不变；
+- v1.3.1 私有月度快照支持稳定、安全的 Unicode 业务记录 ID；源文件名生成 ID
+  时清除首尾 Unicode 空白，内部空格保持不变。规范化后冲突会整批失败且不覆盖
+  任何记录；公共 Schema、finalize 快照、离线累计和确认学习适配保持不变；
 - 框架 PR #68 已解除月度 Runner 和非月度 AI report 快照边界阻塞；
 - 真实月度累计、全局 AI 允许/拒绝和离线降级均纳入模块框架回归。
 
