@@ -40,7 +40,7 @@ from moisture.application.run_result import InternalMoistureRunResult, InternalO
 from moisture.contract.confirmation_reader import read_confirmation_bundle
 from moisture.contract.job_models import JobRequest
 from moisture.contract.mapper import map_run_result
-from moisture.contract.monthly_snapshot import write_monthly_snapshot
+from moisture.contract.monthly_snapshot import MonthlySnapshotError, write_monthly_snapshot
 from moisture.contract.service_response_reader import read_service_responses
 from moisture.infrastructure.atomic_write import AtomicResultWriter
 from moisture.ports.writers import KnowledgeCitation, WorkbookReport
@@ -293,7 +293,12 @@ def run_finalize(job: JobRequest, pipeline: DeterministicPipeline | None = None)
             for artifact in completed_artifacts:
                 artifact.unlink(missing_ok=True)
             business_failed = True
-            errors = (*errors, f"ARTIFACT_WRITE_FAILED: {type(error).__name__}")
+            error_code = (
+                error.code
+                if isinstance(error, MonthlySnapshotError)
+                else type(error).__name__
+            )
+            errors = (*errors, f"ARTIFACT_WRITE_FAILED: {error_code}")
 
     internal = InternalMoistureRunResult(
         job_id=job.job_id,

@@ -14,6 +14,7 @@ sys.path.insert(0, str(MODULE_ROOT / "tests"))
 from moisture.application.draft_orchestrator import run_draft
 from moisture.application.finalize_orchestrator import run_finalize
 from moisture.contract.job_models import JobPhase
+from moisture.contract.monthly_snapshot import MonthlySnapshotError
 from integration.t19_helpers import (
     governed_workbook,
     job,
@@ -81,6 +82,52 @@ def test_finalize_with_period_publishes_hidden_monthly_snapshot(
     assert all(
         output["path"] != snapshot["path"] for output in result["outputs"]
     )
+
+
+def test_finalize_preserves_sanitized_monthly_snapshot_error_code(
+    tmp_path: Path,
+    workbook_factory,
+    monkeypatch,
+) -> None:
+    from moisture.application import finalize_orchestrator
+
+    root = rule_root(tmp_path / "module", "high")
+    source = governed_workbook(workbook_factory, tmp_path / "source.xlsx", "high")
+    final_dir = tmp_path / "final"
+
+    def reject_snapshot(**_kwargs):
+        raise MonthlySnapshotError(
+            "MONTHLY_SNAPSHOT_INVALID",
+            r"private detail from D:\customer\source.xlsx",
+        )
+
+    monkeypatch.setattr(
+        finalize_orchestrator,
+        "build_monthly_snapshot",
+        reject_snapshot,
+    )
+    assert (
+        run_finalize(
+            job(
+                source,
+                final_dir,
+                phase=JobPhase.FINALIZE,
+                period=(2026, 7),
+            ),
+            pipeline(root),
+        )
+        == 0
+    )
+
+    result = json.loads((final_dir / "result.json").read_text(encoding="utf-8"))
+    assert result["status"] == "failed"
+    assert result["monthly_snapshot"] is None
+    assert result["outputs"] == []
+    assert result["errors"] == [
+        "ARTIFACT_WRITE_FAILED: MONTHLY_SNAPSHOT_INVALID"
+    ]
+    assert "MonthlySnapshotError" not in json.dumps(result)
+    assert "customer" not in json.dumps(result).lower()
 
 
 class _KnowledgePipeline:

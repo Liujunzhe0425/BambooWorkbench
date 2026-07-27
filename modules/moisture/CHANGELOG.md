@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.1 - 2026-07-27
+
+- 修复真实中文、空格和全角括号业务 `record_id` 与私有月度快照 Schema
+  不一致的问题；业务 ID 在重复运行中保持稳定、唯一且可解释。
+- 新增独立的安全 Unicode 业务 ID 合同，继续拒绝绝对路径、目录分隔符、
+  路径穿越片段、控制字符、首尾空白和重复 ID，不放宽快照唯一性约束。
+- finalize 写快照失败时保留脱敏稳定错误码（例如
+  `MONTHLY_SNAPSHOT_INVALID`），不再只暴露异常类名。
+- 补充 Unicode、相似文件名、重复 ID、非法字符以及
+  Registry → TaskService → BAT → 年份确认 → finalize → snapshot →
+  offline rollup 完整链路测试。
+- 不修改 Excel、公式、Decimal 精度、阈值、颜色、统计口径、人工确认规则
+  或中央工作台版本。
+
 ## 1.3.0 - 2026-07-26
 
 - 对齐工作台 v1.3.0 公共月度累计合同，并继续保持
