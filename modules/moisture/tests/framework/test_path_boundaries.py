@@ -65,7 +65,7 @@ def test_formal_bat_runs_from_unrelated_current_directory(tmp_path: Path) -> Non
     )
 
     assert completed.returncode == 0
-    assert completed.stdout.strip() == "1.3.1"
+    assert completed.stdout.strip() == "1.3.2"
     assert completed.stderr == ""
 
 

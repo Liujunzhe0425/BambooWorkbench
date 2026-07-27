@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 MODULE_ID = "boiling"
-MODULE_VERSION = "1.3.1"
+MODULE_VERSION = "1.3.2"
 SNAPSHOT_FORMAT = "module-owned-v1"
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 WINDOWS_ABSOLUTE_PATTERN = re.compile(r"^[A-Za-z]:[\\/]")

@@ -90,11 +90,12 @@ def process_workbook(
             _confirmation(
                 path,
                 "complaint_date",
-                "提出质量问题/报修日期为空或无法识别；未使用订单、交货或文件日期代替",
-                complaint_date_raw or None,
+                "提出质量问题/报修日期为空或无法识别；请明确填写完整日期（YYYY-MM-DD），"
+                "模块不会使用订单、交货或文件日期代替",
+                None,
                 [],
                 0.0,
-                False,
+                True,
             )
         )
     elif year is None:
@@ -102,11 +103,12 @@ def process_workbook(
             _confirmation(
                 path,
                 "complaint_date",
-                "提出质量问题/报修日期未注明年份；已保留原月日并归入“年份未注明”统计",
-                complaint_date,
+                "提出质量问题/报修日期未注明年份；原始月日仅供参考，请明确填写完整日期"
+                "（YYYY-MM-DD），模块不会猜测年份",
+                None,
                 [],
                 date_confidence,
-                False,
+                True,
             )
         )
 
@@ -839,14 +841,16 @@ def _confirmation(
     confidence: float,
     blocking: bool,
 ) -> dict[str, Any]:
+    is_date = field == "complaint_date"
     return {
         "source_file": path.name,
         "field": field,
         "reason": reason,
         "suggested_value": suggested_value,
         "options": options,
+        "value_type": "date" if is_date else "text",
         "confidence": confidence,
-        "blocking": blocking,
-        "batch_applicable": True,
-        "rememberable": True,
+        "blocking": True if is_date else blocking,
+        "batch_applicable": not is_date,
+        "rememberable": not is_date,
     }

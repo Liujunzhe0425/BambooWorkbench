@@ -127,6 +127,15 @@ class ResultCenterPage(QWidget):
             self.ai_notice.setText(descriptions.get(reason, "AI 报告已安全降级，未生成虚假结论。"))
             self.ai_notice.setVisible(True)
             return
+        if result.warnings:
+            timed_out = any("请求超时" in warning for warning in result.warnings)
+            self.ai_notice.setText(
+                "部分 AI 辅助请求响应超时，已使用离线结果；不影响业务处理和人工复核。"
+                if timed_out
+                else "部分 AI 辅助分析已安全降级；业务处理和人工复核仍可继续。"
+            )
+            self.ai_notice.setVisible(True)
+            return
         generated = any(
             "ai_analysis_report" in Path(output.path).stem.casefold()
             for output in result.outputs

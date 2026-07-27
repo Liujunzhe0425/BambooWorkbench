@@ -1,6 +1,7 @@
 import os
 import re
 import tempfile
+from datetime import date
 from pathlib import Path
 
 from core.contracts.confirmation import ConfirmationAnswer, ConfirmationBundle
@@ -84,6 +85,24 @@ class ConfirmationService:
         missing = required - supplied
         if missing:
             raise ValueError(f"missing blocking confirmations: {sorted(missing)}")
+        answer_by_id = {answer.confirmation_id: answer for answer in answers}
+        prompt_by_id = {prompt.confirmation_id: prompt for prompt in prompts}
+        for confirmation_id, answer in answer_by_id.items():
+            prompt = prompt_by_id[confirmation_id]
+            text = str(answer.value).strip() if answer.value is not None else ""
+            if prompt.blocking and not text:
+                raise ValueError(f"blocking confirmation is empty: {confirmation_id}")
+            if prompt.value_type == "date":
+                try:
+                    parsed = date.fromisoformat(text)
+                except ValueError as error:
+                    raise ValueError(
+                        f"date confirmation must use YYYY-MM-DD: {confirmation_id}"
+                    ) from error
+                if parsed.isoformat() != text:
+                    raise ValueError(
+                        f"date confirmation must use YYYY-MM-DD: {confirmation_id}"
+                    )
 
         bundle = ConfirmationBundle(job_id=job_id, answers=answers)
         path = resolve_contained_target(
