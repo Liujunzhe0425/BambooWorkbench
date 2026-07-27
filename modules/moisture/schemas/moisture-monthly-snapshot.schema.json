@@ -37,6 +37,12 @@
       "type": "string",
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
     },
+    "business_record_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 235,
+      "pattern": "^(?!\\s)(?!.*\\s$)(?!.*\\.\\.)[^/\\\\\\u0000-\\u001f\\u007f]+$"
+    },
     "sha256": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
@@ -270,7 +276,7 @@
         "traceability"
       ],
       "properties": {
-        "record_id": {"$ref": "#/$defs/version"},
+        "record_id": {"$ref": "#/$defs/business_record_id"},
         "business_fingerprint": {"$ref": "#/$defs/sha256"},
         "supplier": {"$ref": "#/$defs/short_text"},
         "material_type": {"$ref": "#/$defs/short_text"},

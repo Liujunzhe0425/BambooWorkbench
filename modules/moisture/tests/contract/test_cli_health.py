@@ -367,7 +367,7 @@ def test_repository_venv_runs_when_no_runtime_is_declared() -> None:
     completed = run_cli("version", env=env)
 
     assert completed.returncode == 0
-    assert completed.stdout == "1.3.0\n"
+    assert completed.stdout == "1.3.1\n"
     assert completed.stderr == ""
 
 
@@ -405,7 +405,7 @@ def test_active_repository_environment_runs_all_contract_commands(tmp_path: Path
     run = run_cli("run", "--job", str(job_file), env=env)
 
     assert version.returncode == 0
-    assert version.stdout == "1.3.0\n"
+    assert version.stdout == "1.3.1\n"
     assert version.stderr == ""
     assert self_check.returncode == 0
     assert self_check.stdout == "ok\n"
