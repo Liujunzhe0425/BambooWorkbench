@@ -467,17 +467,23 @@ def test_finalize_writes_all_three_reviewed_amounts_to_every_output(tmp_path: Pa
         "month": 5,
     }
 
-    mismatched_output = tmp_path / "mismatched-final-output"
-    mismatched_payload = {
-        **final_payload,
-        "job_id": "acceptance-final-mismatched-period",
-        "output_dir": str(mismatched_output),
-        "period_month": 4,
-    }
-    mismatched = _run(tmp_path, mismatched_payload, "mismatched-final-job")
+    mismatched_output = tmp_path / "mismatched-draft-output"
+    mismatched_payload = _job(
+        [source],
+        mismatched_output,
+        job_id="acceptance-draft-mismatched-period",
+        task_name="售后中央月度验收任务",
+        period_year=2026,
+        period_month=4,
+        learning_enabled=True,
+    )
+    mismatched = _run(tmp_path, mismatched_payload, "mismatched-draft-job")
     assert mismatched["status"] == "failed"
     assert mismatched.get("monthly_snapshot") is None
+    assert mismatched["service_requests"] == []
+    assert mismatched["confirmations"] == []
+    assert mismatched["outputs"] == []
     assert any(
-        "MONTHLY_SNAPSHOT_TARGET_PERIOD_EMPTY" in error
+        "TASK_PERIOD_ZERO_MATCH" in error
         for error in mismatched["errors"]
     )

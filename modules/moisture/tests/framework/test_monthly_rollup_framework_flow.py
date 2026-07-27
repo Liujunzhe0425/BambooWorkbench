@@ -28,12 +28,14 @@ def test_real_framework_finalize_snapshot_and_offline_rollup(
     context = build_context(tmp_path / "app-data", use_mocks=False)
     try:
         module = context.registry.get(ModuleId.MOISTURE)
-        assert module.manifest.module_version == "1.3.0"
+        assert module.manifest.module_version == "1.3.1"
         assert "monthly_rollup" in module.manifest.capabilities
         assert module.manifest.monthly_rollup is not None
 
+        source_stem = "001-4.10供应商甲原竹丝水分检测（2） "
+        record_id = source_stem.strip()
         source = workbook_factory(
-            tmp_path / "source.xlsx",
+            tmp_path / f"{source_stem}.xlsx",
             moisture_values=(0.50,),
             mass_values=((100, 50, 0),),
             arrival_date="4.8",
@@ -89,6 +91,12 @@ def test_real_framework_finalize_snapshot_and_offline_rollup(
         assert final["monthly_snapshot"]["year"] == 2026
         assert final["monthly_snapshot"]["month"] == 4
         assert Path(final["monthly_snapshot"]["path"]).is_file()
+        snapshot_payload = json.loads(
+            Path(final["monthly_snapshot"]["path"]).read_text(encoding="utf-8")
+        )
+        assert [item["record_id"] for item in snapshot_payload["records"]] == [
+            record_id
+        ]
         assert all(
             output["path"] != final["monthly_snapshot"]["path"]
             for output in final["outputs"]
@@ -99,14 +107,20 @@ def test_real_framework_finalize_snapshot_and_offline_rollup(
         assert slot["official_job_id"] == job_id
         task = context.task_repository.get(job_id)
         assert task["status"] == "success"
-        output_names = {
-            Path(str(item["path"])).name
-            for item in context.task_repository.list_outputs(job_id)
-        }
+        registered_outputs = context.task_repository.list_outputs(job_id)
+        output_names = {Path(str(item["path"])).name for item in registered_outputs}
         assert output_names == {
             "moisture_summary.xlsx",
             "analysis_report.md",
             "moisture_business_records.json",
         }
+        business_path = next(
+            Path(str(item["path"]))
+            for item in registered_outputs
+            if Path(str(item["path"])).name == "moisture_business_records.json"
+        )
+        business = json.loads(business_path.read_text(encoding="utf-8"))
+        assert [item["record_id"] for item in business["records"]] == [record_id]
+        assert source.name == f"{source_stem}.xlsx"
     finally:
         context.close()

@@ -263,6 +263,8 @@ def test_theme_applies_approved_visual_identity(qapp, app_context) -> None:
     assert "QTableWidget" in stylesheet
     assert "QListWidget" in stylesheet
     assert "QLineEdit" in stylesheet
+    assert 'QPushButton[historyModule="true"]:checked' in stylesheet
+    assert 'QPushButton[monthCard="true"]' in stylesheet
     assert "#navigation QPushButton:focus" in stylesheet
     assert "border: 2px solid #F1B232" in stylesheet
     checked_rule = stylesheet.split("#navigation QPushButton:checked", 1)[1].split("}", 1)[0]

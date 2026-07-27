@@ -71,7 +71,7 @@ def test_module_launcher_reports_version():
         timeout=10,
     )
     assert completed.returncode == 0, completed.stderr
-    assert completed.stdout.strip() == "after_sales 1.3.0"
+    assert completed.stdout.strip() == "after_sales 1.3.1"
 
 
 def test_frozen_module_root_resolves_to_portable_module(monkeypatch):

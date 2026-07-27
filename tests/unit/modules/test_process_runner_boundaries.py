@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from core.contracts.enums import JobPhase, ModuleId, RunMode
+from core.contracts.enums import JobPhase, ModuleId, RunMode, TaskStatus
 from core.contracts.job import JobRequest
 from core.modules.process_runner import _requires_monthly_snapshot, resolve_contained_file
 
@@ -43,9 +43,19 @@ def _finalize_job(*, with_period: bool) -> JobRequest:
 
 
 def test_only_period_bound_finalize_requires_monthly_snapshot() -> None:
-    assert _requires_monthly_snapshot(_finalize_job(with_period=True), True) is True
-    assert _requires_monthly_snapshot(_finalize_job(with_period=False), True) is False
-    assert _requires_monthly_snapshot(_finalize_job(with_period=True), False) is False
+    job = _finalize_job(with_period=True)
+
+    assert _requires_monthly_snapshot(job, True, TaskStatus.SUCCESS) is True
+    assert _requires_monthly_snapshot(job, True, TaskStatus.FAILED) is False
+    assert _requires_monthly_snapshot(job, True, TaskStatus.PARTIAL_SUCCESS) is True
+    assert _requires_monthly_snapshot(job, True, TaskStatus.CANCELLED) is False
+    assert (
+        _requires_monthly_snapshot(
+            _finalize_job(with_period=False), True, TaskStatus.SUCCESS
+        )
+        is False
+    )
+    assert _requires_monthly_snapshot(job, False, TaskStatus.SUCCESS) is False
 
 
 def test_resolve_contained_file_rejects_symlink_escape(tmp_path: Path) -> None:

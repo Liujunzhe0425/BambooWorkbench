@@ -1,0 +1,43 @@
+{
+  "schema_version": "1.0",
+  "module_version": "1.3.1",
+  "task_period_checks": {
+    "all_match": {
+      "continue_framework_ai": true,
+      "period_scope_confirmation": false
+    },
+    "partial_cross_period": {
+      "continue_framework_ai": true,
+      "period_scope_confirmation": true,
+      "snapshot_uses_target_period_only": true,
+      "known_business_dates_are_never_rewritten": true
+    },
+    "definitive_zero_match": {
+      "result_status": "failed",
+      "stable_error_code": "TASK_PERIOD_ZERO_MATCH",
+      "framework_ai_request_count": 0,
+      "confirmation_count": 0,
+      "formal_output_count": 0,
+      "monthly_snapshot_created": false,
+      "learning_contribution_created": false
+    },
+    "unknown_year_or_month": {
+      "requires_human_date_confirmation": true,
+      "silent_target_period_inference": false,
+      "unresolved_error_code": "TASK_PERIOD_DATE_UNRESOLVED"
+    }
+  },
+  "desensitization": {
+    "includes_target_period": true,
+    "includes_known_period_distribution": true,
+    "includes_target_match_count": true,
+    "includes_unknown_year_count": true,
+    "excludes_customer_names": true,
+    "excludes_absolute_paths": true,
+    "excludes_original_workbook_text": true
+  },
+  "framework_change_request": {
+    "path": "docs/framework-change-requests/FCR-after_sales-20260727-period-conflict-actions.md",
+    "required_before_module_merge": false
+  }
+}

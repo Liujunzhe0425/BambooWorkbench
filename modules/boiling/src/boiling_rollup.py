@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 MODULE_ID = "boiling"
-MODULE_VERSION = "1.3.0"
+MODULE_VERSION = "1.3.1"
 SNAPSHOT_FORMAT = "module-owned-v1"
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 WINDOWS_ABSOLUTE_PATTERN = re.compile(r"^[A-Za-z]:[\\/]")
@@ -63,7 +63,10 @@ def contains_absolute_path(value):
         return any(contains_absolute_path(item) for item in value)
     if not isinstance(value, str):
         return False
-    return bool(WINDOWS_ABSOLUTE_PATTERN.match(value)) or value.startswith(("/", "\\\\"))
+    text = value.strip()
+    if text == "/":
+        return False
+    return bool(WINDOWS_ABSOLUTE_PATTERN.match(text)) or text.startswith(("/", "\\\\"))
 
 
 def validate_snapshot(snapshot, *, expected_year=None, expected_month=None):

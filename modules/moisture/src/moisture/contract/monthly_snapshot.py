@@ -19,6 +19,7 @@ from moisture.runtime_paths import module_root
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SNAPSHOT_SCHEMA = "moisture-monthly-snapshot.schema.json"
+_MAX_RECORD_ID_LENGTH = 235
 
 
 class MonthlySnapshotError(ValueError):
@@ -27,6 +28,21 @@ class MonthlySnapshotError(ValueError):
     def __init__(self, code: str, message: str) -> None:
         self.code = code
         super().__init__(message)
+
+
+def _is_safe_business_record_id(value: object) -> bool:
+    """Accept stable Unicode display IDs while rejecting filesystem syntax."""
+
+    if not isinstance(value, str) or not 1 <= len(value) <= _MAX_RECORD_ID_LENGTH:
+        return False
+    if value != value.strip() or ".." in value:
+        return False
+    return not any(
+        character in "/\\"
+        or ord(character) < 0x20
+        or ord(character) == 0x7F
+        for character in value
+    )
 
 
 def _canonical_mapping(payload: Mapping[str, Any]) -> dict[str, Any]:
@@ -156,10 +172,17 @@ class MonthlySnapshot:
                 "monthly snapshot rule identity is invalid",
             )
         record_ids = [record.record_id for record in self.records]
-        if not record_ids or len(record_ids) != len(set(record_ids)):
+        if not record_ids or any(
+            not _is_safe_business_record_id(record_id) for record_id in record_ids
+        ):
             raise MonthlySnapshotError(
                 "MONTHLY_SNAPSHOT_INVALID",
-                "monthly snapshot records must be non-empty and unique",
+                "monthly snapshot record identities are invalid",
+            )
+        if len(record_ids) != len(set(record_ids)):
+            raise MonthlySnapshotError(
+                "MONTHLY_SNAPSHOT_RECORD_ID_CONFLICT",
+                "monthly snapshot record identities conflict after normalization",
             )
         semantic_keys: list[tuple[str, str, str]] = []
         try:

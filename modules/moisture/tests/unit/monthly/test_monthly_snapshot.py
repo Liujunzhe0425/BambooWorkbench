@@ -128,7 +128,7 @@ def _batch(
 def _snapshot(tmp_path: Path) -> MonthlySnapshot:
     return build_monthly_snapshot(
         phase="finalize",
-        module_version="1.3.0",
+        module_version="1.3.1",
         year=2026,
         month=3,
         rule_version="rules-v2",
@@ -165,12 +165,88 @@ def test_builder_keeps_only_target_month_and_serializes_deterministically(
     assert canonical_snapshot_bytes(rebuilt) == canonical_snapshot_bytes(snapshot)
 
 
+def test_builder_accepts_stable_unicode_business_record_ids(tmp_path: Path) -> None:
+    snapshot = build_monthly_snapshot(
+        phase="finalize",
+        module_version="1.3.1",
+        year=2026,
+        month=4,
+        rule_version="rules-v2",
+        rule_sha256=RULE_HASH,
+        batches=(
+            _batch(
+                tmp_path,
+                record_id="002-4.10供应商甲原竹丝水分检测（2）",
+                test_date=date(2026, 4, 10),
+            ),
+            _batch(
+                tmp_path,
+                record_id="001-4.10 供应商甲 原竹丝水分检测",
+                test_date=date(2026, 4, 9),
+            ),
+        ),
+    )
+
+    payload = snapshot.to_payload()
+    assert [record["record_id"] for record in payload["records"]] == [
+        "001-4.10 供应商甲 原竹丝水分检测",
+        "002-4.10供应商甲原竹丝水分检测（2）",
+    ]
+    assert payload["records"][1]["traceability"]["source_display_name"] == (
+        "002-4.10供应商甲原竹丝水分检测（2）.xlsx"
+    )
+    assert MonthlySnapshot.from_payload(payload).to_payload() == payload
+
+
+@pytest.mark.parametrize(
+    "record_id",
+    (
+        "../客户批次",
+        r"C:\客户\批次",
+        "客户/批次",
+        "客户\x00批次",
+        "客户\x1f批次",
+        " 客户批次",
+        "客户批次 ",
+    ),
+)
+def test_snapshot_rejects_path_like_or_control_character_record_ids(
+    tmp_path: Path,
+    record_id: str,
+) -> None:
+    payload = _snapshot(tmp_path).to_payload()
+    payload["records"][0]["record_id"] = record_id
+
+    with pytest.raises(MonthlySnapshotError) as error:
+        MonthlySnapshot.from_payload(payload)
+
+    assert error.value.code == "MONTHLY_SNAPSHOT_INVALID"
+    assert str(tmp_path) not in str(error.value)
+    assert record_id not in str(error.value)
+
+
+def test_snapshot_rejects_duplicate_but_accepts_similar_record_ids(
+    tmp_path: Path,
+) -> None:
+    payload = _snapshot(tmp_path).to_payload()
+    duplicate = json.loads(json.dumps(payload))
+    duplicate["records"][1]["record_id"] = duplicate["records"][0]["record_id"]
+    with pytest.raises(MonthlySnapshotError) as duplicate_error:
+        MonthlySnapshot.from_payload(duplicate)
+    assert duplicate_error.value.code == "MONTHLY_SNAPSHOT_RECORD_ID_CONFLICT"
+
+    similar = json.loads(json.dumps(payload))
+    similar["records"][0]["record_id"] = "供应商甲原竹丝水分检测（1）"
+    similar["records"][1]["record_id"] = "供应商甲原竹丝水分检测（2）"
+    assert MonthlySnapshot.from_payload(similar).to_payload() == similar
+
+
 def test_builder_requires_finalize_target_records_and_matching_rule_identity(
     tmp_path: Path,
 ) -> None:
     batch = _batch(tmp_path, record_id="batch-001", test_date=date(2026, 3, 8))
     arguments = {
-        "module_version": "1.3.0",
+        "module_version": "1.3.1",
         "year": 2026,
         "month": 3,
         "rule_version": "rules-v2",

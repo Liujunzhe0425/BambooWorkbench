@@ -263,6 +263,25 @@ QPushButton[secondary="true"] {
     font-size: 11px;
 }
 
+QPushButton[historyModule="true"] {
+    min-width: 72px;
+    color: #365B49;
+    background: #EEF2EA;
+    border: 1px solid transparent;
+    font-weight: 600;
+}
+
+QPushButton[historyModule="true"]:checked {
+    color: #FFFDF8;
+    background: #2F7D62;
+    border-color: #23674F;
+}
+
+QPushButton[monthCard="true"] {
+    min-height: 104px;
+    font-size: 14px;
+}
+
 QLineEdit, QTextEdit, QPlainTextEdit, QComboBox, QSpinBox {
     color: #294D3C;
     background: #FFFDF8;
