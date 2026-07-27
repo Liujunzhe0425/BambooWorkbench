@@ -1619,11 +1619,24 @@ def test_finalize_closes_usage_and_dependent_conclusion_conflicts_in_one_round(t
     )
     draft_output = tmp_path / "draft"
     draft_job_path = tmp_path / "draft-job.json"
+    draft_job = make_job(sample, draft_output)
+    draft_job.update(
+        {
+            "task_name": "水煮确认集合稳定性回归",
+            "period_year": 2026,
+            "period_month": 4,
+            "learning_enabled": True,
+        }
+    )
     draft_job_path.write_text(
-        json.dumps(make_job(sample, draft_output), ensure_ascii=False), encoding="utf-8"
+        json.dumps(draft_job, ensure_ascii=False),
+        encoding="utf-8",
     )
     assert boiling_module.run_job(draft_job_path) == 0
     draft_result = load_result(draft_output)
+    draft_confirmation_ids = {
+        item["confirmation_id"] for item in draft_result["confirmations"]
+    }
     assert any(item["field"] == "product_usage" for item in draft_result["confirmations"])
     assert any(
         item["field"].startswith("密度｜combined-conflicts.xlsx｜")
@@ -1655,6 +1668,14 @@ def test_finalize_closes_usage_and_dependent_conclusion_conflicts_in_one_round(t
         confirmation_file=str(confirmation_path),
     )
     final_job["job_id"] = "TEST-JOB-002"
+    final_job.update(
+        {
+            "task_name": "水煮确认集合稳定性回归",
+            "period_year": 2026,
+            "period_month": 4,
+            "learning_enabled": True,
+        }
+    )
     final_job_path = tmp_path / "final-job.json"
     final_job_path.write_text(json.dumps(final_job, ensure_ascii=False), encoding="utf-8")
     assert boiling_module.run_job(final_job_path) == 0
@@ -1662,7 +1683,27 @@ def test_finalize_closes_usage_and_dependent_conclusion_conflicts_in_one_round(t
 
     assert result["status"] == "success"
     assert result["confirmations"] == []
+    assert result["errors"] == []
+    assert result["monthly_snapshot"] is not None
+    assert (
+        result["monthly_snapshot"]["year"],
+        result["monthly_snapshot"]["month"],
+    ) == (2026, 4)
+    assert all(item["type"] != "monthly_snapshot" for item in result["outputs"])
+    snapshot = json.loads(
+        Path(result["monthly_snapshot"]["path"]).read_text(encoding="utf-8")
+    )
+    final_decision_ids = {
+        decision["confirmation_id"]
+        for record in snapshot["payload"]["records"]
+        for decision in record["final_confirmation_decisions"]
+    }
+    assert final_decision_ids <= draft_confirmation_ids
     assert {item["field"] for item in result["anomalies"]} >= {"密度", "膨胀率"}
+    assert any(
+        item["rule_id"] == "BOILING-FINALIZE-NONBLOCKING-001"
+        for item in result["anomalies"]
+    )
 
 
 def test_repeated_input_and_answers_have_stable_ids_and_business_outputs(tmp_path):
