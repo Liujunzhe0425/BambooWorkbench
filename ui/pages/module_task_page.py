@@ -1,7 +1,7 @@
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -11,9 +11,11 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QListWidget,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -44,9 +46,22 @@ class ModuleTaskPage(QWidget):
         self.v13_enabled = source_root is not None
         self._name_customized = False
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 24, 30, 28)
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(30, 24, 30, 28)
+        page_layout.setSpacing(0)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setObjectName("moduleTaskScrollArea")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.scroll_content = QWidget()
+        self.scroll_content.setObjectName("moduleTaskScrollContent")
+        layout = QVBoxLayout(self.scroll_content)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         self.title = QLabel("创建任务")
         self.title.setProperty("pageTitle", True)
         self.subtitle = QLabel("导入原始文件后，由对应模块按既定规则生成表格、图表与分析结果。")
@@ -171,6 +186,8 @@ class ModuleTaskPage(QWidget):
         layout.addWidget(self.title)
         layout.addWidget(self.subtitle)
         layout.addWidget(card, 1)
+        self.scroll_area.setWidget(self.scroll_content)
+        page_layout.addWidget(self.scroll_area)
         self._update_buttons()
 
     def set_module(

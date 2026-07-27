@@ -3,7 +3,7 @@ import shutil
 from pathlib import Path
 from uuid import uuid4
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -13,11 +13,13 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -54,9 +56,22 @@ class KnowledgePage(QWidget):
         self.setObjectName("page-knowledge")
         self.setAccessibleName("知识库")
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(30, 24, 30, 28)
+        page_layout = QVBoxLayout(self)
+        page_layout.setContentsMargins(30, 24, 30, 28)
+        page_layout.setSpacing(0)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setObjectName("knowledgeScrollArea")
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.scroll_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.scroll_content = QWidget()
+        self.scroll_content.setObjectName("knowledgeScrollContent")
+        layout = QVBoxLayout(self.scroll_content)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetMinimumSize)
         title = QLabel("知识库")
         title.setProperty("pageTitle", True)
         self.message_label = QLabel(self.message)
@@ -181,6 +196,8 @@ class KnowledgePage(QWidget):
         learning_layout.addWidget(self.learning_list)
         learning_layout.addLayout(learning_actions)
         layout.addWidget(learning_card)
+        self.scroll_area.setWidget(self.scroll_content)
+        page_layout.addWidget(self.scroll_area)
         self.refresh_records()
         self.refresh_learning()
 
