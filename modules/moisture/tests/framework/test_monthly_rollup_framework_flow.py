@@ -28,7 +28,7 @@ def test_real_framework_finalize_snapshot_and_offline_rollup(
     context = build_context(tmp_path / "app-data", use_mocks=False)
     try:
         module = context.registry.get(ModuleId.MOISTURE)
-        assert module.manifest.module_version == "1.3.1"
+        assert module.manifest.module_version == "1.3.2"
         assert "monthly_rollup" in module.manifest.capabilities
         assert module.manifest.monthly_rollup is not None
 

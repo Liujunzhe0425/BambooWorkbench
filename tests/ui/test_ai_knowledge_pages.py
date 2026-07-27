@@ -84,7 +84,8 @@ def test_settings_small_window_scrolls_without_squashing_ai_fields(
         page.scroll_area.verticalScrollBar().maximum()
     )
     qtbot.wait(20)
-    assert page.update_token_edit.height() >= 24
+    assert page.update_token_edit.isHidden()
+    assert "无需令牌" in page.update_credential_label.text()
     assert page.check_update_button.height() >= 24
 
 

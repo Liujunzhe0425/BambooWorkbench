@@ -486,6 +486,39 @@ def test_result_center_explains_ai_report_degradation(qtbot) -> None:
     assert "未生成虚假报告" in page.ai_notice.text()
 
 
+def test_result_center_separates_ai_timeout_warning_from_task_failure(qtbot) -> None:
+    from ui.pages.result_center_page import ResultCenterPage
+
+    now = datetime.now(UTC)
+    result = ModuleResult(
+        schema_version="1.0",
+        job_id="after-sales-warning",
+        module_id=ModuleId.AFTER_SALES,
+        module_version="1.3.2",
+        status=TaskStatus.SUCCESS,
+        summary=ResultSummary(
+            input_count=2,
+            processed_count=2,
+            skipped_count=0,
+            failed_count=0,
+            anomaly_count=0,
+            confirmation_count=0,
+        ),
+        warnings=["after-sales-ai-test：请求超时，已使用离线结果。"],
+        errors=[],
+        started_at=now,
+        finished_at=now,
+    )
+    page = ResultCenterPage()
+    qtbot.addWidget(page)
+
+    page.show_result(result)
+
+    assert page.status_label.text() == "任务状态：已完成"
+    assert page.ai_notice.isVisibleTo(page)
+    assert "不影响业务处理" in page.ai_notice.text()
+
+
 def test_structured_json_business_view_uses_readable_table(qtbot) -> None:
     from ui.widgets.output_files import OutputFilesWidget
 

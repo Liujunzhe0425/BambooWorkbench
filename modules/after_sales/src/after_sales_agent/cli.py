@@ -324,7 +324,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                     requests=service_requests,
                 )
                 apply_ai_service_outcome(records, outcome)
-                result["errors"].extend(outcome.errors)
+                result["warnings"].extend(outcome.errors)
             elif job.get("phase") == "finalize":
                 for record in records:
                     _restore_draft_ai_snapshot(record, draft_snapshots)
@@ -864,6 +864,7 @@ def _normalize_confirmations(
             "reason": str(item.get("reason") or "需要人工复核"),
             "suggested_value": item.get("suggested_value"),
             "options": list(item.get("options") or []),
+            "value_type": str(item.get("value_type") or "text"),
             "confidence": max(0.0, min(confidence, 1.0)),
             "blocking": bool(item.get("blocking")),
             "batch_applicable": bool(item.get("batch_applicable", True)),
@@ -1144,6 +1145,7 @@ def _empty_result(job: dict[str, Any], rules: dict[str, Any], started_at: str) -
         "file_results": [],
         "service_requests": [],
         "analysis_summary": None,
+        "warnings": [],
         "errors": [],
         "started_at": started_at,
         "finished_at": None,

@@ -73,7 +73,9 @@ class OpenAICompatibleProvider:
             raise ProviderConfigurationError("provider API key is missing")
         self.base_url = base_url.rstrip("/")
         self._api_key = api_key
-        self.client = client or httpx.Client(timeout=30)
+        self.client = client or httpx.Client(
+            timeout=httpx.Timeout(connect=10.0, read=90.0, write=30.0, pool=10.0)
+        )
 
     def complete(self, request: AIRequest) -> AIResponse:
         payload: dict[str, object] = {

@@ -76,6 +76,17 @@ def test_deepseek_uses_official_openai_compatible_endpoint() -> None:
     assert "deepseek-secret" not in repr(provider)
 
 
+def test_default_online_provider_allows_slow_reads_without_slow_connects() -> None:
+    provider = OpenAICompatibleProvider("https://example.invalid/v1", "secret")
+    try:
+        assert provider.client.timeout.connect == 10.0
+        assert provider.client.timeout.read == 90.0
+        assert provider.client.timeout.write == 30.0
+        assert provider.client.timeout.pool == 10.0
+    finally:
+        provider.client.close()
+
+
 def test_unavailable_provider_fails_explicitly() -> None:
     provider = UnavailableProvider("deepseek", "尚未配置")
     with pytest.raises(ProviderConfigurationError, match="尚未配置"):

@@ -12,7 +12,8 @@ def _release_payload(content: bytes, *, version: str = "1.2.0") -> dict[str, obj
         "tag_name": f"v{version}",
         "name": f"BambooWorkbench {version}",
         "html_url": (
-            f"https://github.com/Liujunzhe0425/BambooWorkbench/releases/tag/v{version}"
+            "https://github.com/Liujunzhe0425/"
+            f"BambooWorkbench-Distribution/releases/tag/v{version}"
         ),
         "draft": False,
         "prerelease": False,
@@ -20,7 +21,7 @@ def _release_payload(content: bytes, *, version: str = "1.2.0") -> dict[str, obj
             {
                 "name": f"BambooWorkbench-Setup-{version}.exe",
                 "url": "https://api.github.com/repos/Liujunzhe0425/"
-                "BambooWorkbench/releases/assets/123",
+                "BambooWorkbench-Distribution/releases/assets/123",
                 "size": len(content),
                 "digest": f"sha256:{hashlib.sha256(content).hexdigest()}",
             }
@@ -28,7 +29,7 @@ def _release_payload(content: bytes, *, version: str = "1.2.0") -> dict[str, obj
     }
 
 
-def test_check_selects_newer_matching_installer_and_download_verifies_hash(
+def test_public_check_is_anonymous_and_download_verifies_hash(
     tmp_path: Path,
 ) -> None:
     content = b"synthetic-installer"
@@ -42,13 +43,13 @@ def test_check_selects_newer_matching_installer_and_download_verifies_hash(
 
     service = GitHubReleaseUpdateService(transport=httpx.MockTransport(handler))
 
-    release = service.check("1.1.0", token="private-read-token")
+    release = service.check("1.1.0")
     assert release is not None
     assert release.version == "1.2.0"
-    installer = service.download(release, tmp_path, token="private-read-token")
+    installer = service.download(release, tmp_path)
 
     assert installer.read_bytes() == content
-    assert seen_authorization == ["Bearer private-read-token"] * 2
+    assert seen_authorization == [None, None]
 
 
 def test_check_ignores_equal_or_older_release() -> None:
@@ -94,10 +95,10 @@ def test_download_removes_partial_file_when_hash_does_not_match(tmp_path: Path) 
     assert list(tmp_path.iterdir()) == []
 
 
-def test_private_repository_404_has_actionable_message() -> None:
+def test_public_distribution_404_has_actionable_message() -> None:
     transport = httpx.MockTransport(
         lambda request: httpx.Response(404, json={"message": "Not Found"}, request=request)
     )
 
-    with pytest.raises(UpdateError, match="只读更新令牌"):
+    with pytest.raises(UpdateError, match="公开更新源暂不可用"):
         GitHubReleaseUpdateService(transport=transport).check("1.1.0")

@@ -264,6 +264,16 @@ def test_unknown_year_can_be_confirmed_without_silent_rewrite(tmp_path: Path) ->
     fields = {prompt["field"] for prompt in draft["confirmations"]}
     assert TASK_PERIOD_SCOPE_FIELD in fields
     assert "complaint_date" in fields
+    date_prompt = next(
+        prompt for prompt in draft["confirmations"] if prompt["field"] == "complaint_date"
+    )
+    assert date_prompt["blocking"] is True
+    assert date_prompt["suggested_value"] is None
+    assert date_prompt["value_type"] == "date"
+    assert date_prompt["batch_applicable"] is False
+    assert date_prompt["rememberable"] is False
+    assert draft["errors"] == []
+    assert draft["warnings"]
 
     confirmation_path = _confirmation_file(tmp_path / "unknown-confirm.json", draft)
     final_output = tmp_path / "unknown-final"

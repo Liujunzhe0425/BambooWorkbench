@@ -1,5 +1,6 @@
 from collections import Counter, defaultdict
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -172,6 +173,11 @@ class ConfirmationsPage(QWidget):
             "仅在任务成功成为正式月度结果后生效；不会修改批准规则、公式或阈值。"
         )
         self.learning_checkbox.toggled.connect(self._draft_edited)
+        self.validation_label = QLabel()
+        self.validation_label.setWordWrap(True)
+        self.validation_label.setProperty("error", True)
+        self.validation_label.setAccessibleName("确认答案校验提示")
+        self.validation_label.setVisible(False)
         self.card = QFrame()
         self.card.setProperty("card", True)
         card_layout = QVBoxLayout(self.card)
@@ -181,6 +187,7 @@ class ConfirmationsPage(QWidget):
         card_layout.addWidget(self.job_selector)
         card_layout.addWidget(self.form_host)
         card_layout.addWidget(self.learning_checkbox)
+        card_layout.addWidget(self.validation_label)
         card_layout.addWidget(self.submit_button, 0)
         self.scroll_content = QWidget()
         self.scroll_content.setObjectName("confirmationScrollContent")
@@ -311,6 +318,8 @@ class ConfirmationsPage(QWidget):
             if remember is not None:
                 remember.setChecked(answer.remember_mapping)
         self.learning_checkbox.setChecked(learning_enabled)
+        self.validation_label.clear()
+        self.validation_label.setVisible(False)
         self.form_layout.addStretch()
         self.form_host.setMinimumHeight(self.form_layout.sizeHint().height())
         self.scroll_content.setMinimumHeight(self.card.sizeHint().height())
@@ -451,6 +460,9 @@ class ConfirmationsPage(QWidget):
         else:
             answer = QLineEdit()
             answer.setText("" if suggested is None else str(suggested))
+            if prompt.value_type == "date":
+                answer.setPlaceholderText("YYYY-MM-DD")
+                answer.setToolTip("请填写完整日期，例如 2026-04-10；系统不会猜测年份。")
         answer.setAccessibleName(f"{prompt.field}的确认答案")
         answer.setAccessibleDescription(prompt.reason)
         self.answer_inputs[prompt.confirmation_id] = answer
@@ -589,6 +601,13 @@ class ConfirmationsPage(QWidget):
         return editor.text()
 
     def _submit(self) -> None:
+        validation_error = self._validation_error()
+        if validation_error:
+            self.validation_label.setText(validation_error)
+            self.validation_label.setVisible(True)
+            return
+        self.validation_label.clear()
+        self.validation_label.setVisible(False)
         answers = self._current_answers()
         if self.current_job_id:
             self.draft_changed.emit(
@@ -607,19 +626,43 @@ class ConfirmationsPage(QWidget):
         for prompt in self.prompts:
             batch = self.batch_checks.get(prompt.confirmation_id)
             remember = self.remember_checks.get(prompt.confirmation_id)
+            value = self._answer_value(self.answer_inputs[prompt.confirmation_id])
+            if prompt.value_type == "date":
+                value = value.strip()
             answers.append(
                 ConfirmationAnswer(
                     confirmation_id=prompt.confirmation_id,
-                    value=self._answer_value(self.answer_inputs[prompt.confirmation_id]),
+                    value=value,
                     apply_to_batch=batch.isChecked() if batch is not None else False,
                     remember_mapping=(remember.isChecked() if remember is not None else False),
                 )
             )
         return answers
 
+    def _validation_error(self) -> str | None:
+        for prompt in self.prompts:
+            editor = self.answer_inputs[prompt.confirmation_id]
+            value = self._answer_value(editor).strip()
+            label = _FIELD_LABELS.get(prompt.field, prompt.field)
+            if prompt.blocking and not value:
+                editor.setFocus()
+                return f"“{label}”为必填项，请填写后再提交。"
+            if prompt.value_type == "date":
+                try:
+                    parsed = date.fromisoformat(value)
+                except ValueError:
+                    editor.setFocus()
+                    return f"“{label}”必须填写完整日期，格式为 YYYY-MM-DD。"
+                if parsed.isoformat() != value:
+                    editor.setFocus()
+                    return f"“{label}”必须填写完整日期，格式为 YYYY-MM-DD。"
+        return None
+
     def _draft_edited(self) -> None:
         if self._rendering or not self.current_job_id:
             return
+        self.validation_label.clear()
+        self.validation_label.setVisible(False)
         answers = self._current_answers()
         enabled = self.learning_checkbox.isChecked()
         self._drafts[self.current_job_id] = (answers, enabled)
