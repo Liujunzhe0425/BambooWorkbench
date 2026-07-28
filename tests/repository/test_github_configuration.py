@@ -79,7 +79,7 @@ def test_workflows_pin_only_github_owned_actions() -> None:
                 assert all(character in "0123456789abcdef" for character in revision)
 
 
-def test_dependabot_and_private_project_policy_files_exist() -> None:
+def test_dependabot_and_public_project_policy_files_exist() -> None:
     dependabot = yaml.safe_load(
         (ROOT / ".github/dependabot.yml").read_text(encoding="utf-8")
     )
@@ -95,7 +95,6 @@ def test_dependabot_and_private_project_policy_files_exist() -> None:
         "SECURITY.md",
         "CONTRIBUTING.md",
         ".github/ISSUE_TEMPLATE/bug_report.yml",
-        ".github/ISSUE_TEMPLATE/module_integration.yml",
     ):
         assert (ROOT / path).is_file()
 

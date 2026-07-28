@@ -13,7 +13,7 @@ def _release_payload(content: bytes, *, version: str = "1.2.0") -> dict[str, obj
         "name": f"BambooWorkbench {version}",
         "html_url": (
             "https://github.com/Liujunzhe0425/"
-            f"BambooWorkbench-Distribution/releases/tag/v{version}"
+            f"BambooWorkbench/releases/tag/v{version}"
         ),
         "draft": False,
         "prerelease": False,
@@ -21,7 +21,7 @@ def _release_payload(content: bytes, *, version: str = "1.2.0") -> dict[str, obj
             {
                 "name": f"BambooWorkbench-Setup-{version}.exe",
                 "url": "https://api.github.com/repos/Liujunzhe0425/"
-                "BambooWorkbench-Distribution/releases/assets/123",
+                "BambooWorkbench/releases/assets/123",
                 "size": len(content),
                 "digest": f"sha256:{hashlib.sha256(content).hexdigest()}",
             }

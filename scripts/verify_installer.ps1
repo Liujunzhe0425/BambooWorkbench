@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $Root = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 $Python = (Resolve-Path (Join-Path $Root '.venv\Scripts\python.exe')).Path
-$Installer = Join-Path $Root 'installer-output\BambooWorkbench-Setup-1.3.4.exe'
+$Installer = Join-Path $Root 'installer-output\BambooWorkbench-Setup-1.3.5.exe'
 if (-not (Test-Path -LiteralPath $Installer -PathType Leaf)) {
     throw 'Installer does not exist. Run build_installer.ps1 first.'
 }
@@ -50,7 +50,7 @@ try {
     Invoke-HiddenAndWait $Executable @('--smoke-test') 90
     Invoke-HiddenAndWait $Executable @('--demo-smoke-test') 90
     & $Python (Join-Path $Root 'scripts\verify_auto_update.py') `
-        --installer $Installer --install-dir $InstallDir --version '1.3.4'
+        --installer $Installer --install-dir $InstallDir --version '1.3.5'
     if ($LASTEXITCODE -ne 0) {
         throw "Auto-update verification failed with exit code $LASTEXITCODE"
     }

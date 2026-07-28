@@ -1,12 +1,2 @@
-# 框架负责人
+# Repository maintenance and security review
 * @Liujunzhe0425
-/app/ @Liujunzhe0425
-/core/ @Liujunzhe0425
-/ui/ @Liujunzhe0425
-/contracts/ @Liujunzhe0425
-/.github/ @Liujunzhe0425
-
-# 三个业务模块负责人
-/modules/moisture/ @bohan1234 @Liujunzhe0425
-/modules/boiling/ @anyuyu1 @Liujunzhe0425
-/modules/after_sales/ @initial-ovo @Liujunzhe0425

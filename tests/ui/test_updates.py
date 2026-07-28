@@ -10,12 +10,12 @@ from ui.updates import UpdateController
 
 def _release(*, size: int = 100 * 1024 * 1024) -> ReleaseUpdate:
     return ReleaseUpdate(
-        version="1.3.4",
-        tag_name="v1.3.4",
-        title="BambooWorkbench v1.3.4",
-        notes_url="https://github.com/Liujunzhe0425/BambooWorkbench-Distribution/releases/tag/v1.3.4",
-        asset_name="BambooWorkbench-Setup-1.3.4.exe",
-        asset_url="https://api.github.com/repos/Liujunzhe0425/BambooWorkbench-Distribution/releases/assets/1",
+        version="1.3.5",
+        tag_name="v1.3.5",
+        title="BambooWorkbench v1.3.5",
+        notes_url="https://github.com/Liujunzhe0425/BambooWorkbench/releases/tag/v1.3.5",
+        asset_name="BambooWorkbench-Setup-1.3.5.exe",
+        asset_url="https://api.github.com/repos/Liujunzhe0425/BambooWorkbench/releases/assets/1",
         asset_size=size,
         sha256="a" * 64,
     )
@@ -61,7 +61,7 @@ def test_downloaded_update_stages_helper_outside_install_and_quits(
     install_directory.mkdir()
     application = install_directory / "BambooWorkbench.exe"
     application.write_bytes(b"application")
-    installer = tmp_path / "BambooWorkbench-Setup-1.3.4.exe"
+    installer = tmp_path / "BambooWorkbench-Setup-1.3.5.exe"
     installer.write_bytes(b"installer")
     parent = QWidget()
     qtbot.addWidget(parent)
@@ -85,6 +85,6 @@ def test_downloaded_update_stages_helper_outside_install_and_quits(
     assert launched["path"] == installer
     assert launched["application_path"] == application
     assert launched["install_directory"] == install_directory
-    assert launched["expected_version"] == "1.3.4"
+    assert launched["expected_version"] == "1.3.5"
     assert Path(str(launched["helper"])).parent == tmp_path / "temp" / "BambooWorkbench-updater"
     assert launched["quit"] is True

@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 $Root = [System.IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))
 Set-Location -LiteralPath $Root
 
-$Version = '1.3.4'
+$Version = '1.3.5'
 $ReleaseOutput = [System.IO.Path]::GetFullPath((Join-Path $Root 'release-output'))
 $RootPrefix = $Root.TrimEnd('\') + '\'
 if (-not $ReleaseOutput.StartsWith($RootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {

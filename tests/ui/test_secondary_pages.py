@@ -494,7 +494,7 @@ def test_result_center_separates_ai_timeout_warning_from_task_failure(qtbot) -> 
         schema_version="1.0",
         job_id="after-sales-warning",
         module_id=ModuleId.AFTER_SALES,
-        module_version="1.3.4",
+        module_version="1.3.5",
         status=TaskStatus.SUCCESS,
         summary=ResultSummary(
             input_count=2,
