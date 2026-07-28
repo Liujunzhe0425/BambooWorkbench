@@ -103,7 +103,7 @@ def _write_master_detail(ws: Any, records: list[dict[str, Any]]) -> None:
         ("primary_issue_type", "主要原因"),
         ("complaint_type_reviewed_display", "投诉类型复核状态"),
         ("selected_solution", "最终采用方案"),
-        ("after_sales_fee_amount", "售后费用（人工复核口径）"),
+        ("after_sales_fee_amount", "售后费用（最终口径）"),
         ("after_sales_fee_reviewed_display", "售后费用复核状态"),
         ("responsible_factory", "责任工厂（人工复核口径）"),
         ("responsibility_reviewed_display", "责任工厂复核状态"),
@@ -179,7 +179,9 @@ def _write_master_detail(ws: Any, records: list[dict[str, Any]]) -> None:
             "selected_solution": record.get("selected_solution") or record.get("solution") or "",
             "after_sales_fee_amount": effective_after_sales_fee(record),
             "after_sales_fee_reviewed_display": (
-                "已复核" if record.get("after_sales_fee_reviewed") else "待复核"
+                str(record.get("after_sales_fee_status") or "已复核")
+                if record.get("after_sales_fee_reviewed")
+                else "待复核"
             ),
             "responsible_factory": effective_responsible_factory(record) or "未知",
             "responsibility_reviewed_display": (

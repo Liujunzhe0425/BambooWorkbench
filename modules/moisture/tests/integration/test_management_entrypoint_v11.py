@@ -153,7 +153,7 @@ def _rule_manifest(version: str) -> dict[str, object]:
         "applicable_scope": "原竹丝；全年",
         "customer_confirmation_status": "confirmed",
         "released_at": "2026-07-24T00:00:00+08:00",
-        "module_version": "1.3.2",
+        "module_version": "1.3.3",
     }
 
 

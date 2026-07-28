@@ -132,7 +132,8 @@
           "default": "text",
           "enum": [
             "text",
-            "date"
+            "date",
+            "number"
           ],
           "title": "Value Type",
           "type": "string"

@@ -12,6 +12,7 @@ MODULE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MODULE_ROOT / "src"))
 
 from after_sales_agent.cli import (  # noqa: E402
+    _apply_record_value,
     _create_sample_workbook,
     _validate_job,
     run_job,
@@ -96,6 +97,17 @@ def test_job_request_accepts_central_monthly_fields(tmp_path: Path) -> None:
     _validate_job(payload)
 
 
+def test_amount_confirmation_accepts_currency_text_and_rejects_dates() -> None:
+    record: dict[str, object] = {}
+
+    _apply_record_value(record, "external_borne_amount", "￥1,234.50元")
+
+    assert record["external_borne_amount"] == 1234.5
+    assert record["external_borne_status"] == "exact"
+    with pytest.raises(ValueError, match="非负数字金额"):
+        _apply_record_value(record, "external_borne_amount", "2025-07-21")
+
+
 @pytest.mark.parametrize(
     "overrides",
     [
@@ -135,6 +147,10 @@ def test_draft_and_finalize_write_manual_fee_to_final_excel(tmp_path):
     draft_result, response_path = _bind_framework_response(
         tmp_path, draft_job_path, draft_job, draft_output
     )
+    fee_prompt = next(
+        item for item in draft_result["confirmations"] if item["field"] == "售后费用"
+    )
+    assert fee_prompt["value_type"] == "number"
     answers = []
     for prompt in draft_result["confirmations"]:
         value = (
@@ -196,7 +212,7 @@ def test_draft_and_finalize_write_manual_fee_to_final_excel(tmp_path):
     )
 
 
-def test_required_business_review_updates_fee_factory_and_complaint_type(tmp_path):
+def test_recognized_fee_skips_duplicate_review_but_other_reviews_remain(tmp_path):
     input_file = tmp_path / "三项人工复核.xlsx"
     _create_sample_workbook(
         input_file,
@@ -217,17 +233,16 @@ def test_required_business_review_updates_fee_factory_and_complaint_type(tmp_pat
     )
     prompts = {item["field"]: item for item in draft["confirmations"]}
 
-    assert {"售后费用", "责任工厂", "投诉类型"} <= prompts.keys()
-    assert prompts["售后费用"]["suggested_value"] == 1000
+    assert set(prompts) == {"责任工厂", "投诉类型"}
     assert prompts["责任工厂"]["suggested_value"] == "二厂"
     assert prompts["投诉类型"]["options"] == ["性能", "外观", "加工", "其他"]
     assert prompts["投诉类型"]["learning"]["learning_key"] == (
         "after_sales.complaint_type.v1"
     )
     assert prompts["投诉类型"]["learning"]["base_suggestion_id"] == "processing"
-    assert all(prompts[field]["blocking"] for field in ("售后费用", "责任工厂", "投诉类型"))
+    assert all(prompts[field]["blocking"] for field in ("责任工厂", "投诉类型"))
 
-    reviewed_values = {"售后费用": "3200", "责任工厂": "成品厂", "投诉类型": "加工"}
+    reviewed_values = {"责任工厂": "成品厂", "投诉类型": "加工"}
     answers = [
         {
             "confirmation_id": prompt["confirmation_id"],
@@ -266,7 +281,9 @@ def test_required_business_review_updates_fee_factory_and_complaint_type(tmp_pat
     record = records[0]
     assert final["status"] == "success"
     assert final["summary"]["confirmation_count"] == 0
-    assert record["after_sales_fee_amount"] == 3200
+    assert record["after_sales_fee_amount"] == 1000
+    assert record["after_sales_fee_status"] == "自动识别"
+    assert record["after_sales_fee_reviewed"] is True
     assert record["responsible_factory"] == "成品厂"
     assert record["primary_issue_type"] == "加工"
     assert record["issue_types"] == ["加工"]
@@ -279,9 +296,9 @@ def test_required_business_review_updates_fee_factory_and_complaint_type(tmp_pat
     detail_headers = {
         detail.cell(3, col).value: col for col in range(1, detail.max_column + 1)
     }
-    assert detail.cell(4, detail_headers["售后费用（人工复核口径）"]).value == 3200
+    assert detail.cell(4, detail_headers["售后费用（最终口径）"]).value == 1000
     assert detail.cell(4, detail_headers["责任工厂（人工复核口径）"]).value == "成品厂"
     assert detail.cell(4, detail_headers["主要原因"]).value == "加工"
-    assert detail.cell(4, detail_headers["售后费用复核状态"]).value == "已复核"
+    assert detail.cell(4, detail_headers["售后费用复核状态"]).value == "自动识别"
     assert detail.cell(4, detail_headers["责任工厂复核状态"]).value == "已复核"
     assert detail.cell(4, detail_headers["投诉类型复核状态"]).value == "已复核"

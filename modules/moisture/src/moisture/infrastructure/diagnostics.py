@@ -35,7 +35,7 @@ def collect_runtime_issues(module_root: Path | None = None) -> tuple[str, ...]:
     except (ImportError, OSError) as error:
         issues.append(f"package import failed: {type(error).__name__}")
     else:
-        if getattr(imported, "__version__", None) != "1.3.2":
+        if getattr(imported, "__version__", None) != "1.3.3":
             issues.append("package version does not match module manifest")
 
     return tuple(issues)

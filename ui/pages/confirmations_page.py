@@ -1,3 +1,4 @@
+import math
 from collections import Counter, defaultdict
 from collections.abc import Callable
 from datetime import date
@@ -199,9 +200,7 @@ class ConfirmationsPage(QWidget):
         self.scroll_area.setObjectName("confirmationScrollArea")
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setFrameShape(QFrame.Shape.NoFrame)
-        self.scroll_area.setHorizontalScrollBarPolicy(
-            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-        )
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll_area.setWidget(self.scroll_content)
         layout.addWidget(title)
         layout.addWidget(subtitle)
@@ -284,9 +283,7 @@ class ConfirmationsPage(QWidget):
         self.current_job_id = job_id
         prompts = self._models[job_id]
         self.prompts = list(prompts)
-        self.status_label.setText(
-            f"任务 {self._task_numbers[job_id]} 需要确认 {len(prompts)} 项"
-        )
+        self.status_label.setText(f"任务 {self._task_numbers[job_id]} 需要确认 {len(prompts)} 项")
         grouped = self._group_prompts(prompts)
         file_group_total = sum(bool(group_key) for group_key, _items in grouped)
         file_group_position = 0
@@ -374,9 +371,7 @@ class ConfirmationsPage(QWidget):
     ) -> None:
         frame = QFrame()
         frame.setProperty("confirmationFileGroup", True)
-        frame.setAccessibleName(
-            Path(group_key).name if group_key else "其他确认事项"
-        )
+        frame.setAccessibleName(Path(group_key).name if group_key else "其他确认事项")
         group_layout = QVBoxLayout(frame)
         group_layout.setContentsMargins(16, 14, 16, 16)
         group_layout.setSpacing(12)
@@ -463,6 +458,9 @@ class ConfirmationsPage(QWidget):
             if prompt.value_type == "date":
                 answer.setPlaceholderText("YYYY-MM-DD")
                 answer.setToolTip("请填写完整日期，例如 2026-04-10；系统不会猜测年份。")
+            elif prompt.value_type == "number":
+                answer.setPlaceholderText("数字金额，可留空")
+                answer.setToolTip("只填写非负数字金额，例如 0、500 或 123.45。")
         answer.setAccessibleName(f"{prompt.field}的确认答案")
         answer.setAccessibleDescription(prompt.reason)
         self.answer_inputs[prompt.confirmation_id] = answer
@@ -656,6 +654,16 @@ class ConfirmationsPage(QWidget):
                 if parsed.isoformat() != value:
                     editor.setFocus()
                     return f"“{label}”必须填写完整日期，格式为 YYYY-MM-DD。"
+            if prompt.value_type == "number" and value:
+                normalized = value.replace(",", "").replace("元", "").replace("￥", "").strip()
+                try:
+                    number = float(normalized)
+                except ValueError:
+                    editor.setFocus()
+                    return f"“{label}”只能填写非负数字金额或留空。"
+                if not math.isfinite(number) or number < 0:
+                    editor.setFocus()
+                    return f"“{label}”只能填写非负数字金额或留空。"
         return None
 
     def _draft_edited(self) -> None:

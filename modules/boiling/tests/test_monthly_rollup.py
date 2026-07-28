@@ -236,7 +236,7 @@ def rollup_request(root, output, *, snapshots, year=2026, target_month=3):
         "schema_version": "1.0",
         "transaction_id": "ROLLUP-TRANSACTION-001",
         "module_id": "boiling",
-        "module_version": "1.3.2",
+        "module_version": "1.3.3",
         "year": year,
         "target_month": target_month,
         "snapshot_root": str(Path(root).resolve()),
@@ -254,7 +254,7 @@ def test_finalize_writes_confirmed_monthly_snapshot_with_existing_ai(tmp_path):
     final, snapshot_path = finalized_snapshot(tmp_path)
     assert final["status"] == "success"
     snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
-    assert snapshot["module_version"] == "1.3.2"
+    assert snapshot["module_version"] == "1.3.3"
     assert (snapshot["year"], snapshot["month"]) == (2026, 1)
     record = snapshot["payload"]["records"][0]
     assert record["final_confirmation_decisions"][0]["value"] == "不合格"
@@ -362,7 +362,7 @@ def test_monthly_snapshot_rejects_true_absolute_paths(unsafe_path):
         match="月度快照 payload 不得包含绝对路径",
     ):
         boiling_module.build_snapshot(
-            module_version="1.3.2",
+            module_version="1.3.3",
             year=2026,
             month=4,
             payload=payload,
