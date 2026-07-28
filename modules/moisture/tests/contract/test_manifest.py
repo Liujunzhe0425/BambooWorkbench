@@ -21,7 +21,7 @@ def test_manifest_matches_framework_contract() -> None:
         "schema_version": "1.0",
         "module_id": "moisture",
         "module_name": "竹丝水分检测",
-        "module_version": "1.3.4",
+        "module_version": "1.3.5",
         "entrypoint": "run_module.bat",
         "management_entrypoint": "run_management.bat",
         "management_contract": {

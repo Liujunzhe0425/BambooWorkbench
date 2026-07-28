@@ -6,4 +6,4 @@
 - `modules/boiling/tests/fixtures/samples/actual/demo_run/boiling_summary.xlsx`：汇总、试件明细、规则说明和分析图表。
 - `boiling_analysis.md`：异常、确认与文件摘要。
 
-该目录仅用于交接验收，不作为运行时固定输出目录。
+该目录仅用于脱敏回归示例，不作为运行时固定输出目录。

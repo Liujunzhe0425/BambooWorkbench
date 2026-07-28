@@ -12,7 +12,7 @@ def test_windows_installer_helper_waits_installs_and_relaunches(
 ) -> None:
     install_directory = tmp_path / "installed app"
     install_directory.mkdir()
-    update = tmp_path / "BambooWorkbench-Setup-1.3.4.exe"
+    update = tmp_path / "BambooWorkbench-Setup-1.3.5.exe"
     application = install_directory / "BambooWorkbench.exe"
     update.write_bytes(b"installer")
     application.write_bytes(b"application")
@@ -32,7 +32,7 @@ def test_windows_installer_helper_waits_installs_and_relaunches(
         parent_pid=321,
         application_path=application,
         install_directory=install_directory,
-        expected_version="1.3.4",
+        expected_version="1.3.5",
     )
 
     assert returned is process
@@ -44,7 +44,7 @@ def test_windows_installer_helper_waits_installs_and_relaunches(
     assert staged_update.read_bytes() == b"installer"
     assert str(application) in arguments
     assert str(install_directory) in arguments
-    assert "1.3.4" in arguments
+    assert "1.3.5" in arguments
     assert "normal" in arguments
     assert str(tmp_path / "helper" / "update-install.log") in arguments
     assert options["creationflags"] == (
@@ -68,7 +68,7 @@ def test_windows_installer_helper_rejects_wrong_expected_version(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    update = tmp_path / "BambooWorkbench-Setup-1.3.4.exe"
+    update = tmp_path / "BambooWorkbench-Setup-1.3.5.exe"
     application = tmp_path / "BambooWorkbench.exe"
     update.write_bytes(b"installer")
     application.write_bytes(b"application")
@@ -79,5 +79,5 @@ def test_windows_installer_helper_rejects_wrong_expected_version(
             update,
             tmp_path / "helper",
             application_path=application,
-            expected_version="1.3.5",
+            expected_version="1.3.6",
         )

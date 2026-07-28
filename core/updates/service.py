@@ -13,7 +13,7 @@ from .models import ReleaseUpdate, semantic_version
 
 DEFAULT_RELEASE_API = (
     "https://api.github.com/repos/Liujunzhe0425/"
-    "BambooWorkbench-Distribution/releases/latest"
+    "BambooWorkbench/releases/latest"
 )
 _INSTALLER = re.compile(r"^BambooWorkbench-Setup-(\d+\.\d+\.\d+)\.exe$")
 _DIGEST = re.compile(r"^sha256:([0-9a-f]{64})$")
@@ -103,8 +103,7 @@ class GitHubReleaseUpdateService:
             notes_url=(
                 _validated_https_url(html_url, {"github.com"})
                 if isinstance(html_url, str)
-                else "https://github.com/Liujunzhe0425/"
-                "BambooWorkbench-Distribution/releases"
+                else "https://github.com/Liujunzhe0425/BambooWorkbench/releases"
             ),
             asset_name=name,
             asset_url=_validated_https_url(url, _DOWNLOAD_HOSTS),

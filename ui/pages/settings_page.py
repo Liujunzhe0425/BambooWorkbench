@@ -170,6 +170,18 @@ class SettingsPage(QWidget):
         self.open_logs_button.setAccessibleName("打开应用日志目录")
         self.open_logs_button.clicked.connect(self.open_log_directory)
         self.open_logs_button.setProperty("secondary", True)
+        for control in (
+            self.output_dir_edit,
+            self.output_browse_button,
+            self.provider_combo,
+            self.base_url_edit,
+            self.model_edit,
+            self.api_key_edit,
+            self.delete_ai_key_button,
+            self.open_logs_button,
+            self.save_button,
+        ):
+            control.setMinimumHeight(28)
         actions = QHBoxLayout()
         actions.addStretch()
         actions.addWidget(self.open_logs_button)
@@ -214,8 +226,8 @@ class SettingsPage(QWidget):
         self.delete_update_token_button.clicked.connect(self.delete_update_token)
         update_form.addRow("旧版凭据", self.delete_update_token_button)
         private_hint = QLabel(
-            "自动更新只访问独立的公开二进制分发仓库；私有源码、客户数据和密钥不会公开。"
-            "旧版本保存过的更新令牌不再使用，可在此安全删除。"
+            "自动更新匿名访问公开的 BambooWorkbench 主仓库 Release。"
+            "客户数据和密钥不会上传；旧版更新令牌不再使用，可在此安全删除。"
         )
         private_hint.setWordWrap(True)
         private_hint.setProperty("caption", True)
@@ -224,6 +236,8 @@ class SettingsPage(QWidget):
         self.check_update_button = QPushButton("立即检查更新")
         self.check_update_button.setProperty("secondary", True)
         self.check_update_button.clicked.connect(self.check_updates_requested)
+        self.delete_update_token_button.setMinimumHeight(28)
+        self.check_update_button.setMinimumHeight(28)
         update_actions = QHBoxLayout()
         update_actions.addWidget(self.update_status_label)
         update_actions.addStretch()

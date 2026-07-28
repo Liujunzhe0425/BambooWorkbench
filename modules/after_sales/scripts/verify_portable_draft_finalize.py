@@ -93,8 +93,8 @@ def main() -> int:
     _write_json(draft_job_path, draft_job)
     _run(runtime, draft_job_path)
     draft = json.loads((draft_output / "result.json").read_text(encoding="utf-8"))
-    if draft.get("module_version") != "1.3.4":
-        raise AssertionError("便携运行时不是售后模块 1.3.4")
+    if draft.get("module_version") != "1.3.5":
+        raise AssertionError("便携运行时不是售后模块 1.3.5")
     if draft.get("confirmations"):
         raise AssertionError("第一次 draft 不应在框架 AI 调用前生成业务确认")
     requests = draft.get("service_requests")
@@ -203,7 +203,7 @@ def main() -> int:
             "schema_version": "1.0",
             "transaction_id": "portable-v131-rollup",
             "module_id": "after_sales",
-            "module_version": "1.3.4",
+            "module_version": "1.3.5",
             "year": 2026,
             "target_month": 5,
             "offline_required": True,
