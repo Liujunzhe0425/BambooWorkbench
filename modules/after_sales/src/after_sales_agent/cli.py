@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 import tempfile
@@ -308,9 +309,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
             record.pop("_ai_workbook_text", None)
 
         response_file = (
-            Path(str(job["service_response_file"]))
-            if job.get("service_response_file")
-            else None
+            Path(str(job["service_response_file"])) if job.get("service_response_file") else None
         )
         first_draft = job.get("phase") == "draft" and response_file is None
         if first_draft:
@@ -346,9 +345,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
 
         answered_confirmation_ids: set[str] = set()
         if job.get("phase") == "finalize":
-            confirmation_answers = _read_confirmation_answers(
-                Path(job["confirmation_file"])
-            )
+            confirmation_answers = _read_confirmation_answers(Path(job["confirmation_file"]))
             answered_confirmation_ids = _apply_confirmation_answers(
                 records,
                 result["confirmations"],
@@ -390,8 +387,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 period_analysis
                 and period_analysis["unknown_period_count"]
                 and not any(
-                    prompt.get("field") == "complaint_date"
-                    for prompt in result["confirmations"]
+                    prompt.get("field") == "complaint_date" for prompt in result["confirmations"]
                 )
             ):
                 _fail_for_task_period(
@@ -472,8 +468,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 "path": str(analysis_path),
                 "label": "售后分析报告（Word）",
                 "mime_type": (
-                    "application/vnd.openxmlformats-officedocument."
-                    "wordprocessingml.document"
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 ),
             },
             {
@@ -501,9 +496,7 @@ def run_job(job_path: Path, runtime_config: dict[str, Any] | None = None) -> int
                 "mime_type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             },
         ]
-        ai_completed = sum(
-            1 for record in records if record.get("issue_analysis_source") == "api"
-        )
+        ai_completed = sum(1 for record in records if record.get("issue_analysis_source") == "api")
         ai_summary = f"；AI智能分析完成 {ai_completed} 个，其余保留离线结果并由人工复核"
         result["analysis_summary"] = (
             f"已对账 {len(input_files)} 个输入文件，成功处理 "
@@ -621,9 +614,7 @@ def _validate_job(job: Any) -> None:
     if job.get("run_mode") not in {"single", "batch", "incremental"}:
         raise ValueError("run_mode 不受支持")
     task_name = job.get("task_name")
-    if task_name is not None and (
-        not isinstance(task_name, str) or not 1 <= len(task_name) <= 160
-    ):
+    if task_name is not None and (not isinstance(task_name, str) or not 1 <= len(task_name) <= 160):
         raise ValueError("task_name 必须是 1 到 160 字符的文本")
     period_year = job.get("period_year")
     period_month = job.get("period_month")
@@ -682,11 +673,7 @@ def _analyze_task_period(
         year = record.get("year")
         month = record.get("month")
         valid_year = isinstance(year, int) and not isinstance(year, bool)
-        valid_month = (
-            isinstance(month, int)
-            and not isinstance(month, bool)
-            and 1 <= month <= 12
-        )
+        valid_month = isinstance(month, int) and not isinstance(month, bool) and 1 <= month <= 12
         if not valid_year:
             unknown_year_count += 1
         if not valid_month:
@@ -716,9 +703,7 @@ def _analyze_task_period(
         "unknown_period_count": unknown_period_count,
         "has_conflict": other_known_count > 0 or unknown_period_count > 0,
         "definitive_zero_match": (
-            included_count > 0
-            and target_match_count == 0
-            and unknown_period_count == 0
+            included_count > 0 and target_match_count == 0 and unknown_period_count == 0
         ),
     }
 
@@ -977,7 +962,13 @@ def _apply_record_value(record: dict[str, Any], field: str, value: Any) -> None:
     }
     if field in amount_fields:
         prefix = amount_fields[field]
-        text = str(value or "").replace(",", "").replace("元", "").strip()
+        text = (
+            str(value or "")
+            .replace(",", "")
+            .replace("元", "")
+            .replace("￥", "")
+            .strip()
+        )
         if not text:
             record[f"{prefix}_amount"] = None
             record[f"{prefix}_status"] = "not_found"
@@ -989,7 +980,12 @@ def _apply_record_value(record: dict[str, Any], field: str, value: Any) -> None:
                 record["fee_status"] = "not_found"
                 record["cost_included"] = False
             return
-        amount = float(text)
+        try:
+            amount = float(text)
+        except ValueError as error:
+            raise ValueError(f"{field}必须填写非负数字金额或留空") from error
+        if not math.isfinite(amount) or amount < 0:
+            raise ValueError(f"{field}必须填写非负数字金额或留空")
         record.update(
             {
                 f"{prefix}_amount": amount,
@@ -1189,10 +1185,7 @@ def self_check() -> int:
         if exit_code != 0 or result["summary"]["processed_count"] != 1:
             print("self-check failed", file=sys.stderr)
             return 3
-    print(
-        f"{MODULE_NAME} self-check passed: "
-        f"{output_dir / 'after_sales_master_summary.xlsx'}"
-    )
+    print(f"{MODULE_NAME} self-check passed: {output_dir / 'after_sales_master_summary.xlsx'}")
     return 0
 
 

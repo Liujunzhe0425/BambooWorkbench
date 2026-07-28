@@ -164,6 +164,78 @@ def test_confirmation_service_rejects_invalid_required_dates(
         )
 
 
+@pytest.mark.parametrize("value", ["2025-07-21", "-1", "NaN", "Infinity"])
+def test_confirmation_service_rejects_invalid_amounts(
+    qtbot,
+    app_services: dict[str, object],
+    tmp_path: Path,
+    value: str,
+) -> None:
+    _, job_id = _start_waiting_job(qtbot, app_services, tmp_path)
+    repository = app_services["confirmation_repository"]
+    assert isinstance(repository, ConfirmationRepository)
+    repository.save_prompts(
+        job_id,
+        [
+            ConfirmationPrompt(
+                confirmation_id="mock-confirm-1",
+                field="external_borne_amount",
+                reason="金额缺失时可留空，否则必须填写数字。",
+                suggested_value=None,
+                options=[],
+                value_type="number",
+                confidence=0.0,
+                blocking=False,
+                batch_applicable=False,
+                rememberable=False,
+                source=SourceRef(source_file="售后记录.xlsx"),
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="non-negative finite value"):
+        _confirmation_service(app_services).submit(
+            job_id,
+            [ConfirmationAnswer(confirmation_id="mock-confirm-1", value=value)],
+        )
+
+
+@pytest.mark.parametrize("value", ["", "￥1,234.50元"])
+def test_confirmation_service_accepts_optional_blank_or_currency_amount(
+    qtbot,
+    app_services: dict[str, object],
+    tmp_path: Path,
+    value: str,
+) -> None:
+    _, job_id = _start_waiting_job(qtbot, app_services, tmp_path)
+    repository = app_services["confirmation_repository"]
+    assert isinstance(repository, ConfirmationRepository)
+    repository.save_prompts(
+        job_id,
+        [
+            ConfirmationPrompt(
+                confirmation_id="mock-confirm-1",
+                field="external_borne_amount",
+                reason="金额可留空。",
+                suggested_value=None,
+                options=[],
+                value_type="number",
+                confidence=0.0,
+                blocking=False,
+                batch_applicable=False,
+                rememberable=False,
+                source=SourceRef(source_file="售后记录.xlsx"),
+            )
+        ],
+    )
+
+    path = _confirmation_service(app_services).submit(
+        job_id,
+        [ConfirmationAnswer(confirmation_id="mock-confirm-1", value=value)],
+    )
+    assert path.is_file()
+
+
 def test_confirmation_file_is_atomically_replaced_before_answers_are_saved(
     qtbot,
     app_services: dict[str, object],

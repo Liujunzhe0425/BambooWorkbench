@@ -194,8 +194,16 @@ def test_complaint_type_learning_descriptor_is_stable_and_anonymized() -> None:
     second["customer"] = "客户乙"
     second["source_file"] = r"D:\其他目录\客户乙售后申请.xlsx"
 
-    first_learning = build_required_review_prompts(first, rules)[2]["learning"]
-    second_learning = build_required_review_prompts(second, rules)[2]["learning"]
+    first_learning = next(
+        item["learning"]
+        for item in build_required_review_prompts(first, rules)
+        if item["field"] == "投诉类型"
+    )
+    second_learning = next(
+        item["learning"]
+        for item in build_required_review_prompts(second, rules)
+        if item["field"] == "投诉类型"
+    )
     serialized = json.dumps(first_learning, ensure_ascii=False)
 
     assert first_learning == second_learning
