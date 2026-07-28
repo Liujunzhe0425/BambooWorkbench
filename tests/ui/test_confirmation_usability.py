@@ -170,6 +170,37 @@ def test_required_date_confirmation_rejects_blank_and_partial_values(qtbot) -> N
     assert submitted[0][1][0].value == "2026-04-10"
 
 
+def test_optional_amount_confirmation_rejects_dates_but_accepts_numbers(qtbot) -> None:
+    page = ConfirmationsPage()
+    qtbot.addWidget(page)
+    prompt = ConfirmationPrompt(
+        confirmation_id="amount-optional",
+        field="external_borne_amount",
+        reason="金额不明确时可留空。",
+        suggested_value=None,
+        options=[],
+        value_type="number",
+        confidence=0.0,
+        blocking=False,
+        batch_applicable=False,
+        rememberable=False,
+        source=SourceRef(source_file="售后记录.xlsx"),
+    )
+    page.load("amount-task", [prompt])
+    submitted: list[object] = []
+    page.submitted.connect(lambda *args: submitted.append(args))
+    editor = page.answer_inputs[prompt.confirmation_id]
+
+    editor.setText("2025-07-21")
+    qtbot.mouseClick(page.submit_button, Qt.MouseButton.LeftButton)
+    assert submitted == []
+    assert "数字金额" in page.validation_label.text()
+
+    editor.setText("1,234.50元")
+    qtbot.mouseClick(page.submit_button, Qt.MouseButton.LeftButton)
+    assert len(submitted) == 1
+
+
 def test_date_location_and_ai_preview_use_progressive_disclosure(qtbot) -> None:
     page = ConfirmationsPage()
     qtbot.addWidget(page)

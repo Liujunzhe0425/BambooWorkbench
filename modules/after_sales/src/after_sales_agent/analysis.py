@@ -207,7 +207,7 @@ def write_analysis_report(
     lines.extend(
         [
             "",
-            f"人工复核口径售后费用合计：{totals['after_sales_fee_amount']:.2f} 元；"
+            f"最终口径售后费用合计：{totals['after_sales_fee_amount']:.2f} 元；"
             f"企业售后成本合计：{totals['enterprise_cost_amount']:.2f} 元；"
             f"内部责任扣款合计：{totals['internal_accountability_amount']:.2f} 元；"
             f"外部承担金额合计：{totals['external_borne_amount']:.2f} 元。",

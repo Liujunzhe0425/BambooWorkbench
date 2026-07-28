@@ -1,3 +1,4 @@
+import math
 import os
 import re
 import tempfile
@@ -100,8 +101,20 @@ class ConfirmationService:
                         f"date confirmation must use YYYY-MM-DD: {confirmation_id}"
                     ) from error
                 if parsed.isoformat() != text:
+                    raise ValueError(f"date confirmation must use YYYY-MM-DD: {confirmation_id}")
+            if prompt.value_type == "number" and text:
+                normalized = text.replace(",", "").replace("元", "").replace("￥", "").strip()
+                try:
+                    number = float(normalized)
+                except ValueError as error:
                     raise ValueError(
-                        f"date confirmation must use YYYY-MM-DD: {confirmation_id}"
+                        f"number confirmation must be a non-negative finite value: "
+                        f"{confirmation_id}"
+                    ) from error
+                if not math.isfinite(number) or number < 0:
+                    raise ValueError(
+                        f"number confirmation must be a non-negative finite value: "
+                        f"{confirmation_id}"
                     )
 
         bundle = ConfirmationBundle(job_id=job_id, answers=answers)

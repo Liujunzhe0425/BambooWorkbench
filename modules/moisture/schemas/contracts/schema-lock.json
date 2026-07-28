@@ -5,6 +5,6 @@
     "schemas/contracts/module-management-request.schema.json": "dc4883cf1df800e76d45f2779ff1f7fee5c4a9d30ec80f13aa252c84df00479f",
     "schemas/contracts/module-management-response.schema.json": "e91576706be77f1990ae6ab54cc2760f87850277feb10d74c6f426b6865c061f",
     "schemas/contracts/module-manifest.schema.json": "8e4b4a4640b9c6f5efacbfb110d91a27c6a4f9194952d30b184308beb6ce264f",
-    "schemas/contracts/module-result.schema.json": "98f660701618806be0e9465cc2cc467dcc94772002b4ce2e7b0ab980ef823729"
+    "schemas/contracts/module-result.schema.json": "517b6dc96a96844b582e5ac69a1ea7d724f4311f29ae605a8718c6346fa083d2"
   }
 }

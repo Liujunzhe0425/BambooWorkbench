@@ -842,13 +842,18 @@ def _confirmation(
     blocking: bool,
 ) -> dict[str, Any]:
     is_date = field == "complaint_date"
+    is_amount = field in {
+        "enterprise_cost_amount",
+        "internal_accountability_amount",
+        "external_borne_amount",
+    }
     return {
         "source_file": path.name,
         "field": field,
         "reason": reason,
         "suggested_value": suggested_value,
         "options": options,
-        "value_type": "date" if is_date else "text",
+        "value_type": "date" if is_date else ("number" if is_amount else "text"),
         "confidence": confidence,
         "blocking": True if is_date else blocking,
         "batch_applicable": not is_date,

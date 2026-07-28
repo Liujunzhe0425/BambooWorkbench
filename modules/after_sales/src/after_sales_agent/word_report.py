@@ -220,7 +220,7 @@ def write_word_analysis_report(
         document,
         "费用口径",
         [
-            f"人工复核口径售后费用合计：{total_fee:,.2f} 元。",
+            f"最终口径售后费用合计：{total_fee:,.2f} 元。",
             f"企业承担金额合计：{float(totals['enterprise_cost_amount']):,.2f} 元；"
             f"内部责任扣款合计：{float(totals['internal_accountability_amount']):,.2f} 元；"
             f"外部承担金额合计：{float(totals['external_borne_amount']):,.2f} 元。",

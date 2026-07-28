@@ -117,7 +117,7 @@ def _run_framework_draft(
     return _run(tmp_path, rebound, f"{name}-bound"), response_path
 
 
-def test_offline_complete_file_enters_required_business_review(tmp_path: Path) -> None:
+def test_offline_complete_file_reuses_recognized_date_and_fee(tmp_path: Path) -> None:
     source = tmp_path / "完整脱敏样表.xlsx"
     _make_workbook(source)
     result, _response = _run_framework_draft(
@@ -125,15 +125,19 @@ def test_offline_complete_file_enters_required_business_review(tmp_path: Path) -
     )
 
     assert result["status"] == "needs_confirmation"
-    assert result["summary"]["confirmation_count"] == 3
+    assert result["summary"]["confirmation_count"] == 2
     prompts = {item["field"]: item for item in result["confirmations"]}
-    assert set(prompts) == {"售后费用", "责任工厂", "投诉类型"}
+    assert set(prompts) == {"责任工厂", "投诉类型"}
     assert all(item["blocking"] for item in prompts.values())
     assert all(not item["batch_applicable"] for item in prompts.values())
     records = json.loads(
         (tmp_path / "output" / "after_sales_records.json").read_text(encoding="utf-8")
     )
     assert records[0]["analysis_status"] == "AI不可用，离线降级"
+    assert records[0]["complaint_date"] == "2026-05-10"
+    assert records[0]["after_sales_fee_amount"] == 1000
+    assert records[0]["after_sales_fee_status"] == "自动识别"
+    assert records[0]["after_sales_fee_reviewed"] is True
     assert records[0]["enterprise_cost_amount"] == 1000
 
 
@@ -152,7 +156,7 @@ def test_pr16_sanitized_fixture_preserves_second_round_baseline(tmp_path: Path) 
         "skipped_count": 0,
         "failed_count": 0,
         "anomaly_count": 0,
-        "confirmation_count": 3,
+        "confirmation_count": 2,
     }
     assert {item["type"] for item in result["outputs"]} == {
         "master_summary_excel",
@@ -188,7 +192,8 @@ def test_offline_batch_never_creates_api_config_confirmations(tmp_path: Path) ->
     )
 
     assert result["status"] == "needs_confirmation"
-    assert result["summary"]["confirmation_count"] == 9
+    assert result["summary"]["confirmation_count"] == 6
+    assert not any(item["field"] == "售后费用" for item in result["confirmations"])
     assert not any(item["field"] == "api_config" for item in result["confirmations"])
 
 

@@ -55,7 +55,7 @@ except ImportError as exc:  # pragma: no cover - exercised in a clean environmen
 
 
 MODULE_ID = "boiling"
-MODULE_VERSION = "1.3.2"
+MODULE_VERSION = "1.3.3"
 MAX_AI_RECORDS = 1
 MAX_AI_OBSERVATIONS_PER_RECORD = 6
 MAX_TREND_MONTHS = 60

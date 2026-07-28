@@ -105,7 +105,7 @@ class ConfirmationPrompt(BaseModel):
     reason: str
     suggested_value: object | None = None
     options: list[object] = Field(default_factory=list)
-    value_type: Literal["text", "date"] = "text"
+    value_type: Literal["text", "date", "number"] = "text"
     confidence: float = Field(ge=0, le=1)
     blocking: bool
     batch_applicable: bool

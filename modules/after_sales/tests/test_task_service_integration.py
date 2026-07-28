@@ -156,7 +156,8 @@ def test_real_task_service_calls_provider_once_and_finalize_reuses_response(
     assert len(provider.calls) == 1
     assert provider.calls[0].response_format == "json_object"
     prompts = pending.args[1].confirmations
-    assert {prompt.field for prompt in prompts} >= {"售后费用", "责任工厂", "投诉类型"}
+    assert {prompt.field for prompt in prompts} >= {"责任工厂", "投诉类型"}
+    assert not any(prompt.field == "售后费用" for prompt in prompts)
     complaint_prompt = next(prompt for prompt in prompts if prompt.field == "投诉类型")
     assert complaint_prompt.learning is not None
     assert complaint_prompt.learning.learning_key == "after_sales.complaint_type.v1"
