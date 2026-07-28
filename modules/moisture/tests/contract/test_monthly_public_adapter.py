@@ -41,7 +41,7 @@ def _public_request(tmp_path: Path) -> tuple[Path, Path]:
         "schema_version": "1.0",
         "transaction_id": "txn-public-0001",
         "module_id": "moisture",
-        "module_version": "1.3.3",
+        "module_version": "1.3.4",
         "year": 2026,
         "target_month": 4,
         "snapshots": [
@@ -99,7 +99,7 @@ def test_public_rollup_adapter_renders_and_acknowledges_framework_identity(
     payload = json.loads(response_path.read_text(encoding="utf-8"))
     result = MonthlyRollupResult.model_validate(payload)
     assert result.transaction_id == "txn-public-0001"
-    assert result.module_version == "1.3.3"
+    assert result.module_version == "1.3.4"
     assert result.used_months == [4]
     assert result.network_call_count == 0
     assert result.record_count == 1

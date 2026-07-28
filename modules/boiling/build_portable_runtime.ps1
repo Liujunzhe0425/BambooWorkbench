@@ -234,7 +234,7 @@ $RuleHash = (
     schema_version = '1.0'
     transaction_id = 'PORTABLE-ROLLUP-001'
     module_id = 'boiling'
-    module_version = '1.3.3'
+    module_version = '1.3.4'
     year = [int]$Snapshot.year
     target_month = [int]$Snapshot.month
     snapshot_root = $SnapshotRoot
@@ -270,7 +270,7 @@ $RollupResponse = Get-Content -LiteralPath $RollupResponsePath -Raw -Encoding UT
 if (
     $RollupResponse.status -ne 'success' -or
     $RollupResponse.transaction_id -ne 'PORTABLE-ROLLUP-001' -or
-    $RollupResponse.module_version -ne '1.3.3' -or
+    $RollupResponse.module_version -ne '1.3.4' -or
     $RollupResponse.network_call_count -ne 0 -or
     $RollupResponse.record_count -lt 1 -or
     $RollupResponse.used_months.Count -ne 1 -or
