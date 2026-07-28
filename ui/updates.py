@@ -3,12 +3,13 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import tempfile
 import threading
 from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal, Slot
-from PySide6.QtWidgets import QApplication, QMessageBox, QWidget
+from PySide6.QtWidgets import QApplication, QMessageBox, QProgressDialog, QWidget
 
 from app import __version__
 from core.updates.installer import launch_installer_after_exit
@@ -16,6 +17,8 @@ from core.updates.models import ReleaseUpdate
 from core.updates.service import GitHubReleaseUpdateService, UpdateError
 
 _LOG = logging.getLogger("bamboo_workbench")
+
+
 class UpdateController(QObject):
     status_changed = Signal(str)
     _available = Signal(object)
@@ -23,6 +26,7 @@ class UpdateController(QObject):
     _check_error = Signal(str)
     _download_ready = Signal(object)
     _download_error = Signal(str)
+    _download_progress = Signal(int, int)
 
     def __init__(
         self,
@@ -37,11 +41,15 @@ class UpdateController(QObject):
         self._threads: set[threading.Thread] = set()
         self._busy = False
         self._manual = False
+        self._pending_release: ReleaseUpdate | None = None
+        self._progress_dialog: QProgressDialog | None = None
+        self._installer_helper: object | None = None
         self._available.connect(self._update_available)
         self._current.connect(self._already_current)
         self._check_error.connect(self._check_failed)
         self._download_ready.connect(self._downloaded)
         self._download_error.connect(self._download_failed)
+        self._download_progress.connect(self._download_progressed)
 
     @property
     def busy(self) -> bool:
@@ -118,7 +126,9 @@ class UpdateController(QObject):
             )
             return
         self._busy = True
+        self._pending_release = release
         self.status_changed.emit(f"正在下载 {release.version}…")
+        self._show_download_progress(release)
         self._start_thread(lambda: self._download_in_background(release))
 
     def _download_in_background(self, release: ReleaseUpdate) -> None:
@@ -127,6 +137,9 @@ class UpdateController(QObject):
             installer = self.service.download(
                 release,
                 destination,
+                progress=lambda received, total: self._download_progress.emit(
+                    received, total
+                ),
             )
         except UpdateError as error:
             self._download_error.emit(str(error))
@@ -150,15 +163,36 @@ class UpdateController(QObject):
 
     @Slot(object)
     def _downloaded(self, installer: Path) -> None:
+        release = self._pending_release
+        if release is None:
+            self._download_failed("更新状态已失效，请重新检查更新")
+            return
+        self._finish_download_progress()
+        install_directory = Path(sys.executable).resolve().parent
+        helper_directory = (
+            Path(tempfile.gettempdir())
+            / "BambooWorkbench-updater"
+            / release.tag_name
+        )
         try:
-            launch_installer_after_exit(
+            self._installer_helper = launch_installer_after_exit(
                 installer,
-                self.context.paths.cache / "updates" / "helper",
+                helper_directory,
+                application_path=Path(sys.executable),
+                install_directory=install_directory,
+                expected_version=release.version,
             )
         except UpdateError as error:
             self._download_failed(str(error))
             return
+        helper_pid = getattr(self._installer_helper, "pid", "unknown")
+        _LOG.info(
+            "update helper launched version=%s helper_pid=%s",
+            release.version,
+            helper_pid,
+        )
         self._busy = False
+        self._pending_release = None
         self.status_changed.emit("更新已下载，正在重启安装…")
         application = QApplication.instance()
         if application is not None:
@@ -166,10 +200,63 @@ class UpdateController(QObject):
 
     @Slot(str)
     def _download_failed(self, message: str) -> None:
+        self._close_download_progress()
         self._busy = False
+        self._pending_release = None
         self.status_changed.emit("更新下载或安装失败")
         _LOG.warning("update download failed: %s", message)
         self._show_warning("更新失败", message)
+
+    @Slot(int, int)
+    def _download_progressed(self, received: int, total: int) -> None:
+        if total <= 0:
+            return
+        percent = min(100.0, max(0.0, received * 100.0 / total))
+        received_mb = received / (1024 * 1024)
+        total_mb = total / (1024 * 1024)
+        self.status_changed.emit(
+            f"正在下载更新：{percent:.1f}%（{received_mb:.1f}/{total_mb:.1f} MB）"
+        )
+        dialog = self._progress_dialog
+        if dialog is not None:
+            dialog.setMaximum(total)
+            dialog.setValue(min(received, total))
+            dialog.setLabelText(
+                f"正在下载竹简工作台更新…\n"
+                f"{percent:.1f}%（{received_mb:.1f}/{total_mb:.1f} MB）"
+            )
+
+    def _show_download_progress(self, release: ReleaseUpdate) -> None:
+        self._close_download_progress()
+        dialog = QProgressDialog(
+            f"正在下载竹简工作台 {release.version}…",
+            "",
+            0,
+            release.asset_size,
+            self.parent_window,
+        )
+        dialog.setWindowTitle("下载软件更新")
+        dialog.setCancelButton(None)
+        dialog.setAutoClose(False)
+        dialog.setAutoReset(False)
+        dialog.setMinimumDuration(0)
+        dialog.setValue(0)
+        dialog.show()
+        self._progress_dialog = dialog
+
+    def _finish_download_progress(self) -> None:
+        dialog = self._progress_dialog
+        if dialog is not None:
+            dialog.setLabelText("下载完成，SHA-256 校验通过，正在准备安装…")
+            dialog.setValue(dialog.maximum())
+        self._close_download_progress()
+
+    def _close_download_progress(self) -> None:
+        dialog = self._progress_dialog
+        self._progress_dialog = None
+        if dialog is not None:
+            dialog.close()
+            dialog.deleteLater()
 
     def _show_information(self, title: str, message: str) -> None:
         QMessageBox.information(self.parent_window, title, message)

@@ -42,14 +42,20 @@ def test_public_check_is_anonymous_and_download_verifies_hash(
         return httpx.Response(200, content=content, request=request)
 
     service = GitHubReleaseUpdateService(transport=httpx.MockTransport(handler))
+    progress: list[tuple[int, int]] = []
 
     release = service.check("1.1.0")
     assert release is not None
     assert release.version == "1.2.0"
-    installer = service.download(release, tmp_path)
+    installer = service.download(
+        release,
+        tmp_path,
+        progress=lambda received, total: progress.append((received, total)),
+    )
 
     assert installer.read_bytes() == content
     assert seen_authorization == [None, None]
+    assert progress[-1] == (len(content), len(content))
 
 
 def test_check_ignores_equal_or_older_release() -> None:
