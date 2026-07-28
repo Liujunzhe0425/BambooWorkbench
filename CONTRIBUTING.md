@@ -1,23 +1,27 @@
-# BambooWorkbench 协作说明
+# 贡献指南
 
-本仓库采用 `main`（稳定版本）、`integration`（模块接入）和三个长期模块分支：
+BambooWorkbench 已进入稳定维护阶段。任何代码、规则或文档变更都应从独立分支提交 Pull Request，并在合入前通过仓库质量门禁。
 
-- `module/moisture`
-- `module/boiling`
-- `module/after-sales`
+## 基本要求
 
-模块成员只修改本人负责的 `modules/<module_id>/`，并向 `integration` 提交 Pull Request。框架与仓库级修改通过独立工作分支提交；未经框架负责人确认，不直接推送 `main` 或改动其他模块。
+- 不直接向 `main` 提交；
+- 一个 Pull Request 只处理一个清晰主题；
+- 保持模块公开合同、CLI、路径边界和离线降级兼容；
+- 修改业务公式、阈值、字段映射或统计口径时，必须说明依据并补充回归测试；
+- 不提交客户真实文件、个人信息、数据库、日志、API Key、Token 或本机绝对路径；
+- 不通过降低断言、删除安全检查或跳过测试掩盖问题。
 
-提交前至少运行：
+## 本地验证
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/verify_repo.ps1
+powershell -ExecutionPolicy Bypass -File scripts\verify_repo.ps1
 ```
 
-Pull Request 必须说明变更范围、验证证据、人工判断边界、数据安全检查和回滚方式。任何测试材料都应使用模拟或脱敏数据，企业真实数据、客户信息、日志、数据库和密钥不得进入仓库。
+涉及安装、更新或目录结构时还需运行：
 
-完整模块要求见 [`docs/handoff/三个业务模块最终交接说明.md`](docs/handoff/三个业务模块最终交接说明.md)。
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_installer.ps1
+powershell -ExecutionPolicy Bypass -File scripts\verify_installer.ps1
+```
 
-三个模块已经接入后的迭代更新，统一执行
-[`docs/handoff/模块后续更新与兼容接入验收说明.md`](docs/handoff/模块后续更新与兼容接入验收说明.md)。
-框架方只验收模块与工作台的接入兼容性；业务公式、规则和输出正确性由对应模块负责人负责。
+Pull Request 应说明变更内容、风险、验证结果、兼容性影响和回滚方式。

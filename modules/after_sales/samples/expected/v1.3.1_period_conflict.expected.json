@@ -35,9 +35,5 @@
     "excludes_customer_names": true,
     "excludes_absolute_paths": true,
     "excludes_original_workbook_text": true
-  },
-  "framework_change_request": {
-    "path": "docs/framework-change-requests/FCR-after_sales-20260727-period-conflict-actions.md",
-    "required_before_module_merge": false
   }
 }

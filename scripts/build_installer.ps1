@@ -21,7 +21,7 @@ if (-not $Compiler) {
 & $Compiler (Join-Path $Root 'packaging\BambooWorkbench.iss')
 if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed with exit code $LASTEXITCODE" }
 
-$Installer = Join-Path $Root 'installer-output\BambooWorkbench-Setup-1.3.4.exe'
+$Installer = Join-Path $Root 'installer-output\BambooWorkbench-Setup-1.3.5.exe'
 if (-not (Test-Path -LiteralPath $Installer -PathType Leaf)) {
     throw 'Installer output is missing'
 }
