@@ -9,7 +9,8 @@ updates:
       day: monday
       time: "09:00"
       timezone: Asia/Shanghai
-    open-pull-requests-limit: 5
+    # Routine version updates are disabled because the project is no longer maintained.
+    open-pull-requests-limit: 0
     ignore:
       - dependency-name: "*"
         update-types:
